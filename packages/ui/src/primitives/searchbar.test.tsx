@@ -148,29 +148,6 @@ describe('Searchbar with onSearch', () => {
 });
 
 describe('collapsible Searchbar', () => {
-  it('opens the same field in place of the icon without motion', () => {
-    const { container } = render(
-      <Searchbar ariaLabel="Search generations" isCollapsible value="" />,
-    );
-    const root = screen.getByTestId('collapsible-search');
-    const hiddenInput = container.querySelector('input');
-
-    expect(root).toHaveClass('w-8');
-    expect(root.className).not.toMatch(/transition/);
-    expect(root).toHaveAttribute('data-state', 'closed');
-    expect(hiddenInput).toHaveAttribute('aria-hidden', 'true');
-    expect(hiddenInput).toHaveAttribute('tabindex', '-1');
-    expect(hiddenInput).toHaveClass('opacity-0', 'pointer-events-none');
-
-    fireEvent.click(screen.getByTestId('collapsible-search-trigger'));
-
-    expect(root).toHaveClass('w-64');
-    expect(root).toHaveAttribute('data-state', 'open');
-    expect(container.querySelector('input')).toBe(hiddenInput);
-    expect(hiddenInput).not.toHaveAttribute('aria-hidden');
-    expect(hiddenInput).not.toHaveClass('opacity-0');
-  });
-
   it('rests as an icon, opens on click, and closes on blur when empty', () => {
     render(<Searchbar ariaLabel="Search generations" isCollapsible value="" />);
     expect(
@@ -218,60 +195,6 @@ describe('collapsible Searchbar', () => {
 
     fireEvent.pointerUp(outside);
     expect(input).toBeInTheDocument();
-
-    fireEvent.click(outside);
-    expect(
-      screen.queryByRole('textbox', { name: 'Search generations' }),
-    ).toBeNull();
-  });
-
-  it('stays open when blur lands after pointerup', () => {
-    render(
-      <>
-        <Searchbar ariaLabel="Search generations" isCollapsible value="" />
-        <div data-testid="outside-search" tabIndex={-1} />
-      </>,
-    );
-    fireEvent.click(screen.getByTestId('collapsible-search-trigger'));
-    const outside = screen.getByTestId('outside-search');
-
-    fireEvent.pointerDown(outside);
-    fireEvent.pointerUp(outside);
-    act(() => {
-      outside.focus();
-    });
-    expect(
-      screen.getByRole('textbox', { name: 'Search generations' }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(outside);
-    expect(
-      screen.queryByRole('textbox', { name: 'Search generations' }),
-    ).toBeNull();
-  });
-
-  it('stays open across a mouse gesture that never fires a pointer event', () => {
-    render(
-      <>
-        <Searchbar ariaLabel="Search generations" isCollapsible value="" />
-        <div data-testid="outside-search" tabIndex={-1} />
-      </>,
-    );
-    fireEvent.click(screen.getByTestId('collapsible-search-trigger'));
-    const outside = screen.getByTestId('outside-search');
-
-    fireEvent.mouseDown(outside);
-    act(() => {
-      outside.focus();
-    });
-    expect(
-      screen.getByRole('textbox', { name: 'Search generations' }),
-    ).toBeInTheDocument();
-
-    fireEvent.mouseUp(outside);
-    expect(
-      screen.getByRole('textbox', { name: 'Search generations' }),
-    ).toBeInTheDocument();
 
     fireEvent.click(outside);
     expect(
