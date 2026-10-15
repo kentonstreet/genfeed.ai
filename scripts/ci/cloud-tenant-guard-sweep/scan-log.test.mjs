@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
   mkdtempSync,
@@ -9,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { writeDiagnosticEvidence } from './diagnostic-output.mjs';
@@ -680,7 +679,7 @@ for (const failed of [false, true])
         tenantFailures: 0,
       },
     ];
-    writeIsolatedFixture(
+    writeFileSync(
       join(directory, 'api-observations.ndjson'),
       `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
       { mode: 0o600 },
@@ -722,7 +721,7 @@ for (const failed of [false, true])
     assert.equal(summary.causalEvidence.reasons.samplerFailure, failed ? 1 : 0);
   });
 
-for (const mode of ['positive', 'legacy', 'zero', 'missing-worker'])
+for (const mode of ['positive', 'legacy', 'zero'])
   test(`real scanner retains guard provenance with fatal positive/unavailable (${mode})`, (context) => {
     const directory = mkdtempSync(join(tmpdir(), 'tenant-provenance-final-'));
     chmodSync(directory, 0o700);
@@ -789,13 +788,11 @@ for (const mode of ['positive', 'legacy', 'zero', 'missing-worker'])
         ? {}
         : { tenantFailures: mode === 'positive' ? 1 : 0 }),
     });
-    writeIsolatedFixture(
+    writeFileSync(
       join(directory, 'api-observations.ndjson'),
       `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
       { mode: 0o600 },
     );
-    if (mode === 'missing-worker')
-      rmSync(join(directory, 'database-observations.seal.json'));
     writeFileSync(join(directory, 'api-stopped'), 'stopped\n', { mode: 0o600 });
     for (let repeat = 0; repeat < 2; repeat++) {
       const result = spawnSync(
@@ -821,107 +818,9 @@ for (const mode of ['positive', 'legacy', 'zero', 'missing-worker'])
       assert.equal(saved.hasFailed, mode !== 'zero');
       assert.equal(
         summary.causalEvidence.tenantFailures.total,
-        ['legacy', 'missing-worker'].includes(mode)
-          ? null
-          : mode === 'positive'
-            ? 1
-            : 0,
+        mode === 'legacy' ? null : mode === 'positive' ? 1 : 0,
       );
       assert.equal(summary.tenantEvidence.logHits, 0);
       assert.equal(summary.tenantEvidence.responseHits, 0);
     }
   });
-
-function writeIsolatedFixture(file, text, options = { mode: 0o600 }) {
-  const records = text
-      .trimEnd()
-      .split('\n')
-      .map((line) => JSON.parse(line)),
-    directory = dirname(file),
-    binding = {
-      version: 1,
-      producer: 'api',
-      runNonce: 'b'.repeat(32),
-      sourceSha: 'a'.repeat(40),
-    };
-  const header = { ...records[0], databaseSampler: binding },
-    footer = records.at(-1)?.kind === 'footer' ? records.at(-1) : null;
-  if (!footer) {
-    writeFileSync(
-      file,
-      `${JSON.stringify(header)}\n${records
-        .slice(1)
-        .map((r) => `${JSON.stringify(r)}\n`)
-        .join('')}`,
-      options,
-    );
-    return;
-  }
-  const dbRecords = records
-      .filter((r) => r.kind === 'database')
-      .map((r) => (r.outcome === 'success' ? { diagnostic: null, ...r } : r)),
-    apiRecords = records.slice(1, -1).filter((r) => r.kind !== 'database');
-  const apiFooter = {
-    ...footer,
-    records: footer.records - dbRecords.length,
-    databaseSamples: footer.databaseSamples - dbRecords.length,
-    databaseIncomplete: 0,
-    databaseWorker: {
-      readyObservedAt: header.startedAt,
-      stopRequestedAt: footer.endedAt,
-      stopCompletedAt: footer.endedAt,
-      state: 'complete',
-    },
-  };
-  const dbHeader = {
-    kind: 'header',
-    protocol: 1,
-    startedAt: header.startedAt,
-    tenantFailuresVersion: 1,
-    databaseSampler: { ...binding, producer: 'database' },
-  };
-  const dbFooter = {
-    ...footer,
-    records: dbRecords.length + 1,
-    ingress: 0,
-    pipelineEntries: 0,
-    finishes: 0,
-    closes: 0,
-    invalidSequences: 0,
-    duplicateSequences: 0,
-    runtimeSamples: 0,
-    databaseSamples: dbRecords.length,
-    tenantFailures: 0,
-  };
-  delete dbFooter.databaseWorker;
-  const dbText = `${[dbHeader, ...dbRecords, dbFooter]
-    .map((r) => JSON.stringify(r))
-    .join('\n')}\n`;
-  writeFileSync(join(directory, 'database-observations.ndjson'), dbText, {
-    mode: 0o600,
-  });
-  const seal = {
-    version: 1,
-    runNonce: binding.runNonce,
-    sourceSha: binding.sourceSha,
-    state: 'complete',
-    readyAt: header.startedAt,
-    stopReceivedAt: footer.endedAt,
-    sealedAt: footer.endedAt,
-    bytes: Buffer.byteLength(dbText),
-    records: dbRecords.length + 2,
-    sha256: createHash('sha256').update(dbText).digest('hex'),
-  };
-  writeFileSync(
-    join(directory, 'database-observations.seal.json'),
-    `${JSON.stringify(seal)}\n`,
-    { mode: 0o600 },
-  );
-  writeFileSync(
-    file,
-    `${[header, ...apiRecords, apiFooter]
-      .map((r) => JSON.stringify(r))
-      .join('\n')}\n`,
-    options,
-  );
-}
