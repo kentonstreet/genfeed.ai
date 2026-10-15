@@ -28,8 +28,6 @@ describe('AgentOrchestratorPlanModeService — #4672 mode field', () => {
   let agentChatModelRegistry: {
     getDefaultModelKey: ReturnType<typeof vi.fn>;
     getRoundCredits: ReturnType<typeof vi.fn>;
-    calculateRoundProviderCostUsd: ReturnType<typeof vi.fn>;
-    toRoundCredits: ReturnType<typeof vi.fn>;
     getMaximumRoundCredits: ReturnType<typeof vi.fn>;
     getAutoAllowedModelKeys: ReturnType<typeof vi.fn>;
   };
@@ -76,8 +74,6 @@ describe('AgentOrchestratorPlanModeService — #4672 mode field', () => {
     agentChatModelRegistry = {
       getDefaultModelKey: vi.fn().mockResolvedValue('test-model'),
       getRoundCredits: vi.fn().mockReturnValue(1),
-      calculateRoundProviderCostUsd: vi.fn().mockResolvedValue(0.01),
-      toRoundCredits: vi.fn().mockReturnValue(1),
       getMaximumRoundCredits: vi.fn().mockResolvedValue(10),
       getAutoAllowedModelKeys: vi.fn().mockResolvedValue([]),
     };
@@ -157,31 +153,6 @@ describe('AgentOrchestratorPlanModeService — #4672 mode field', () => {
     expect(agentMessagesService.addMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({ runId: 'run-1' }),
-      }),
-    );
-  });
-
-  it('stamps the drafted plan with the time it was created so clients can order plans', async () => {
-    const result = await service.generatePlanModeResponse(baseParams, host);
-
-    const plan = result.message.metadata?.proposedPlan as {
-      createdAt: string;
-      id: string;
-      updatedAt: string;
-    };
-    expect(plan.id).toMatch(/^plan-\d+$/);
-    expect(plan.createdAt).toBe(
-      new Date(Number(plan.id.slice('plan-'.length))).toISOString(),
-    );
-    expect(plan.updatedAt).toBe(plan.createdAt);
-    expect(agentMessagesService.addMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          proposedPlan: expect.objectContaining({
-            createdAt: plan.createdAt,
-            id: plan.id,
-          }),
-        }),
       }),
     );
   });

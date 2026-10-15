@@ -5,13 +5,7 @@ import {
   AgentWorkEventType,
 } from '@genfeedai/agent/models/agent-chat.model';
 import { AgentApiRequestError } from '@genfeedai/agent/services/agent-api-error';
-import {
-  type AgentRunRecord,
-  IDLE_RUN,
-  runKeyFor,
-} from '@genfeedai/agent/stores/agent-chat.store.run';
 import { AgentThreadMode } from '@genfeedai/contracts';
-import { ONBOARDING_GREETING } from '@genfeedai/contracts/constants';
 import {
   act,
   fireEvent,
@@ -28,37 +22,15 @@ vi.mock('@genfeedai/agent/components/AgentWorkObjects', () => ({
 
 const sendNonStreaming = vi.fn();
 const sendStreaming = vi.fn();
-/** What the composer's `onSend` returned; false keeps the draft. */
-const composerSendResults: Array<boolean | undefined> = [];
 const adoptRun = vi.fn();
 const beginRunHandoff = vi.fn((threadId: string) => ({
   generation: 1,
   previousPending: null,
-  previousRunId: null,
   threadId,
 }));
 const cancelRunHandoff = vi.fn();
 let isStreamingHookActive = false;
 const scrollIntoViewMock = vi.fn();
-const { pinConversationScrollToBottomMock } = vi.hoisted(() => ({
-  pinConversationScrollToBottomMock: vi.fn(),
-}));
-
-vi.mock(
-  '@genfeedai/agent/utils/conversation-scroll.util',
-  async (importOriginal) => {
-    const actual =
-      await importOriginal<
-        typeof import('@genfeedai/agent/utils/conversation-scroll.util')
-      >();
-    return {
-      ...actual,
-      pinConversationScrollToBottom: (
-        ...args: Parameters<typeof actual.pinConversationScrollToBottom>
-      ) => pinConversationScrollToBottomMock(...args),
-    };
-  },
-);
 
 vi.mock('next-intl', () => ({
   useTranslations: () => (key: string) => key,
@@ -115,16 +87,11 @@ vi.mock('@ui/layout/prompt-bar-container/PromptBarContainer', () => ({
   default: function MockPromptBarContainer(props: {
     children?: ReactNode;
     containerRef?: (node: HTMLDivElement | null) => void;
-    isVisible?: boolean;
     layoutMode?: string;
     maxWidth?: string;
     showTopFade?: boolean;
     topContent?: ReactNode;
   }) {
-    if (props.isVisible === false) {
-      return null;
-    }
-
     return (
       <div
         data-layout-mode={props.layoutMode}
@@ -187,7 +154,6 @@ vi.mock('../utils/extract-thread-assets', () => ({
 vi.mock('@genfeedai/agent/components/AgentChatInput', () => ({
   AgentChatInput: function MockAgentChatInput(props: {
     density?: string;
-    disabled?: boolean;
     placeholder?: string;
     onSend?: (content: string) => boolean;
     onStop?: () => void | Promise<void>;
@@ -198,13 +164,10 @@ vi.mock('@genfeedai/agent/components/AgentChatInput', () => ({
         chat-input
         <input
           aria-label="Composer paste"
-          disabled={props.disabled}
           placeholder={props.placeholder}
-          onPaste={(event) => {
-            composerSendResults.push(
-              props.onSend?.(event.clipboardData.getData('text')),
-            );
-          }}
+          onPaste={(event) =>
+            props.onSend?.(event.clipboardData.getData('text'))
+          }
         />
         {props.showStop ? (
           <button type="button" onClick={props.onStop}>
@@ -220,7 +183,6 @@ vi.mock('@genfeedai/agent/components/AgentChatMessage', () => ({
   AgentChatMessage: function MockAgentChatMessage(props: {
     isRetryableUserPrompt?: boolean;
     message?: {
-      content?: string;
       role?: string;
       metadata?: {
         uiActions?: Array<{
@@ -243,7 +205,6 @@ vi.mock('@genfeedai/agent/components/AgentChatMessage', () => ({
     return (
       <div>
         message
-        <span>{props.message?.content}</span>
         {props.isRetryableUserPrompt ? (
           <button
             type="button"
@@ -329,16 +290,19 @@ vi.mock('@genfeedai/agent/components/AgentInputRequestOverlay', () => ({
 }));
 
 type StoreState = {
-  threadEventSequenceById: Record<string, number>;
-  threadUiBusyById: Record<string, boolean>;
-  applyThreadSnapshotState: ReturnType<typeof vi.fn>;
-  resetStreamState: ReturnType<typeof vi.fn>;
-  transitionRun: ReturnType<typeof vi.fn>;
   activeThreadId: string | null;
+  activeRunId: string | null;
+  activeRunStatus:
+    | 'idle'
+    | 'awaiting_input'
+    | 'running'
+    | 'cancelling'
+    | 'failed'
+    | 'completed'
+    | 'cancelled';
   addMessage: ReturnType<typeof vi.fn>;
   addWorkEvent: ReturnType<typeof vi.fn>;
   clearPendingInputRequest: ReturnType<typeof vi.fn>;
-  setPendingInputRequest: ReturnType<typeof vi.fn>;
   clearStaleActiveRun: ReturnType<typeof vi.fn>;
   markStreamLive: ReturnType<typeof vi.fn>;
   draftAgentMode: AgentThreadMode;
@@ -355,14 +319,11 @@ type StoreState = {
     brandId?: string | null;
     contextVersion?: number;
     id: string;
-    runtimeKey?: string;
     source?: string;
     title?: string;
   }>;
-  draftRuntimeKey: string | null;
-  setDraftRuntimeKey: ReturnType<typeof vi.fn>;
-  conversationCacheByThread: Record<string, unknown>;
   error: string | null;
+  isGenerating: boolean;
   messages: AgentChatMessageType[];
   messagesCursor: string | null;
   prependOlderMessages: ReturnType<typeof vi.fn>;
@@ -375,8 +336,8 @@ type StoreState = {
     runId: string;
     title: string;
   } | null;
-  runsByThread: Record<string, AgentRunRecord>;
-  socketConnectionState: 'connected' | 'offline';
+  runStartedAt: string | null;
+  socketConnectionState: 'connected';
   setActiveThread: ReturnType<typeof vi.fn>;
   setActiveRun: ReturnType<typeof vi.fn>;
   setActiveRunStatus: ReturnType<typeof vi.fn>;
@@ -398,40 +359,25 @@ type StoreState = {
     streamingContent: string;
     streamingReasoning: string;
   };
-  trackUiActionRun: ReturnType<typeof vi.fn>;
-  uiActionStatesByThread: Record<string, Record<string, unknown>>;
   upsertThread: ReturnType<typeof vi.fn>;
   updateThread: ReturnType<typeof vi.fn>;
   workEvents: [];
 };
 
-function setRun(patch: Partial<AgentRunRecord>): void {
-  const key = runKeyFor(storeState.activeThreadId);
-  storeState.runsByThread = {
-    ...storeState.runsByThread,
-    [key]: { ...IDLE_RUN, ...storeState.runsByThread[key], ...patch },
-  };
-}
-
 const storeState: StoreState = {
-  threadEventSequenceById: {},
-  threadUiBusyById: {},
-  applyThreadSnapshotState: vi.fn(),
-  resetStreamState: vi.fn(),
-  transitionRun: vi.fn(),
+  activeRunId: 'run-1',
+  activeRunStatus: 'idle',
   activeThreadId: 'thread-1',
   addMessage: vi.fn(),
   addWorkEvent: vi.fn(),
   clearPendingInputRequest: vi.fn(),
-  setPendingInputRequest: vi.fn(),
   clearStaleActiveRun: vi.fn(),
   markStreamLive: vi.fn(),
-  conversationCacheByThread: {},
   draftAgentMode: AgentThreadMode.MANUAL,
-  draftRuntimeKey: null,
   error: null,
   hasMoreMessages: false,
   isLoadingOlderMessages: false,
+  isGenerating: false,
   latestProposedPlan: null,
   messages: [
     {
@@ -457,9 +403,7 @@ const storeState: StoreState = {
     storeState.hasMoreMessages = page.hasMore;
     storeState.messagesCursor = page.nextCursor;
   }),
-  runsByThread: {
-    'thread-1': { ...IDLE_RUN, runId: 'run-1' },
-  },
+  runStartedAt: null,
   socketConnectionState: 'connected',
   setActiveRun: vi.fn(),
   setActiveRunStatus: vi.fn(),
@@ -468,7 +412,6 @@ const storeState: StoreState = {
   setDraftAgentMode: vi.fn((mode: AgentThreadMode) => {
     storeState.draftAgentMode = mode;
   }),
-  setDraftRuntimeKey: vi.fn(),
   setError: vi.fn(),
   setLatestProposedPlan: vi.fn((plan) => {
     storeState.latestProposedPlan = plan;
@@ -485,8 +428,6 @@ const storeState: StoreState = {
     streamingReasoning: '',
   },
   threads: [],
-  trackUiActionRun: vi.fn(),
-  uiActionStatesByThread: {},
   updateThread: vi.fn(),
   upsertThread: vi.fn(),
   workEvents: [],
@@ -496,34 +437,12 @@ function createApiService(overrides: Record<string, unknown> = {}) {
   return {
     cancelWorkflowExecution: vi.fn(),
     getActiveWorkflowExecutions: vi.fn().mockResolvedValue([]),
-    getMessages: vi.fn(),
     getMessagesPage: vi.fn(),
     respondToInputRequest: vi.fn(),
     respondToUiAction: vi.fn(),
     updateThread: vi.fn(),
     uploadAttachment: vi.fn(),
     ...overrides,
-  };
-}
-
-/**
- * `POST .../ui-actions` only acks the enqueued workflow. The run's result
- * reaches the thread as its own `agent:done`, so the api double has no read
- * methods: the container must never poll messages or the execution for it.
- */
-function createUiActionApi() {
-  return {
-    getMessages: vi.fn(() => {
-      throw new Error('ui-actions must not poll messages');
-    }),
-    getWorkflowExecution: vi.fn(() => {
-      throw new Error('ui-actions must not poll the execution');
-    }),
-    respondToUiAction: vi.fn().mockResolvedValue({
-      executionId: 'exec-ui-action',
-      status: 'queued',
-      threadId: 'thread-1',
-    }),
   };
 }
 
@@ -549,10 +468,6 @@ vi.mock('@genfeedai/agent/stores/agent-chat.store', () => ({
 
 import { AgentChatContainer } from '@genfeedai/agent/components/AgentChatContainer';
 import { ConversationComposerShellProvider } from '@genfeedai/agent/components/ConversationComposerShellContext';
-import { resetDesktopLocalToolsCache } from '@genfeedai/agent/hooks/use-desktop-local-tools';
-import { DESKTOP_CLI_RUNTIME_CHECKING_MESSAGE } from '@genfeedai/agent/utils/agent-runtime-options.util';
-
-type DesktopWindow = Window & { genfeedDesktop?: unknown };
 
 describe('AgentChatContainer', () => {
   beforeAll(() => {
@@ -566,25 +481,16 @@ describe('AgentChatContainer', () => {
   });
 
   beforeEach(() => {
-    storeState.socketConnectionState = 'connected';
-    storeState.threadEventSequenceById = {};
-    storeState.threadUiBusyById = {};
-    storeState.applyThreadSnapshotState.mockReset();
-    storeState.resetStreamState.mockReset();
-    storeState.transitionRun.mockReset();
     isStreamingHookActive = false;
     scrollIntoViewMock.mockReset();
-    pinConversationScrollToBottomMock.mockReset();
     sendNonStreaming.mockReset();
     sendStreaming.mockReset();
-    composerSendResults.length = 0;
     adoptRun.mockReset();
     beginRunHandoff.mockClear();
     cancelRunHandoff.mockReset();
     storeState.addMessage.mockReset();
     storeState.addWorkEvent.mockReset();
     storeState.clearPendingInputRequest.mockReset();
-    storeState.setPendingInputRequest.mockReset();
     storeState.clearStaleActiveRun.mockReset();
     storeState.markStreamLive.mockReset();
     storeState.prependOlderMessages.mockClear();
@@ -597,9 +503,6 @@ describe('AgentChatContainer', () => {
     storeState.setLatestProposedPlan.mockReset();
     storeState.setIsLoadingOlderMessages.mockClear();
     storeState.setUiActionStatus.mockReset();
-    storeState.trackUiActionRun.mockReset();
-    storeState.uiActionStatesByThread = {};
-    storeState.conversationCacheByThread = {};
     storeState.upsertThread.mockReset();
     storeState.updateThread.mockReset();
     storeState.activeThreadId = 'thread-1';
@@ -618,25 +521,24 @@ describe('AgentChatContainer', () => {
       title: 'Prompt bar mode',
     };
     storeState.messages = [buildAssistantMessage()];
-    storeState.runsByThread = {};
+    storeState.isGenerating = false;
     storeState.stream.isStreaming = false;
     storeState.messagesCursor = null;
-    setRun({ startedAt: null });
+    storeState.runStartedAt = null;
     storeState.stream.pendingUiActions = [];
     storeState.stream.streamingContent = '';
     storeState.workEvents = [];
     storeState.threads = [];
-    storeState.draftRuntimeKey = null;
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     storeState.error = null;
-    setRun({ runId: 'run-1' });
-    setRun({ status: 'idle' });
+    storeState.activeRunId = 'run-1';
+    storeState.activeRunStatus = 'idle';
   });
 
   it('clears a stale local run when the server has no active execution for the thread', async () => {
     const apiService = createApiService();
-    setRun({ runId: 'run-stale' });
-    setRun({ status: 'running' });
+    storeState.activeRunId = 'run-stale';
+    storeState.activeRunStatus = 'running';
 
     render(<AgentChatContainer apiService={apiService as never} isStreaming />);
 
@@ -678,11 +580,11 @@ describe('AgentChatContainer', () => {
         },
       ]),
     });
-    setRun({ runId: 'run-pending' });
-    setRun({ status: 'idle' });
+    storeState.activeRunId = 'run-pending';
+    storeState.activeRunStatus = 'idle';
     storeState.setActiveRun.mockImplementation((id, options) => {
-      setRun({ runId: id });
-      setRun({ status: options.status });
+      storeState.activeRunId = id;
+      storeState.activeRunStatus = options.status;
     });
     const view = render(
       <AgentChatContainer apiService={apiService as never} isStreaming />,
@@ -721,15 +623,15 @@ describe('AgentChatContainer', () => {
           return [{ id: 'run-1', metadata: { threadId: 'thread-1' }, status }];
         }),
       });
-      setRun({ runId: 'run-1' });
-      setRun({ status: 'running' });
+      storeState.activeRunId = 'run-1';
+      storeState.activeRunStatus = 'running';
       render(
         <AgentChatContainer apiService={apiService as never} isStreaming />,
       );
       await waitFor(() =>
         expect(apiService.getActiveWorkflowExecutions).toHaveBeenCalledOnce(),
       );
-      setRun({ status: terminal });
+      storeState.activeRunStatus = terminal;
       await act(async () => {
         release();
         await gate;
@@ -760,7 +662,7 @@ describe('AgentChatContainer', () => {
     await waitFor(() =>
       expect(apiService.getActiveWorkflowExecutions).toHaveBeenCalledOnce(),
     );
-    setRun({ runId: 'run-new' });
+    storeState.activeRunId = 'run-new';
     await act(async () => {
       release();
       await gate;
@@ -770,7 +672,7 @@ describe('AgentChatContainer', () => {
   });
   it('reconciles a terminal snapshot run that arrives after the first active execution query', async () => {
     const apiService = createApiService();
-    setRun({ runId: null });
+    storeState.activeRunId = null;
 
     const view = render(
       <AgentChatContainer apiService={apiService as never} isStreaming />,
@@ -781,7 +683,7 @@ describe('AgentChatContainer', () => {
     });
     expect(storeState.clearStaleActiveRun).not.toHaveBeenCalled();
 
-    setRun({ runId: 'run-from-terminal-snapshot' });
+    storeState.activeRunId = 'run-from-terminal-snapshot';
     view.rerender(
       <AgentChatContainer apiService={apiService as never} isStreaming />,
     );
@@ -802,14 +704,14 @@ describe('AgentChatContainer', () => {
           }),
       ),
     });
-    setRun({ runId: 'run-stale' });
+    storeState.activeRunId = 'run-stale';
 
     render(<AgentChatContainer apiService={apiService as never} isStreaming />);
 
     await waitFor(() => {
       expect(apiService.getActiveWorkflowExecutions).toHaveBeenCalledTimes(1);
     });
-    setRun({ runId: 'run-new' });
+    storeState.activeRunId = 'run-new';
     resolveExecutions([]);
 
     await act(async () => {
@@ -853,7 +755,6 @@ describe('AgentChatContainer', () => {
         'Use the hybrid prompt bar',
         undefined,
         { brandId: null, expectedContextVersion: 1 },
-        undefined,
       );
     });
 
@@ -873,65 +774,6 @@ describe('AgentChatContainer', () => {
       expect.objectContaining({ threadId: 'thread-1' }),
     );
     expect(adoptRun).not.toHaveBeenCalled();
-  });
-
-  it('does not resurrect input after a failed acknowledgement replays a completed continuation', async () => {
-    const request = storeState.pendingInputRequest;
-    storeState.clearPendingInputRequest.mockImplementation(() => {
-      storeState.pendingInputRequest = null;
-    });
-    cancelRunHandoff.mockImplementation(() => {
-      setRun({ status: 'completed' });
-      storeState.pendingInputRequest = null;
-    });
-    const apiService = createApiService({
-      respondToInputRequest: vi
-        .fn()
-        .mockRejectedValue(new Error('Lost acknowledgement')),
-    });
-    render(
-      <ConversationComposerShellProvider
-        contextLabel="Workspace"
-        draftScopeKey="acme:thread-1:1"
-        portalTarget={null}
-        shellState="canvas"
-      >
-        <AgentChatContainer apiService={apiService as never} isStreaming />
-      </ConversationComposerShellProvider>,
-    );
-    fireEvent.click(screen.getByText('Submit requested input'));
-    await waitFor(() =>
-      expect(cancelRunHandoff).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: 'thread-1' }),
-        request,
-      ),
-    );
-    expect(storeState.setPendingInputRequest).not.toHaveBeenCalled();
-    expect(storeState.setError).not.toHaveBeenCalledWith(
-      'Failed to submit the requested input.',
-    );
-  });
-
-  it('keeps the URL card as the only onboarding text entry', () => {
-    storeState.pendingInputRequest = {
-      runId: 'run-url',
-      inputRequestId: 'url-request',
-      threadId: 'thread-1',
-      title: 'Your brand link',
-      prompt: 'Share a public link',
-      allowFreeText: true,
-      options: [],
-    };
-    const view = render(
-      <AgentChatContainer
-        apiService={createApiService() as never}
-        onboardingMode
-        isStreaming
-      />,
-    );
-    expect(
-      view.container.querySelector('[data-testid="agent-chat-input-shell"]'),
-    ).toBeNull();
   });
 
   it('pins the stream to the execution that continues an answered input request', async () => {
@@ -976,231 +818,6 @@ describe('AgentChatContainer', () => {
     expect(cancelRunHandoff).not.toHaveBeenCalled();
   });
 
-  it('refuses a local CLI send while detection is pending and keeps the draft', async () => {
-    const startTurn = vi.fn();
-    resetDesktopLocalToolsCache();
-    (window as DesktopWindow).genfeedDesktop = {
-      agentRuntime: {
-        cancelTurn: vi.fn(),
-        onEvent: vi.fn(() => () => undefined),
-        startTurn,
-      },
-      app: {
-        detectLocalTools: vi.fn(() => new Promise(() => undefined)),
-      },
-    };
-    storeState.threads = [{ id: 'thread-1', runtimeKey: 'local/claude-cli' }];
-    storeState.pendingInputRequest = null;
-    const apiService = createApiService({
-      getInstallReadiness: vi.fn().mockResolvedValue(null),
-    });
-
-    try {
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      fireEvent.paste(screen.getByLabelText('Composer paste'), {
-        clipboardData: { getData: () => 'Write a launch post' },
-      });
-
-      expect(composerSendResults).toEqual([false]);
-      expect(storeState.setError).toHaveBeenCalledWith(
-        DESKTOP_CLI_RUNTIME_CHECKING_MESSAGE,
-      );
-      expect(sendStreaming).not.toHaveBeenCalled();
-      expect(sendNonStreaming).not.toHaveBeenCalled();
-      expect(startTurn).not.toHaveBeenCalled();
-    } finally {
-      delete (window as DesktopWindow).genfeedDesktop;
-      resetDesktopLocalToolsCache();
-    }
-  });
-
-  it('never sends a thread bound to an outdated local Codex CLI to the hosted runtime', async () => {
-    const upgradeCommand = 'npm install -g @openai/codex@latest';
-    const startTurn = vi.fn();
-    resetDesktopLocalToolsCache();
-    (window as DesktopWindow).genfeedDesktop = {
-      agentRuntime: {
-        cancelTurn: vi.fn(),
-        onEvent: vi.fn(() => () => undefined),
-        startTurn,
-      },
-      app: {
-        detectLocalTools: vi.fn().mockResolvedValue({
-          anyDetected: true,
-          claude: true,
-          codex: false,
-          detected: ['claude'],
-          grok: false,
-          upgradesRequired: [
-            {
-              key: 'codex',
-              message: `This Codex CLI is too old to run Genfeed agent turns. Update it with \`${upgradeCommand}\`, then restart Genfeed Desktop.`,
-            },
-          ],
-        }),
-      },
-    };
-    storeState.threads = [{ id: 'thread-1', runtimeKey: 'local/codex-cli' }];
-    storeState.pendingInputRequest = null;
-    const apiService = createApiService({
-      getInstallReadiness: vi.fn().mockResolvedValue(null),
-    });
-
-    try {
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      expect(
-        await screen.findByTestId('agent-desktop-runtime-notice'),
-      ).toHaveTextContent(upgradeCommand);
-
-      fireEvent.paste(screen.getByLabelText('Composer paste'), {
-        clipboardData: { getData: () => 'Write a launch post' },
-      });
-
-      expect(composerSendResults).toEqual([false]);
-      expect(storeState.setError).toHaveBeenCalledWith(
-        expect.stringContaining(upgradeCommand),
-      );
-      expect(sendStreaming).not.toHaveBeenCalled();
-      expect(sendNonStreaming).not.toHaveBeenCalled();
-      expect(startTurn).not.toHaveBeenCalled();
-    } finally {
-      delete (window as DesktopWindow).genfeedDesktop;
-      resetDesktopLocalToolsCache();
-    }
-  });
-
-  describe('a thread bound to a local CLI in the plain web app', () => {
-    beforeEach(() => {
-      delete (window as DesktopWindow).genfeedDesktop;
-      resetDesktopLocalToolsCache();
-      storeState.threads = [{ id: 'thread-1', runtimeKey: 'local/claude-cli' }];
-      storeState.pendingInputRequest = null;
-    });
-
-    it('blocks the send, keeps the draft and never reaches the hosted stream', () => {
-      const apiService = createApiService();
-
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      expect(
-        screen.getByTestId('agent-web-local-cli-notice'),
-      ).toHaveTextContent('title');
-
-      fireEvent.paste(screen.getByLabelText('Composer paste'), {
-        clipboardData: { getData: () => 'Write a launch post' },
-      });
-
-      // `false` tells the composer to keep the draft.
-      expect(composerSendResults).toEqual([false]);
-      expect(storeState.setError).toHaveBeenCalledWith('webBlocked');
-      expect(sendStreaming).not.toHaveBeenCalled();
-      expect(sendNonStreaming).not.toHaveBeenCalled();
-    });
-
-    it('offers to open the thread in Desktop', () => {
-      const apiService = createApiService();
-
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      expect(
-        screen.getByRole('link', { name: 'openInDesktop' }),
-      ).toHaveAttribute('href', 'genfeedai-desktop://thread/thread-1');
-    });
-
-    it('switches the thread to the hosted runtime through the runtime selection path', () => {
-      const apiService = createApiService({
-        updateThread: vi.fn().mockResolvedValue({}),
-      });
-
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      fireEvent.click(screen.getByText('switchToHosted'));
-
-      expect(storeState.updateThread).toHaveBeenCalledWith('thread-1', {
-        requestedModel: undefined,
-        runtimeKey: 'hosted/genfeed',
-      });
-      expect(apiService.updateThread).toHaveBeenCalledWith(
-        'thread-1',
-        { requestedModel: '', runtimeKey: 'hosted/genfeed' },
-        expect.any(AbortSignal),
-      );
-    });
-
-    it('lets the thread send once it is bound to a hosted runtime', () => {
-      storeState.threads = [{ id: 'thread-1', runtimeKey: 'hosted/genfeed' }];
-      const apiService = createApiService();
-
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      expect(
-        screen.queryByTestId('agent-web-local-cli-notice'),
-      ).not.toBeInTheDocument();
-
-      fireEvent.paste(screen.getByLabelText('Composer paste'), {
-        clipboardData: { getData: () => 'Write a launch post' },
-      });
-
-      expect(composerSendResults).toEqual([true]);
-      expect(sendStreaming).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  it('keeps the Desktop runtime bar, not the web notice, for a CLI thread in Desktop', async () => {
-    resetDesktopLocalToolsCache();
-    (window as DesktopWindow).genfeedDesktop = {
-      agentRuntime: {
-        cancelTurn: vi.fn(),
-        onEvent: vi.fn(() => () => undefined),
-        startTurn: vi.fn(),
-      },
-      app: {
-        detectLocalTools: vi.fn().mockResolvedValue({
-          anyDetected: true,
-          claude: true,
-          codex: false,
-          detected: ['claude'],
-          grok: false,
-        }),
-      },
-    };
-    storeState.threads = [{ id: 'thread-1', runtimeKey: 'local/claude-cli' }];
-    storeState.pendingInputRequest = null;
-    const apiService = createApiService({
-      getInstallReadiness: vi.fn().mockResolvedValue(null),
-    });
-
-    try {
-      render(
-        <AgentChatContainer apiService={apiService as never} isStreaming />,
-      );
-
-      expect(
-        await screen.findByTestId('agent-desktop-runtime-bar'),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByTestId('agent-web-local-cli-notice'),
-      ).not.toBeInTheDocument();
-    } finally {
-      delete (window as DesktopWindow).genfeedDesktop;
-      resetDesktopLocalToolsCache();
-    }
-  });
-
   it('resolves a pasted URL on the same turn while the agent is waiting for input', async () => {
     let resolveAnswer: (() => void) | undefined;
     const apiService = createApiService({
@@ -1211,7 +828,7 @@ describe('AgentChatContainer', () => {
           }),
       ),
     });
-    setRun({ status: 'awaiting_input' });
+    storeState.activeRunStatus = 'awaiting_input';
     storeState.stream.isStreaming = true;
     storeState.pendingInputRequest = {
       allowFreeText: true,
@@ -1235,7 +852,6 @@ describe('AgentChatContainer', () => {
       'https://www.youtube.com/watch?v=demo',
       undefined,
       expect.any(Object),
-      undefined,
     );
     expect(sendStreaming).not.toHaveBeenCalled();
     await act(async () => resolveAnswer?.());
@@ -1256,7 +872,7 @@ describe('AgentChatContainer', () => {
 
     expect(promptBarContainers.length).toBe(1);
     expect(promptBarContainers[0]?.getAttribute('data-show-top-fade')).toBe(
-      'false',
+      'true',
     );
   });
 
@@ -1318,7 +934,7 @@ describe('AgentChatContainer', () => {
 
     expect(promptBarContainers.length).toBe(1);
     expect(promptBarContainers[0]?.getAttribute('data-show-top-fade')).toBe(
-      'false',
+      'true',
     );
   });
 
@@ -1330,11 +946,11 @@ describe('AgentChatContainer', () => {
     storeState.pendingInputRequest = null;
     storeState.messages = [buildAssistantMessage()];
 
-    const { container } = render(
+    render(
       <ConversationComposerShellProvider
         contextLabel="Workspace"
         draftScopeKey="acme:thread-1:3"
-        placement="dock"
+        placement="inspector"
         portalTarget={portalTarget}
         shellState="canvas"
       >
@@ -1346,14 +962,10 @@ describe('AgentChatContainer', () => {
       '[data-layout-mode="inflow"][data-max-width="full"]',
     );
     expect(portaled).not.toBeNull();
-    expect(portaled?.getAttribute('data-show-top-fade')).toBe('false');
-    // The dock composer is a sibling, so reserving its height again wastes transcript space.
-    expect(
-      container.querySelector('[data-composer-padding="20"]'),
-    ).not.toBeNull();
+    expect(portaled?.getAttribute('data-show-top-fade')).toBe('true');
     expect(screen.getByTestId('chat-input')).toHaveAttribute(
       'data-density',
-      'dock',
+      'inspector',
     );
     portalTarget.remove();
   });
@@ -1383,7 +995,7 @@ describe('AgentChatContainer', () => {
     ).not.toBeNull();
     expect(
       portalTarget.querySelector(
-        '[data-layout-mode="inflow"][data-show-top-fade="false"]',
+        '[data-layout-mode="inflow"][data-show-top-fade="true"]',
       ),
     ).not.toBeNull();
 
@@ -1475,7 +1087,7 @@ describe('AgentChatContainer', () => {
 
     expect(promptBarContainers.length).toBe(1);
     expect(promptBarContainers[0]?.getAttribute('data-show-top-fade')).toBe(
-      'false',
+      'true',
     );
   });
 
@@ -1498,108 +1110,42 @@ describe('AgentChatContainer', () => {
 
     expect(promptBarContainers.length).toBe(1);
     expect(promptBarContainers[0]?.getAttribute('data-show-top-fade')).toBe(
-      'false',
+      'true',
     );
   });
 
-  it('recovers a missing onboarding card over REST when the socket is offline', async () => {
-    storeState.socketConnectionState = 'offline';
-    storeState.pendingInputRequest = null;
-    const apiService = createApiService({
-      getThreadSnapshot: vi.fn().mockResolvedValue({
-        threadId: 'thread-1',
-        lastSequence: 4,
-        timeline: [],
-        activeRun: { runId: 'run-1', status: 'awaiting_input' },
-        pendingInputRequests: [
-          {
-            requestId: 'recovered-card',
-            title: 'Goals',
-            prompt: 'Choose',
-            options: [],
-            allowFreeText: false,
-          },
-        ],
-      }),
-    });
-    const view = render(
-      <AgentChatContainer apiService={apiService as never} onboardingMode />,
-    );
-    await waitFor(() =>
-      expect(storeState.setPendingInputRequest).toHaveBeenCalledWith(
-        expect.objectContaining({
-          inputRequestId: 'recovered-card',
-          threadId: 'thread-1',
-        }),
-      ),
-    );
-    expect(storeState.transitionRun).toHaveBeenCalledWith(
-      'thread-1',
-      expect.objectContaining({ status: 'awaiting_input' }),
-    );
-    view.unmount();
-  });
+  it('puts the onboarding card on the empty conversation prompt bar', () => {
+    const apiService = createApiService();
 
-  it('keeps onboarding REST input enabled while the socket is offline and no card is pending', () => {
-    storeState.socketConnectionState = 'offline';
-    storeState.pendingInputRequest = null;
-    const apiService = createApiService({
-      getThreadSnapshot: vi.fn().mockRejectedValue(new Error('offline')),
-    });
-    const view = render(
-      <AgentChatContainer apiService={apiService as never} onboardingMode />,
-    );
-    expect(screen.getByLabelText('Composer paste')).toBeEnabled();
-    view.unmount();
-  });
-
-  it('renders the shared greeting immediately during kickoff and reconciles once', () => {
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    const apiService = createApiService();
-    const { rerender } = render(
+
+    const { container } = render(
       <AgentChatContainer
         apiService={apiService as never}
+        emptyStateTitle="Welcome to GenFeed"
         onboardingMode
-        isLoadingThread
+        promptBarLayoutMode="surface-fixed"
       />,
     );
-    expect(screen.getAllByText(ONBOARDING_GREETING)).toHaveLength(1);
-    storeState.messages = [
-      buildAssistantMessage({ content: ONBOARDING_GREETING }),
-    ];
-    rerender(
-      <AgentChatContainer apiService={apiService as never} onboardingMode />,
-    );
-    expect(screen.getAllByText(ONBOARDING_GREETING)).toHaveLength(1);
-  });
 
-  it('hides the onboarding composer for a button-only pending request', () => {
-    if (storeState.pendingInputRequest)
-      storeState.pendingInputRequest.allowFreeText = false;
-    render(
-      <AgentChatContainer
-        apiService={createApiService() as never}
-        onboardingMode
-      />,
-    );
-    expect(screen.queryByTestId('chat-input')).not.toBeInTheDocument();
+    expect(screen.getByTestId('onboarding-composer-card')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Submit requested input' }),
-    ).toBeInTheDocument();
-  });
-
-  it('keeps the URL card and hides the separate onboarding composer', () => {
-    render(
-      <AgentChatContainer
-        apiService={createApiService() as never}
-        onboardingMode
-      />,
-    );
-    expect(screen.queryByTestId('chat-input')).not.toBeInTheDocument();
+      screen.queryByRole('button', { name: /start with my first image/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Submit requested input' }),
-    ).toBeInTheDocument();
+      screen.queryByText(/what best describes you/i),
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelectorAll(
+        '[data-layout-mode="inflow"][data-max-width="full"]',
+      ).length,
+    ).toBe(1);
+    expect(
+      container.querySelector(
+        '[data-layout-mode="inflow"] [data-testid="onboarding-composer-card"]',
+      ),
+    ).not.toBeNull();
   });
 
   it('keeps the empty-state composer full-width inside the centered column', () => {
@@ -1622,7 +1168,7 @@ describe('AgentChatContainer', () => {
 
     expect(promptBarContainers.length).toBe(1);
     expect(promptBarContainers[0]?.getAttribute('data-show-top-fade')).toBe(
-      'false',
+      'true',
     );
   });
 
@@ -1670,101 +1216,13 @@ describe('AgentChatContainer', () => {
       <AgentChatContainer apiService={apiService as never} isLoadingThread />,
     );
 
-    expect(pinConversationScrollToBottomMock).not.toHaveBeenCalled();
+    expect(scrollIntoViewMock).not.toHaveBeenCalled();
 
     storeState.messages = [buildAssistantMessage()];
 
     rerender(<AgentChatContainer apiService={apiService as never} />);
 
-    expect(pinConversationScrollToBottomMock).toHaveBeenCalled();
-  });
-
-  it('pins a switched thread once the transcript belongs to that thread', () => {
-    const apiService = createApiService();
-
-    storeState.pendingInputRequest = null;
-    storeState.messages = [buildAssistantMessage({ threadId: 'thread-1' })];
-
-    const { rerender } = render(
-      <AgentChatContainer apiService={apiService as never} />,
-    );
-
-    pinConversationScrollToBottomMock.mockClear();
-
-    storeState.activeThreadId = 'thread-2';
-    rerender(<AgentChatContainer apiService={apiService as never} />);
-
-    expect(pinConversationScrollToBottomMock).not.toHaveBeenCalled();
-
-    storeState.messages = [
-      buildAssistantMessage({ id: 'm-2', threadId: 'thread-2' }),
-    ];
-    rerender(<AgentChatContainer apiService={apiService as never} />);
-
-    expect(pinConversationScrollToBottomMock).toHaveBeenCalled();
-  });
-
-  it('keeps the same composer mounted while scrolling a settled thread', () => {
-    const apiService = createApiService();
-    storeState.pendingInputRequest = null;
-    storeState.messages = [buildAssistantMessage()];
-    const view = render(
-      <AgentChatContainer apiService={apiService as never} />,
-    );
-    const composer = screen.getByTestId('chat-input');
-    const scrollContainer = view.container.querySelector('.overflow-y-auto');
-    if (!(scrollContainer instanceof HTMLDivElement)) {
-      throw new Error('Conversation scroll container not found');
-    }
-    Object.defineProperties(scrollContainer, {
-      clientHeight: { configurable: true, value: 500 },
-      scrollHeight: { configurable: true, value: 1_000 },
-    });
-    scrollContainer.scrollTop = 100;
-    fireEvent.scroll(scrollContainer);
-    expect(screen.getByTestId('chat-input')).toBe(composer);
-    expect(screen.getByLabelText('Composer paste')).toBeInTheDocument();
-
-    scrollContainer.scrollTop = 500;
-    fireEvent.scroll(scrollContainer);
-    expect(screen.getByTestId('chat-input')).toBe(composer);
-  });
-
-  it('follows delayed transcript layout only while the reader stays at the bottom', async () => {
-    const callbacks: ResizeObserverCallback[] = [];
-    const disconnect = vi.fn();
-    const observerMock = class {
-      constructor(callback: ResizeObserverCallback) {
-        callbacks.push(callback);
-      }
-      observe() {}
-      disconnect = disconnect;
-    };
-    vi.stubGlobal('ResizeObserver', observerMock);
-    const view = render(
-      <AgentChatContainer apiService={createApiService() as never} />,
-    );
-    await waitFor(() => expect(callbacks.length).toBeGreaterThan(0));
-    pinConversationScrollToBottomMock.mockClear();
-    act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
-    await waitFor(() =>
-      expect(pinConversationScrollToBottomMock).toHaveBeenCalled(),
-    );
-    const container = view.container.querySelector('.overflow-y-auto');
-    if (!(container instanceof HTMLDivElement))
-      throw new Error('Missing scroll container');
-    Object.defineProperties(container, {
-      clientHeight: { configurable: true, value: 500 },
-      scrollHeight: { configurable: true, value: 1000 },
-    });
-    container.scrollTop = 100;
-    fireEvent.scroll(container);
-    expect(disconnect).toHaveBeenCalled();
-    pinConversationScrollToBottomMock.mockClear();
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(pinConversationScrollToBottomMock).not.toHaveBeenCalled();
-    view.unmount();
-    vi.unstubAllGlobals();
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'auto' });
   });
 
   it('loads older messages near the top and preserves the visible scroll anchor', async () => {
@@ -1971,7 +1429,7 @@ describe('AgentChatContainer', () => {
 
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
 
     render(
       <AgentChatContainer
@@ -1999,8 +1457,8 @@ describe('AgentChatContainer', () => {
 
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ runId: 'run-1' });
-    setRun({ status: 'running' });
+    storeState.activeRunId = 'run-1';
+    storeState.activeRunStatus = 'running';
 
     render(
       <AgentChatContainer
@@ -2025,9 +1483,9 @@ describe('AgentChatContainer', () => {
 
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     sendNonStreaming.mockImplementationOnce(() => {
-      setRun({ isGenerating: true });
+      storeState.isGenerating = true;
     });
 
     render(
@@ -2054,7 +1512,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
 
     storeState.pendingInputRequest = null;
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
     storeState.messages = [
       {
         content: 'Original prompt',
@@ -2081,7 +1539,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
 
     const view = render(
       <AgentChatContainer
@@ -2097,7 +1555,7 @@ describe('AgentChatContainer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Second' }));
     expect(sendNonStreaming).not.toHaveBeenCalled();
 
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     view.rerender(
       <AgentChatContainer
         apiService={apiService as never}
@@ -2121,7 +1579,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
 
     const view = render(
       <AgentChatContainer
@@ -2137,7 +1595,7 @@ describe('AgentChatContainer', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Review' }));
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     storeState.error = 'Generation failed';
     view.rerender(
       <AgentChatContainer
@@ -2167,9 +1625,9 @@ describe('AgentChatContainer', () => {
     });
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
-    setRun({ runId: 'run-1' });
-    setRun({ status: 'running' });
+    storeState.isGenerating = true;
+    storeState.activeRunId = 'run-1';
+    storeState.activeRunStatus = 'running';
 
     const view = render(
       <AgentChatContainer
@@ -2192,8 +1650,8 @@ describe('AgentChatContainer', () => {
     });
     expect(sendNonStreaming).not.toHaveBeenCalled();
 
-    setRun({ isGenerating: false });
-    setRun({ status: 'cancelled' });
+    storeState.isGenerating = false;
+    storeState.activeRunStatus = 'cancelled';
     view.rerender(
       <AgentChatContainer
         apiService={apiService as never}
@@ -2234,8 +1692,8 @@ describe('AgentChatContainer', () => {
       ]),
     });
     isStreamingHookActive = true;
-    setRun({ runId: 'run-1' });
-    setRun({ status: 'running' });
+    storeState.activeRunId = 'run-1';
+    storeState.activeRunStatus = 'running';
 
     render(<AgentChatContainer apiService={apiService as never} isStreaming />);
     fireEvent.click(screen.getByRole('button', { name: 'Stop agent' }));
@@ -2253,7 +1711,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
     storeState.activeThreadId = 'thread-1';
 
     const view = render(
@@ -2272,7 +1730,6 @@ describe('AgentChatContainer', () => {
     );
 
     storeState.activeThreadId = 'thread-2';
-    setRun({ isGenerating: true });
     view.rerender(
       <AgentChatContainer
         apiService={apiService as never}
@@ -2311,7 +1768,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
 
     const view = render(
       <AgentChatContainer
@@ -2326,7 +1783,7 @@ describe('AgentChatContainer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'First' }));
     fireEvent.click(screen.getByRole('button', { name: 'Second' }));
 
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     view.rerender(
       <AgentChatContainer
         apiService={apiService as never}
@@ -2357,7 +1814,7 @@ describe('AgentChatContainer', () => {
     const apiService = createApiService();
     storeState.pendingInputRequest = null;
     storeState.messages = [];
-    setRun({ isGenerating: true });
+    storeState.isGenerating = true;
 
     const view = render(
       <AgentChatContainer
@@ -2374,7 +1831,7 @@ describe('AgentChatContainer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Second' }));
     expect(sendStreaming).not.toHaveBeenCalled();
 
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     isStreamingHookActive = false;
     view.rerender(
       <AgentChatContainer
@@ -2416,7 +1873,7 @@ describe('AgentChatContainer', () => {
         runId: 'run-failed',
         status: AgentWorkEventStatus.FAILED,
         threadId: 'thread-1',
-        toolName: 'generate',
+        toolName: 'generate_image',
       },
     ];
 
@@ -2435,10 +1892,7 @@ describe('AgentChatContainer', () => {
       );
     });
     await waitFor(() => {
-      expect(pinConversationScrollToBottomMock).toHaveBeenCalledWith(
-        expect.anything(),
-        'smooth',
-      );
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: 'smooth' });
     });
   });
 
@@ -2480,7 +1934,7 @@ describe('AgentChatContainer', () => {
 
     storeState.pendingInputRequest = null;
     storeState.messages = [buildAssistantMessage()];
-    setRun({ status: 'running' });
+    storeState.activeRunStatus = 'running';
 
     render(
       <AgentChatContainer
@@ -2506,8 +1960,8 @@ describe('AgentChatContainer', () => {
 
     storeState.pendingInputRequest = null;
     storeState.messages = [buildAssistantMessage()];
-    setRun({ status: 'running' });
-    setRun({ startedAt: new Date(Date.now() - 5_000).toISOString() });
+    storeState.activeRunStatus = 'running';
+    storeState.runStartedAt = new Date(Date.now() - 5_000).toISOString();
     storeState.stream.streamingContent = 'Partial answer';
     isStreamingHookActive = true;
 
@@ -2537,106 +1991,6 @@ describe('AgentChatContainer', () => {
     expect(screen.getByTestId('agent-plan-review-card')).toBeInTheDocument();
     expect(screen.getByText('Approve')).toBeInTheDocument();
     expect(screen.getByText('Request changes')).toBeInTheDocument();
-  });
-
-  it('locks the plan controls while an approval of that plan is still running', () => {
-    const apiService = createApiService();
-
-    storeState.pendingInputRequest = null;
-    storeState.latestProposedPlan = {
-      content: '1. Add a toggle\n2. Pause after planning',
-      createdAt: '2026-03-26T10:00:00.000Z',
-      id: 'plan-1',
-      status: 'awaiting_approval',
-      updatedAt: '2026-03-26T10:00:00.000Z',
-    };
-    // The request's in-flight lock is released at the ack, but the run
-    // executing the plan is still pending on the thread.
-    storeState.uiActionStatesByThread = {
-      'thread-1': {
-        'approve_plan:plan-1': {
-          action: 'approve_plan',
-          runId: 'exec-plan-1',
-          sequence: 4,
-          sourceId: 'plan-1',
-          status: 'pending',
-          updatedAt: '2026-03-26T10:00:00.000Z',
-        },
-      },
-    };
-
-    render(<AgentChatContainer apiService={apiService as never} />);
-
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
-    expect(
-      screen.getByRole('button', { name: 'Request changes' }),
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(apiService.respondToUiAction).not.toHaveBeenCalled();
-  });
-
-  it('adopts a run whose ack lands after its thread was left and shown again', async () => {
-    let resolveAck: (ack: {
-      executionId: string;
-      status: 'queued';
-      threadId: string;
-    }) => void = () => undefined;
-    const uiActionApi = createUiActionApi();
-    const apiService = createApiService({
-      ...uiActionApi,
-      respondToUiAction: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveAck = resolve;
-          }),
-      ),
-    });
-    storeState.pendingInputRequest = null;
-    storeState.threads = [{ brandId: null, contextVersion: 1, id: 'thread-1' }];
-    storeState.latestProposedPlan = {
-      content: '1. Add a toggle\n2. Pause after planning',
-      createdAt: '2026-03-26T10:00:00.000Z',
-      id: 'plan-1',
-      status: 'awaiting_approval',
-      updatedAt: '2026-03-26T10:00:00.000Z',
-    };
-    const view = render(
-      <AgentChatContainer apiService={apiService as never} />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await waitFor(() =>
-      expect(apiService.respondToUiAction).toHaveBeenCalledTimes(1),
-    );
-    expect(beginRunHandoff).toHaveBeenCalledWith('thread-1');
-
-    // Leave the thread and come back before the ack arrives.
-    storeState.activeThreadId = 'thread-2';
-    view.rerender(<AgentChatContainer apiService={apiService as never} />);
-    storeState.activeThreadId = 'thread-1';
-    view.rerender(<AgentChatContainer apiService={apiService as never} />);
-
-    await act(async () => {
-      resolveAck({
-        executionId: 'exec-ui-action',
-        status: 'queued',
-        threadId: 'thread-1',
-      });
-    });
-
-    expect(storeState.trackUiActionRun).toHaveBeenCalledWith('thread-1', {
-      action: 'approve_plan',
-      runId: 'exec-ui-action',
-      sourceId: 'plan-1',
-    });
-    expect(adoptRun).toHaveBeenCalledWith(
-      expect.objectContaining({ threadId: 'thread-1' }),
-      'exec-ui-action',
-      null,
-      { requireRunId: true },
-    );
-    expect(uiActionApi.getMessages).not.toHaveBeenCalled();
-    expect(uiActionApi.getWorkflowExecution).not.toHaveBeenCalled();
   });
 
   it('renders and executes the create follow-up tasks action for approved workspace plans', async () => {
@@ -2734,7 +2088,34 @@ describe('AgentChatContainer', () => {
   });
 
   it('submits workflow confirmation through the UI action endpoint', async () => {
-    const apiService = createApiService(createUiActionApi());
+    const apiService = createApiService({
+      respondToUiAction: vi.fn().mockResolvedValue({
+        contextVersion: 1,
+        creditsRemaining: 48,
+        creditsUsed: 0,
+        message: {
+          content: 'Official workflow installed.',
+          metadata: {
+            uiActions: [
+              {
+                ctas: [
+                  {
+                    href: '/automation/workflows/wf-99',
+                    label: 'Open workflow',
+                  },
+                ],
+                id: 'workflow-created-success',
+                title: 'Automation installed',
+                type: 'workflow_created_card',
+              },
+            ],
+          },
+          role: 'assistant',
+        },
+        threadId: 'thread-1',
+        toolCalls: [],
+      }),
+    });
 
     storeState.pendingInputRequest = null;
     storeState.threads = [{ brandId: null, contextVersion: 1, id: 'thread-1' }];
@@ -2777,17 +2158,12 @@ describe('AgentChatContainer', () => {
 
     expect(sendNonStreaming).not.toHaveBeenCalled();
     expect(sendStreaming).not.toHaveBeenCalled();
-    // The run is adopted into the thread stream; its reply arrives there.
-    await waitFor(() =>
-      expect(adoptRun).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: 'thread-1' }),
-        'exec-ui-action',
-        null,
-        { requireRunId: true },
-      ),
+    expect(storeState.addMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: 'Official workflow installed.',
+        threadId: 'thread-1',
+      }),
     );
-    expect(storeState.addMessage).not.toHaveBeenCalled();
-    expect(apiService.getMessages).not.toHaveBeenCalled();
   });
 
   it('ignores a duplicate UI action while the first request is pending', async () => {
@@ -2796,10 +2172,7 @@ describe('AgentChatContainer', () => {
       resolveAction = resolve;
     });
     const respondToUiAction = vi.fn(() => pendingAction);
-    const apiService = createApiService({
-      ...createUiActionApi(),
-      respondToUiAction,
-    });
+    const apiService = createApiService({ respondToUiAction });
 
     storeState.pendingInputRequest = null;
     storeState.threads = [{ brandId: null, contextVersion: 1, id: 'thread-1' }];
@@ -2840,18 +2213,37 @@ describe('AgentChatContainer', () => {
     );
 
     resolveAction?.({
-      executionId: 'exec-ui-action',
-      status: 'queued',
+      contextVersion: 1,
+      creditsRemaining: 48,
+      creditsUsed: 0,
+      message: { content: 'Installed.', metadata: {}, role: 'assistant' },
       threadId: 'thread-1',
+      toolCalls: [],
     });
 
-    await waitFor(() => expect(adoptRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(storeState.addMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ content: 'Installed.' }),
+      );
+    });
   });
 
-  it('submits a brand confirmation and adopts its run without reading the thread back', async () => {
-    // The ack carries no scope; the confirmed brand arrives with the run's
-    // own `agent:done` (see agent-chat-stream.subscriptions.spec).
-    const apiService = createApiService(createUiActionApi());
+  it('replaces a brandless thread scope with the confirmed created brand', async () => {
+    const apiService = createApiService({
+      respondToUiAction: vi.fn().mockResolvedValue({
+        brandId: 'brand-created-1',
+        contextVersion: 2,
+        creditsRemaining: 48,
+        creditsUsed: 0,
+        message: {
+          content: 'Brand created and selected for this thread.',
+          metadata: {},
+          role: 'assistant',
+        },
+        threadId: 'thread-1',
+        toolCalls: [],
+      }),
+    });
 
     storeState.pendingInputRequest = null;
     storeState.threads = [{ brandId: null, contextVersion: 1, id: 'thread-1' }];
@@ -2910,21 +2302,21 @@ describe('AgentChatContainer', () => {
         { brandId: null, expectedContextVersion: 1 },
       );
     });
-    await waitFor(() =>
-      expect(adoptRun).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: 'thread-1' }),
-        'exec-ui-action',
-        null,
-        { requireRunId: true },
-      ),
-    );
-    expect(storeState.upsertThread).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(storeState.upsertThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          brandId: 'brand-created-1',
+          contextVersion: 2,
+          id: 'thread-1',
+        }),
+      );
+    });
   });
 
   it('renders the provided empty-state title and description', () => {
     storeState.messages = [];
     storeState.error = null;
-    setRun({ isGenerating: false });
+    storeState.isGenerating = false;
     storeState.pendingInputRequest = null;
 
     render(
@@ -2972,7 +2364,7 @@ describe('AgentChatContainer', () => {
     portalTarget.remove();
   });
 
-  it('docks the empty-state composer into the dock slot', () => {
+  it('docks the inspector empty-state composer into the shell slot', () => {
     const apiService = createApiService();
     const portalTarget = document.createElement('div');
     document.body.append(portalTarget);
@@ -2984,7 +2376,7 @@ describe('AgentChatContainer', () => {
       <ConversationComposerShellProvider
         contextLabel="Workspace"
         draftScopeKey="acme:thread-1:3"
-        placement="dock"
+        placement="inspector"
         portalTarget={portalTarget}
         shellState="canvas"
       >
@@ -2996,39 +2388,6 @@ describe('AgentChatContainer', () => {
     );
 
     expect(screen.getByText('Start a conversation')).toBeInTheDocument();
-    expect(
-      container.querySelector('[data-testid="agent-chat-input-shell"]'),
-    ).toBeNull();
-    expect(
-      portalTarget.querySelector('[data-layout-mode="inflow"]'),
-    ).not.toBeNull();
-
-    portalTarget.remove();
-  });
-
-  it('keeps an empty conversation composer in an overlay slot', () => {
-    const apiService = createApiService();
-    const portalTarget = document.createElement('div');
-    document.body.append(portalTarget);
-
-    storeState.pendingInputRequest = null;
-    storeState.messages = [];
-
-    const { container } = render(
-      <ConversationComposerShellProvider
-        contextLabel="Workspace"
-        draftScopeKey="acme:new:0"
-        placement="overlay"
-        portalTarget={portalTarget}
-        shellState="overlay"
-      >
-        <AgentChatContainer
-          apiService={apiService as never}
-          emptyStateTitle="Start a conversation"
-        />
-      </ConversationComposerShellProvider>,
-    );
-
     expect(
       container.querySelector('[data-testid="agent-chat-input-shell"]'),
     ).toBeNull();

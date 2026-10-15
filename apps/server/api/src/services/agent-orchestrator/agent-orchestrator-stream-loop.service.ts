@@ -2,19 +2,17 @@ import { type AgentMemoryDocument } from '@api/collections/agent-memories/schema
 import { AgentMessagesService } from '@api/collections/agent-messages/services/agent-messages.service';
 import { AgentThreadsService } from '@api/collections/agent-threads/services/agent-threads.service';
 import { CreditsUtilsService } from '@api/collections/credits/services/credits.utils.service';
-import { PlatformSettingsService } from '@api/collections/platform-settings/services/platform-settings.service';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
 import { scopedWhere } from '@api/index';
 import { AgentAutoModelResolverService } from '@api/services/agent-orchestrator/agent-auto-model-resolver.service';
 import { AgentChatModelRegistryService } from '@api/services/agent-orchestrator/agent-chat-model-registry.service';
 import { AgentCompletionCardBuilderService } from '@api/services/agent-orchestrator/agent-completion-card-builder.service';
+import { AgentOrchestratorBatchService } from '@api/services/agent-orchestrator/agent-orchestrator-batch.service';
 import { AgentOrchestratorContextService } from '@api/services/agent-orchestrator/agent-orchestrator-context.service';
-import { AgentOrchestratorTurboRunService } from '@api/services/agent-orchestrator/agent-orchestrator-turbo-run.service';
 import { AgentStreamEffectsService } from '@api/services/agent-orchestrator/agent-stream-effects.service';
 import {
   type AgentToolRoundState,
   AgentTurnRoundRunnerService,
-  assertAgentCreditBudget,
 } from '@api/services/agent-orchestrator/agent-turn-round-runner.service';
 import { AGENT_MAX_TOOL_ROUNDS } from '@api/services/agent-orchestrator/constants/agent-credit-costs.constant';
 import { getAgentTypeConfig } from '@api/services/agent-orchestrator/constants/agent-type-config.constant';
@@ -38,11 +36,11 @@ import {
   maybeUpdateThreadTitle,
 } from '@api/services/agent-orchestrator/utils/agent-thread-title.util';
 import {
+  BATCH_SCOPED_ALLOWED_TOOLS,
   buildAgentChatCompletionParams,
   buildToolDefinitions,
   mergeAllowedTools,
   resolveBlockedTools,
-  TURBO_RUN_SCOPED_ALLOWED_TOOLS,
 } from '@api/services/agent-orchestrator/utils/agent-tool-definitions.util';
 import { sanitizeAgentOutputText } from '@api/services/agent-orchestrator/utils/sanitize-agent-output.util';
 import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatcher.service';
@@ -59,6 +57,7 @@ import type {
   AgentAutoRoutingResolution,
   AgentUIBlocksEvent,
 } from '@genfeedai/contracts/interfaces';
+import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
 import { Injectable, Optional } from '@nestjs/common';
 
@@ -96,7 +95,7 @@ export class AgentOrchestratorStreamLoopService {
     private readonly agentMessagesService: AgentMessagesService,
     private readonly creditsUtilsService: CreditsUtilsService,
     private readonly turnRoundRunner: AgentTurnRoundRunnerService,
-    private readonly turboRunService: AgentOrchestratorTurboRunService,
+    private readonly batchService: AgentOrchestratorBatchService,
     private readonly contextService: AgentOrchestratorContextService,
     private readonly completionCardBuilder: AgentCompletionCardBuilderService,
     private readonly streamEffects: AgentStreamEffectsService,
@@ -105,59 +104,11 @@ export class AgentOrchestratorStreamLoopService {
     @Optional()
     private readonly skillRuntimeService?: SkillRuntimeService,
     @Optional()
-    private readonly platformSettingsService?: PlatformSettingsService,
+    private readonly configService?: ConfigService,
   ) {}
 
-  /** An operator platform setting (#5407); off when settings are not wired. */
-  private async isRealTokenStreamingEnabled(): Promise<boolean> {
-    if (!this.platformSettingsService) {
-      return false;
-    }
-    const settings = await this.platformSettingsService.getFeatureSettings();
-    return settings.isAgentTokenStreamingEnabled;
-  }
-
-  private async publishStreamDelta(
-    context: AgentChatContext,
-    threadId: string,
-    delta: string,
-    counters: {
-      lastCancelCheckAt: number;
-      lastPublishErrorLoggedAt: number;
-      roundStreamedTokenCount: number;
-    },
-  ): Promise<void> {
-    counters.roundStreamedTokenCount++;
-    const now = Date.now();
-    if (now - counters.lastCancelCheckAt >= STREAM_CANCEL_CHECK_INTERVAL_MS) {
-      counters.lastCancelCheckAt = now;
-      if (await this.isRunCancelled(context)) {
-        throw new StreamCancelledError();
-      }
-    }
-    try {
-      await this.streamEffects.publishStreamToken({
-        runId: context.executionId,
-        threadId,
-        token: delta,
-        userId: context.userId,
-      });
-    } catch (error) {
-      const errorAt = Date.now();
-      if (
-        errorAt - counters.lastPublishErrorLoggedAt >=
-        STREAM_PUBLISH_LOG_INTERVAL_MS
-      ) {
-        counters.lastPublishErrorLoggedAt = errorAt;
-        this.loggerService.warn(
-          `${this.constructorName} stream token publish failed (throttled)`,
-          {
-            error: error instanceof Error ? error.message : String(error),
-            threadId,
-          },
-        );
-      }
-    }
+  private isRealTokenStreamingEnabled(): boolean {
+    return this.configService?.get('AGENT_TOKEN_STREAMING_ENABLED') === 'true';
   }
 
   async runStreamLoop(
@@ -193,6 +144,7 @@ export class AgentOrchestratorStreamLoopService {
       // A settlement failure must not make the outer catch retry a possibly
       // committed ledger write. Every settlement path is terminal.
       roundCredits = 0;
+
       return creditsToSettle;
     };
 
@@ -240,15 +192,14 @@ export class AgentOrchestratorStreamLoopService {
           .reverse()
           .find((message) => message.role === 'user')
           ?.content?.toString?.() ?? '';
-      const scopedTools =
-        source !== 'proactive' &&
-        this.turboRunService.isTurboRunIntent(latestUserMessage)
-          ? TURBO_RUN_SCOPED_ALLOWED_TOOLS
-          : undefined;
+      const scopedTools = this.batchService.isBatchGenerationIntent(
+        latestUserMessage,
+      )
+        ? BATCH_SCOPED_ALLOWED_TOOLS
+        : undefined;
       const tools = buildToolDefinitions(
         mergeAllowedTools(baseTools, scopedTools),
         resolveBlockedTools({ source }),
-        source,
       );
       const allowedToolNames = new Set(
         tools.map((tool) => tool.function.name as CuratedActionName),
@@ -273,7 +224,7 @@ export class AgentOrchestratorStreamLoopService {
       // {title, content} envelope there — streaming raw deltas would flash JSON
       // at the user. Those turns keep the simulated word-split path.
       const canStreamLiveTokens =
-        !(seedTitle ?? '').trim() && (await this.isRealTokenStreamingEnabled());
+        this.isRealTokenStreamingEnabled() && !(seedTitle ?? '').trim();
 
       while (round < AGENT_MAX_TOOL_ROUNDS || terminalContent) {
         if (await this.isRunCancelled(context)) {
@@ -283,16 +234,6 @@ export class AgentOrchestratorStreamLoopService {
         }
         round++;
 
-        const maximumRoundCredits =
-          terminalContent || turnCost === 0
-            ? 0
-            : await this.agentChatModelRegistry.getMaximumRoundCredits(model);
-        if (!terminalContent)
-          assertAgentCreditBudget(
-            context,
-            toolRoundState.totalCreditsUsed + roundCredits,
-            maximumRoundCredits,
-          );
         const { defaultModelKey, dispatchedModel, resolution } =
           await resolveAgentAutoRoutingRound({
             context,
@@ -329,13 +270,51 @@ export class AgentOrchestratorStreamLoopService {
 
         // Real deltas published live during this round; drives whether the
         // final branch re-simulates word-split streaming or not.
-        const streamCounters = {
-          lastCancelCheckAt: 0,
-          lastPublishErrorLoggedAt: 0,
-          roundStreamedTokenCount: 0,
+        let roundStreamedTokenCount = 0;
+        let lastCancelCheckAt = 0;
+        let lastPublishErrorLoggedAt = 0;
+
+        const onStreamToken = async (delta: string): Promise<void> => {
+          roundStreamedTokenCount++;
+
+          // Throttled cancellation check — unwinds the provider stream (and its
+          // upstream connection) instead of burning the whole generation after
+          // the user has already stopped the run.
+          const now = Date.now();
+          if (now - lastCancelCheckAt >= STREAM_CANCEL_CHECK_INTERVAL_MS) {
+            lastCancelCheckAt = now;
+            if (await this.isRunCancelled(context)) {
+              throw new StreamCancelledError();
+            }
+          }
+
+          try {
+            await this.streamEffects.publishStreamToken({
+              runId: context.executionId,
+              threadId,
+              token: delta,
+              userId: context.userId,
+            });
+          } catch (error) {
+            // Keep swallowing publish failures (a transient Redis hiccup must
+            // not abort a live stream) but surface a throttled log so a
+            // sustained outage is diagnosable rather than silent.
+            const errorAt = Date.now();
+            if (
+              errorAt - lastPublishErrorLoggedAt >=
+              STREAM_PUBLISH_LOG_INTERVAL_MS
+            ) {
+              lastPublishErrorLoggedAt = errorAt;
+              this.loggerService.warn(
+                `${this.constructorName} stream token publish failed (throttled)`,
+                {
+                  error: error instanceof Error ? error.message : String(error),
+                  threadId,
+                },
+              );
+            }
+          }
         };
-        const onStreamToken = (delta: string) =>
-          this.publishStreamDelta(context, threadId, delta, streamCounters);
 
         // IIFE so a mid-stream cancellation (StreamCancelledError thrown from
         // onStreamToken) is caught here and routed to the cancelled-stream
@@ -365,12 +344,15 @@ export class AgentOrchestratorStreamLoopService {
               try {
                 return await runReservedAgentLlmRound({
                   actorUserId: context.userId,
-                  brandId: context.scope?.brandId,
                   credits: this.creditsUtilsService,
+                  estimatedCredits: (actualModel) =>
+                    this.agentChatModelRegistry.getRoundCredits(actualModel),
                   idempotencyKey: `${context.executionId ?? threadId}:agent-llm-round:${round}`,
-                  maximumCredits: maximumRoundCredits,
+                  maximumCredits:
+                    await this.agentChatModelRegistry.getMaximumRoundCredits(
+                      model,
+                    ),
                   organizationId: context.organizationId,
-                  pricer: this.agentChatModelRegistry,
                   requestedModel: dispatchedModel,
                   run: () =>
                     canStreamLiveTokens
@@ -485,7 +467,7 @@ export class AgentOrchestratorStreamLoopService {
             reasoning,
             // When this round already streamed real deltas live, don't
             // re-emit the content as simulated word-split tokens.
-            suppressTokenStreaming: streamCounters.roundStreamedTokenCount > 0,
+            suppressTokenStreaming: roundStreamedTokenCount > 0,
             threadId,
           });
 
@@ -578,7 +560,6 @@ export class AgentOrchestratorStreamLoopService {
           return;
         }
 
-        toolRoundState.totalCreditsUsed += await settleAccruedTurnCredits();
         const toolRoundResult = await this.turnRoundRunner.executeToolRound({
           allowedToolNames,
           assistantContent: assistantMessage.content,

@@ -12,7 +12,6 @@ import type {
   AgentChatRequest,
   AgentChatResult,
 } from '@api/services/agent-orchestrator/interfaces/agent-chat.interface';
-import type { PlanModeResponseParams } from '@api/services/agent-orchestrator/interfaces/agent-orchestrator-plan-mode.interface';
 import type { AgentPlanReviewMetadata } from '@api/services/agent-orchestrator/interfaces/agent-plan-review-metadata.interface';
 import {
   type AgentAutoRoutingRound,
@@ -164,7 +163,17 @@ export class AgentOrchestratorPlanModeService {
   }
 
   async generatePlanModeResponse(
-    params: PlanModeResponseParams,
+    params: {
+      context: AgentChatContext;
+      model: string;
+      reviewMetadata?: AgentPlanReviewMetadata;
+      request: AgentChatRequest;
+      resolvedMemories: AgentMemoryDocument[];
+      seedTitle: string;
+      systemPromptOverride?: string;
+      threadId: string;
+      turnCost: number;
+    },
     host: AgentOrchestratorPlanModeHost,
   ): Promise<AgentChatResult> {
     const { messages: recentMessages, compressedContext: planCompressedCtx } =
@@ -185,36 +194,6 @@ export class AgentOrchestratorPlanModeService {
       dispatchedModel,
       resolution: autoRouting,
     } = await this.resolvePlanModeAutoRouting(params);
-    const reservedRound = await this.runPlanningRound(
-      params,
-      history,
-      autoRouting,
-      dispatchedModel,
-    );
-    const response = reservedRound.response;
-
-    const choice = response.choices[0];
-    if (!choice) {
-      throw new Error('No planning response from LLM');
-    }
-
-    return this.persistPlanProposal({
-      autoRouting,
-      assistantContent: sanitizeAgentOutputText(choice.message.content || ''),
-      defaultModelKey,
-      host,
-      params,
-      reservedRound,
-      resolvedModel: response.model ?? params.model,
-    });
-  }
-
-  private async runPlanningRound(
-    params: PlanModeResponseParams,
-    history: OpenRouterMessage[],
-    autoRouting: AgentAutoRoutingResolution | undefined,
-    dispatchedModel: string,
-  ) {
     const chatParams = await this.buildPlanningChatCompletionParams({
       autoRouting,
       messages: history,
@@ -224,16 +203,16 @@ export class AgentOrchestratorPlanModeService {
       source: params.request.source,
       threadId: params.threadId,
     });
-    return runReservedAgentLlmRound({
+    const reservedRound = await runReservedAgentLlmRound({
       actorUserId: params.context.userId,
-      brandId: params.context.scope?.brandId,
       credits: this.creditsUtilsService,
+      estimatedCredits: (actualModel) =>
+        this.agentChatModelRegistry.getRoundCredits(actualModel),
       idempotencyKey: `${params.context.executionId ?? params.threadId}:agent-plan-round:1`,
       maximumCredits: await this.agentChatModelRegistry.getMaximumRoundCredits(
         params.model,
       ),
       organizationId: params.context.organizationId,
-      pricer: this.agentChatModelRegistry,
       requestedModel: dispatchedModel,
       run: () =>
         this.llmDispatcher.chatCompletion(
@@ -248,27 +227,22 @@ export class AgentOrchestratorPlanModeService {
         ),
       waived: params.turnCost === 0,
     });
-  }
+    const response = reservedRound.response;
 
-  private async persistPlanProposal(input: {
-    autoRouting: AgentAutoRoutingResolution | undefined;
-    assistantContent: string;
-    defaultModelKey: string;
-    host: AgentOrchestratorPlanModeHost;
-    params: PlanModeResponseParams;
-    reservedRound: { credits: number };
-    resolvedModel: string;
-  }): Promise<AgentChatResult> {
-    const { params } = input;
+    const choice = response.choices[0];
+    if (!choice) {
+      throw new Error('No planning response from LLM');
+    }
+
     const envelope = this.extractPlanEnvelope({
-      assistantContent: input.assistantContent,
+      assistantContent: sanitizeAgentOutputText(choice.message.content || ''),
       prompt: params.request.content,
       reviewMetadata: params.reviewMetadata,
       seedTitle: params.seedTitle,
     });
     const plan = envelope.plan;
 
-    await input.host.maybeUpdateThreadTitle({
+    await host.maybeUpdateThreadTitle({
       context: params.context,
       seedTitle: params.seedTitle,
       threadId: params.threadId,
@@ -289,17 +263,19 @@ export class AgentOrchestratorPlanModeService {
     const assistantMetadata = {
       ...buildAgentScopeMetadata(params.context),
       ...buildAgentRoutingMetadata({
-        autoRouting: input.autoRouting,
-        defaultModelKey: input.defaultModelKey,
+        autoRouting,
+        defaultModelKey,
         model: params.model,
         prompt: params.request.content,
         source: params.request.source,
       }),
-      ...buildResolvedModelMetadata(params.model, [input.resolvedModel]),
+      ...buildResolvedModelMetadata(params.model, [
+        response.model ?? params.model,
+      ]),
       proposedPlan: plan,
       reviewRequired: true,
       riskLevel: 'low' as const,
-      totalCreditsUsed: input.reservedRound.credits,
+      totalCreditsUsed: reservedRound.credits,
     };
     const content =
       envelope.summary ||
@@ -334,7 +310,7 @@ export class AgentOrchestratorPlanModeService {
 
     return {
       creditsRemaining,
-      creditsUsed: input.reservedRound.credits,
+      creditsUsed: reservedRound.credits,
       message: {
         content,
         metadata: assistantMetadata,
@@ -449,9 +425,6 @@ export class AgentOrchestratorPlanModeService {
     summary: string;
     plan: {
       id: string;
-      /** Stamped at creation so a client can order this plan against others. */
-      createdAt: string;
-      updatedAt: string;
       content: string;
       explanation?: string;
       steps?: Record<string, unknown>[];
@@ -496,19 +469,14 @@ export class AgentOrchestratorPlanModeService {
       ? (parsed?.steps as Record<string, unknown>[])
       : undefined;
 
-    const createdAtMs = Date.now();
-    const createdAt = new Date(createdAtMs).toISOString();
-
     return {
       plan: {
         awaitingApproval: true,
         content,
-        createdAt,
         ...(explanation ? { explanation } : {}),
-        id: `plan-${createdAtMs}`,
+        id: `plan-${Date.now()}`,
         status: 'awaiting_approval',
         ...(steps ? { steps } : {}),
-        updatedAt: createdAt,
         ...(params.reviewMetadata?.lastReviewAction
           ? { lastReviewAction: params.reviewMetadata.lastReviewAction }
           : {}),

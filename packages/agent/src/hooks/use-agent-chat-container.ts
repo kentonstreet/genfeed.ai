@@ -1,19 +1,13 @@
 import type { ExtractedMention } from '@genfeedai/agent/components/AgentChatInput';
 import { useConversationComposerShell } from '@genfeedai/agent/components/ConversationComposerShellContext';
 import { AGENT_MESSAGE_PAGE_SIZE } from '@genfeedai/agent/constants/agent-message-pagination.constant';
-import {
-  type HandleUiActionDeps,
-  handleAgentUiAction,
-  hasPendingPlanReview,
-} from '@genfeedai/agent/hooks/agent-chat-container.ui-actions';
+import { handleAgentUiAction } from '@genfeedai/agent/hooks/agent-chat-container.ui-actions';
 import { captureAgentRunRestore } from '@genfeedai/agent/hooks/agent-chat-stream.restore-guard';
 import type { AgentRunHandoff } from '@genfeedai/agent/hooks/agent-chat-stream.types';
 import { useAgentChat } from '@genfeedai/agent/hooks/use-agent-chat';
 import { useAgentChatStream } from '@genfeedai/agent/hooks/use-agent-chat-stream';
 import { useAgentModePersistence } from '@genfeedai/agent/hooks/use-agent-mode-persistence';
 import { useComposerFollowUpQueue } from '@genfeedai/agent/hooks/use-composer-follow-up-queue';
-import { useDesktopCliAgentChat } from '@genfeedai/agent/hooks/use-desktop-cli-agent-chat';
-import { useStalledTurn } from '@genfeedai/agent/hooks/use-stalled-turn';
 import type {
   AgentChatMessage as AgentChatMessageType,
   AgentWorkEvent,
@@ -29,7 +23,6 @@ import type {
 import type { AgentApiService } from '@genfeedai/agent/services/agent-api.service';
 import { AgentApiRequestError } from '@genfeedai/agent/services/agent-api-error';
 import { useAgentChatStore } from '@genfeedai/agent/stores/agent-chat.store';
-import { selectActiveRun } from '@genfeedai/agent/stores/agent-chat.store.run';
 import {
   readConversationComposerDraft,
   writeConversationComposerAttachments,
@@ -41,10 +34,6 @@ import {
   EMPTY_STABLE_TIMELINE_ENTRIES_STATE,
   type StableTimelineEntriesState,
 } from '@genfeedai/agent/utils/compute-stable-timeline-entries';
-import {
-  conversationMessagesBelongToThread,
-  pinConversationScrollToBottom,
-} from '@genfeedai/agent/utils/conversation-scroll.util';
 import {
   composeTimelineWithStream,
   deriveHistoricalTimeline,
@@ -79,8 +68,6 @@ interface UseAgentChatContainerParams {
   onSelectIngredient?: (ingredient: { id: string; title?: string }) => void;
   workspacePlanningTaskId?: string | null;
 }
-
-const CANCEL_SETTLE_TIMEOUT_MS = 10_000;
 
 function isAgentRunActive(status: MappedSnapshotRunStatus): boolean {
   return status === 'running' || status === 'cancelling';
@@ -154,6 +141,7 @@ export function useAgentChatContainer({
     },
     [draftScopeKey],
   );
+  const addMessage = useAgentChatStore((s) => s.addMessage);
   const messages = useAgentChatStore((s) => s.messages);
   const hasMoreMessages = useAgentChatStore((s) => s.hasMoreMessages);
   const messagesCursor = useAgentChatStore((s) => s.messagesCursor);
@@ -164,18 +152,15 @@ export function useAgentChatContainer({
   const setIsLoadingOlderMessages = useAgentChatStore(
     (s) => s.setIsLoadingOlderMessages,
   );
-  const activeRun = useAgentChatStore(selectActiveRun);
-  const {
-    isGenerating,
-    runId: activeRunId,
-    startedAt: runStartedAt,
-    status: activeRunStatus,
-  } = activeRun;
+  const isGenerating = useAgentChatStore((s) => s.isGenerating);
   const error = useAgentChatStore((s) => s.error);
   const setError = useAgentChatStore((s) => s.setError);
+  const setCreditsRemaining = useAgentChatStore((s) => s.setCreditsRemaining);
   const streamState = useAgentChatStore((s) => s.stream);
   const threads = useAgentChatStore((s) => s.threads);
   const activeThreadId = useAgentChatStore((s) => s.activeThreadId);
+  const activeRunId = useAgentChatStore((s) => s.activeRunId);
+  const activeRunStatus = useAgentChatStore((s) => s.activeRunStatus);
   const addWorkEvent = useAgentChatStore((s) => s.addWorkEvent);
   const clearPendingInputRequest = useAgentChatStore(
     (s) => s.clearPendingInputRequest,
@@ -192,9 +177,6 @@ export function useAgentChatContainer({
       ? draftAgentMode
       : undefined;
   const latestProposedPlan = useAgentChatStore((s) => s.latestProposedPlan);
-  const uiActionStates = useAgentChatStore((s) =>
-    activeThreadId ? s.uiActionStatesByThread[activeThreadId] : undefined,
-  );
   const onboardingSignupGiftCredits = useAgentChatStore(
     (s) => s.onboardingSignupGiftCredits,
   );
@@ -202,12 +184,18 @@ export function useAgentChatContainer({
     (s) => s.onboardingTotalJourneyCredits,
   );
   const pendingInputRequest = useAgentChatStore((s) => s.pendingInputRequest);
+  const runStartedAt = useAgentChatStore((s) => s.runStartedAt);
   const setActiveRun = useAgentChatStore((s) => s.setActiveRun);
   const setActiveRunStatus = useAgentChatStore((s) => s.setActiveRunStatus);
   const workEvents = useAgentChatStore((s) => s.workEvents);
   const socketConnectionState = useAgentChatStore(
     (s) => s.socketConnectionState,
   );
+  const setActiveThread = useAgentChatStore((s) => s.setActiveThread);
+  const setLatestProposedPlan = useAgentChatStore(
+    (s) => s.setLatestProposedPlan,
+  );
+  const upsertThread = useAgentChatStore((s) => s.upsertThread);
 
   const { sendMessage: sendNonStreaming } = useAgentChat({
     apiService,
@@ -215,11 +203,9 @@ export function useAgentChatContainer({
     onOnboardingCompleted,
   });
   const {
-    abandonRun,
     adoptRun,
     beginRunHandoff,
     cancelRunHandoff,
-    resumeRunWatch,
     sendMessage: sendStreaming,
     isStreaming: isStreamingActive,
   } = useAgentChatStream({
@@ -228,16 +214,7 @@ export function useAgentChatContainer({
     onOnboardingCompleted,
   });
 
-  // Threads on `local/claude-cli` / `local/codex-cli` run in Genfeed Desktop
-  // on the user's own CLI subscription instead of the hosted API stream.
-  const desktopCliChat = useDesktopCliAgentChat();
-  const cancelDesktopCliTurn = desktopCliChat.cancelActiveTurn;
-  const desktopCliBlockedReason = desktopCliChat.blockedReason;
-  const sendMessage = desktopCliChat.isEnabled
-    ? desktopCliChat.sendMessage
-    : isStreaming
-      ? sendStreaming
-      : sendNonStreaming;
+  const sendMessage = isStreaming ? sendStreaming : sendNonStreaming;
   // One source of truth with the Stop button: while a run is active, a send
   // queues as a follow-up instead of starting a second run on the thread.
   const isRunActive = isAgentRunActive(activeRunStatus);
@@ -315,29 +292,6 @@ export function useAgentChatContainer({
     setActiveUiActionState(action);
   }, []);
   const isBusy = isTransportBusy || Boolean(activeUiAction);
-  // A stalled turn is quiet, not finished: anything the turn produces (a
-  // token, a tool update, a message, a work event) restarts the stall clock.
-  const stallProgressKey = [
-    activeRunId,
-    messages.length,
-    messages.at(-1)?.id,
-    streamState.streamingContent.length,
-    streamState.streamingReasoning.length,
-    streamState.acceptedReceipt?.runId,
-    streamState.activeToolCalls
-      .map((call) => `${call.id}:${call.status}:${call.progress ?? ''}`)
-      .join(','),
-    workEvents.length,
-    workEvents.at(-1)?.id,
-    workEvents.at(-1)?.status,
-    workEvents.at(-1)?.progress,
-  ].join('|');
-  const { isStalled: isTurnStalled, keepWaiting: restartStallClock } =
-    useStalledTurn({
-      isActive: activeRunStatus === 'running' && !pendingInputRequest,
-      isForcedStalled: streamState.isRunStalled === true,
-      progressKey: stallProgressKey,
-    });
   const [isCreatingFollowUpTasks, setIsCreatingFollowUpTasks] = useState(false);
   const [followUpTaskMessage, setFollowUpTaskMessage] = useState<string | null>(
     null,
@@ -423,14 +377,12 @@ export function useAgentChatContainer({
         },
         streamState,
         runDurationLabel,
-        isTurnStalled,
       ),
     [
       historicalTimeline.activeEvents,
       stableHistoricalEntries,
       streamState,
       runDurationLabel,
-      isTurnStalled,
     ],
   );
 
@@ -438,37 +390,19 @@ export function useAgentChatContainer({
     (behavior: ScrollBehavior = 'smooth') => {
       setIsAtBottom(true);
 
-      const pinLatest = (): void => {
-        pinConversationScrollToBottom(scrollContainerRef.current, behavior);
-      };
-
       if (typeof window === 'undefined') {
-        pinLatest();
+        messagesEndRef.current?.scrollIntoView({ behavior });
         return;
       }
 
-      window.requestAnimationFrame(pinLatest);
-    },
-    [],
-  );
-
-  const cancelSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  useEffect(
-    () => () => {
-      if (cancelSettleTimerRef.current) {
-        clearTimeout(cancelSettleTimerRef.current);
-      }
+      window.requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior });
+      });
     },
     [],
   );
 
   const handleStopRun = useCallback(async (): Promise<boolean> => {
-    if (cancelDesktopCliTurn()) {
-      return true;
-    }
-
     if (
       !isBusy &&
       activeRunStatus !== 'running' &&
@@ -489,31 +423,6 @@ export function useAgentChatContainer({
 
     try {
       await apiService.cancelWorkflowExecution(activeRunId);
-      // The server confirms a stop with an `agent:error` "cancelled" event. If
-      // the run's stream is already gone (server restart, dropped socket) that
-      // event never comes and the composer would sit on "cancelling" forever.
-      // The execution is cancelled server-side, so settle locally instead.
-      if (cancelSettleTimerRef.current) {
-        clearTimeout(cancelSettleTimerRef.current);
-      }
-      cancelSettleTimerRef.current = setTimeout(() => {
-        cancelSettleTimerRef.current = null;
-        const state = useAgentChatStore.getState();
-        const liveRun = selectActiveRun(state);
-        if (liveRun.runId !== activeRunId || liveRun.status !== 'cancelling') {
-          return;
-        }
-        state.setActiveRunStatus('cancelled');
-        state.setIsGenerating(false);
-        state.resetStreamState();
-        if (state.activeThreadId) {
-          state.updateThread(state.activeThreadId, {
-            attentionState: null,
-            pendingInputCount: 0,
-            runStatus: 'cancelled',
-          });
-        }
-      }, CANCEL_SETTLE_TIMEOUT_MS);
       return true;
     } catch (error) {
       if (error instanceof AgentApiRequestError && error.status === 404) {
@@ -528,7 +437,6 @@ export function useAgentChatContainer({
     activeRunId,
     activeRunStatus,
     apiService,
-    cancelDesktopCliTurn,
     clearStaleActiveRun,
     isBusy,
     setActiveRunStatus,
@@ -584,21 +492,14 @@ export function useAgentChatContainer({
         setError('Archived threads are read-only.');
         return false;
       }
-      // A thread bound to a local CLI that cannot run keeps the draft and
-      // never falls back to the hosted runtime.
-      if (desktopCliBlockedReason) {
-        setError(desktopCliBlockedReason);
-        return false;
-      }
       const liveState = useAgentChatStore.getState();
-      const liveRun = selectActiveRun(liveState);
       const shouldQueueFollowUp =
         Boolean(activeUiActionRef.current) ||
-        liveRun.isGenerating ||
-        isAgentRunActive(liveRun.status) ||
+        liveState.isGenerating ||
+        isAgentRunActive(liveState.activeRunStatus) ||
         (isStreaming &&
           liveState.stream.isStreaming &&
-          liveRun.status !== 'awaiting_input');
+          liveState.activeRunStatus !== 'awaiting_input');
 
       const pendingAsk = liveState.pendingInputRequest;
       if (pendingAsk && !shouldQueueFollowUp) {
@@ -646,7 +547,6 @@ export function useAgentChatContainer({
     },
     [
       sendAgentMode,
-      desktopCliBlockedReason,
       followLatestTurn,
       followUpQueue,
       isReadOnly,
@@ -717,83 +617,10 @@ export function useAgentChatContainer({
     [followLatestTurn, handleSend, isBusy, messages, onRegenerate, setError],
   );
 
-  const clearRunStalledFlag = useCallback(() => {
-    useAgentChatStore.setState((state) =>
-      state.stream.isRunStalled
-        ? { stream: { ...state.stream, isRunStalled: false } }
-        : state,
-    );
-  }, []);
-
-  // "Keep waiting": restart the stall clock and, when the runtime had stopped
-  // polling because the execution lookup 404'd, resume that polling.
-  const handleKeepWaiting = useCallback(() => {
-    clearRunStalledFlag();
-    if (activeThreadId) {
-      resumeRunWatch(activeThreadId);
-    }
-    restartStallClock();
-  }, [activeThreadId, clearRunStalledFlag, restartStallClock, resumeRunWatch]);
-
-  // Output on a run the runtime marked stalled means it is alive after all.
-  const stalledProgressKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!streamState.isRunStalled) {
-      stalledProgressKeyRef.current = null;
-      return;
-    }
-    if (stalledProgressKeyRef.current === null) {
-      stalledProgressKeyRef.current = stallProgressKey;
-      return;
-    }
-    if (stalledProgressKeyRef.current !== stallProgressKey) {
-      stalledProgressKeyRef.current = null;
-      handleKeepWaiting();
-    }
-  }, [handleKeepWaiting, stallProgressKey, streamState.isRunStalled]);
-
-  // "Stop and retry": cancel through the composer's stop path, settle the
-  // thread locally (the unresponsive run will not confirm the cancel, and the
-  // sidebar must stop listing the thread as working), then resend the last
-  // user message. If the send is refused, the message is restored to the
-  // composer instead.
-  const handleStopAndRetry = useCallback(async (): Promise<void> => {
-    const threadId = activeThreadId;
-    const lastUserPrompt = [...messages]
-      .reverse()
-      .find((message) => message.role === 'user')
-      ?.content.trim();
-    const isStopped = await handleStopRun();
-    if (!isStopped) {
-      return;
-    }
-    if (threadId) {
-      abandonRun(threadId);
-    }
-    clearStaleActiveRun();
-    clearRunStalledFlag();
-    if (!lastUserPrompt) {
-      return;
-    }
-    followLatestTurn('smooth');
-    if (!handleSend(lastUserPrompt)) {
-      useAgentChatStore.getState().seedComposer(lastUserPrompt, threadId);
-    }
-  }, [
-    abandonRun,
-    activeThreadId,
-    clearRunStalledFlag,
-    clearStaleActiveRun,
-    followLatestTurn,
-    handleSend,
-    handleStopRun,
-    messages,
-  ]);
-
   const sendFollowUpNow = followUpQueue.sendNow;
 
   const handleSubmitInputRequest = useCallback(
-    async (answer: string, optionIds?: string[]) => {
+    async (answer: string) => {
       const normalizedAnswer = answer.trim();
       const request = pendingInputRequest;
       if (!normalizedAnswer || !request) {
@@ -831,7 +658,6 @@ export function useAgentChatContainer({
               expectedContextVersion: thread?.contextVersion,
             };
           })(),
-          optionIds,
         );
         if (handoff) {
           if (response?.executionId) {
@@ -842,19 +668,10 @@ export function useAgentChatContainer({
         }
       } catch {
         if (handoff) {
-          cancelRunHandoff(handoff, request);
+          cancelRunHandoff(handoff);
         }
         const currentState = useAgentChatStore.getState();
         if (
-          handoff &&
-          currentState.activeThreadId === request.threadId &&
-          currentState.pendingInputRequest?.inputRequestId !==
-            request.inputRequestId
-        ) {
-          return;
-        }
-        if (
-          !handoff &&
           currentState.activeThreadId === request.threadId &&
           !currentState.pendingInputRequest
         ) {
@@ -895,28 +712,46 @@ export function useAgentChatContainer({
   );
   submitInputRequestRef.current = handleSubmitInputRequest;
 
-  const buildUiActionDeps = (): HandleUiActionDeps => ({
-    activeThreadId,
-    activeUiAction: activeUiActionRef.current,
-    adoptRun,
-    apiService,
-    beginRunHandoff,
-    cancelRunHandoff,
-    followLatestTurn,
-    isBusy,
-    isReadOnly,
-    sendMessage,
-    setActiveUiAction,
-    setError,
-    threads,
-  });
-  const buildUiActionDepsRef = useRef(buildUiActionDeps);
-  buildUiActionDepsRef.current = buildUiActionDeps;
-
   const handleUiAction = useCallback(
-    (action: string, payload?: Record<string, unknown>) =>
-      handleAgentUiAction(action, payload, buildUiActionDepsRef.current()),
-    [],
+    async (action: string, payload?: Record<string, unknown>) => {
+      return await handleAgentUiAction(action, payload, {
+        activeThreadId,
+        activeUiAction: activeUiActionRef.current,
+        addMessage,
+        apiService,
+        draftAgentMode,
+        followLatestTurn,
+        isBusy,
+        isReadOnly,
+        latestProposedPlan,
+        sendMessage,
+        setActiveThread,
+        setActiveUiAction,
+        setCreditsRemaining,
+        setError,
+        setLatestProposedPlan,
+        threads,
+        upsertThread,
+      });
+    },
+    [
+      activeThreadId,
+      addMessage,
+      apiService,
+      draftAgentMode,
+      isBusy,
+      isReadOnly,
+      latestProposedPlan,
+      followLatestTurn,
+      sendMessage,
+      setActiveThread,
+      setActiveUiAction,
+      setCreditsRemaining,
+      setError,
+      setLatestProposedPlan,
+      threads,
+      upsertThread,
+    ],
   );
 
   const handleApprovePlan = useCallback(async () => {
@@ -963,8 +798,8 @@ export function useAgentChatContainer({
   }, [onCreateFollowUpTasks, setError, workspacePlanningTaskId]);
 
   const scrollToBottom = useCallback(() => {
-    followLatestTurn('smooth');
-  }, [followLatestTurn]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
 
   const loadOlderMessages = useCallback(async () => {
     const threadId = activeThreadId;
@@ -1063,7 +898,6 @@ export function useAgentChatContainer({
     olderMessagesAbortControllerRef.current?.abort();
     olderMessagesAbortControllerRef.current = null;
     pendingScrollAnchorRef.current = null;
-    setIsAtBottom(true);
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -1072,11 +906,6 @@ export function useAgentChatContainer({
       olderMessagesAbortControllerRef.current?.abort();
     };
   }, []);
-
-  const isPlanReviewPending = hasPendingPlanReview(
-    uiActionStates,
-    latestProposedPlan?.id,
-  );
 
   const isEmpty = !hasRenderableThreadState({
     hasLatestProposedPlan: Boolean(latestProposedPlan),
@@ -1091,7 +920,6 @@ export function useAgentChatContainer({
 
   // Scroll tracking
   useEffect(() => {
-    if (isEmpty || !activeThreadId) return;
     const container = scrollContainerRef.current;
     if (!container) {
       return;
@@ -1112,7 +940,7 @@ export function useAgentChatContainer({
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [activeThreadId, isEmpty, loadOlderMessages]);
+  }, [loadOlderMessages]);
 
   // Stick-to-bottom: while the user is pinned to the bottom, every streamed
   // token, tool transition, work event, or new message re-pins the viewport.
@@ -1123,28 +951,21 @@ export function useAgentChatContainer({
     if (!isAtBottom) {
       return;
     }
-    if (!conversationMessagesBelongToThread(messages, activeThreadId)) {
-      return;
-    }
-    pinConversationScrollToBottom(scrollContainerRef.current);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   }, [
-    activeThreadId,
     isAtBottom,
-    messages,
     streamState.streamingContent,
     streamState.streamingReasoning,
     streamState.activeToolCalls.length,
     workEvents.length,
+    messages.length,
   ]);
 
   // Scroll-to-bottom when a thread first becomes readable (imperative DOM, not
   // derived UI). A thread restored from cache paints without ever flipping
   // isLoadingThread, so keying only off the loading transition would leave the
   // switch parked at the scroll offset of the thread the user just left.
-  // The persistent conversation host reuses the scroller across `[id]` values,
-  // so wait until the transcript actually belongs to the new thread before
-  // claiming the pin — same-length swaps used to skip this effect.
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (activeThreadId === null) {
       // Leaving for the no-thread surface ends this thread's claim on the
       // scroll position. Holding the id would mean re-entering that same
@@ -1155,56 +976,22 @@ export function useAgentChatContainer({
     }
 
     const hasFinishedLoading = wasLoadingThreadRef.current && !isLoadingThread;
-    const isUnpinnedThread = activeThreadId !== scrolledThreadIdRef.current;
-    const messagesMatchActiveThread = conversationMessagesBelongToThread(
-      messages,
-      activeThreadId,
-    );
+    const isNewlyRenderedThread =
+      activeThreadId !== scrolledThreadIdRef.current;
 
     if (
-      (hasFinishedLoading || isUnpinnedThread) &&
+      (hasFinishedLoading || isNewlyRenderedThread) &&
       !isLoadingThread &&
-      messagesMatchActiveThread &&
-      scrollContainerRef.current
+      messages.length > 0
     ) {
       scrolledThreadIdRef.current = activeThreadId;
-      pinConversationScrollToBottom(scrollContainerRef.current);
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
       // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change
       setIsAtBottom(true);
     }
 
     wasLoadingThreadRef.current = isLoadingThread;
-  }, [activeThreadId, isLoadingThread, messages]);
-
-  // Deferred markdown/media and composer measurement can change height after
-  // the opening layout pass. Follow those changes only while pinned.
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (
-      !container ||
-      isEmpty ||
-      !isAtBottom ||
-      isLoadingThread ||
-      !conversationMessagesBelongToThread(messages, activeThreadId)
-    )
-      return;
-    let frame = 0;
-    const pinAfterLayout = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() =>
-        pinConversationScrollToBottom(container),
-      );
-    };
-    pinAfterLayout();
-    const observer = new ResizeObserver(pinAfterLayout);
-    observer.observe(container);
-    if (container.firstElementChild)
-      observer.observe(container.firstElementChild);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [activeThreadId, isAtBottom, isEmpty, isLoadingThread, messages]);
+  }, [activeThreadId, isLoadingThread, messages.length]);
 
   // Elapsed timer for run duration
   useEffect(() => {
@@ -1254,7 +1041,7 @@ export function useAgentChatContainer({
           if (
             restoredRunId &&
             state.activeThreadId === activeThreadId &&
-            selectActiveRun(state).runId === restoredRunId
+            state.activeRunId === restoredRunId
           ) {
             clearStaleActiveRun();
           }
@@ -1272,21 +1059,6 @@ export function useAgentChatContainer({
         // WORKING are on, and no listener is attached to hear the run finish.
         if (isExecutionLive) {
           markStreamLive();
-        } else if (matchingExecution.id === restoredRunId) {
-          // The run this thread was restoring has ended. The sidebar trusts the
-          // thread summary, which the local `idle` above does not touch.
-          const thread = useAgentChatStore
-            .getState()
-            .threads.find((item) => item.id === activeThreadId);
-          if (
-            thread?.runStatus === 'queued' ||
-            thread?.runStatus === 'running'
-          ) {
-            useAgentChatStore.getState().updateThread(activeThreadId, {
-              attentionState: null,
-              runStatus: 'idle',
-            });
-          }
         }
       })
       .catch(() => {
@@ -1321,9 +1093,7 @@ export function useAgentChatContainer({
     workEvents,
     // derived
     isBusy,
-    isPlanReviewPending,
     isRunActive,
-    isTurnStalled,
     isStreamingActive,
     isEmpty,
     activeThreadTitle,
@@ -1357,8 +1127,6 @@ export function useAgentChatContainer({
     handleCopy,
     handleRetry,
     handleStopRun,
-    handleKeepWaiting,
-    handleStopAndRetry,
     sendFollowUpNow,
     followUpQueue,
     promoteQueuedFollowUp: followUpQueue.promoteOldest,

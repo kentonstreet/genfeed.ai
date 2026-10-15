@@ -1,5 +1,4 @@
 import { captureAgentRunRestore } from '@genfeedai/agent/hooks/agent-chat-stream.restore-guard';
-import { captureAgentStreamHydration } from '@genfeedai/agent/hooks/agent-chat-stream.runtime';
 import type { AgentThread } from '@genfeedai/agent/models/agent-chat.model';
 import type { AgentApiService } from '@genfeedai/agent/services/agent-api.service';
 import { useAgentChatStore } from '@genfeedai/agent/stores/agent-chat.store';
@@ -53,13 +52,12 @@ export async function restoreThreadFromSnapshot(
   deps: RestoreThreadFromSnapshotDeps,
 ): Promise<void> {
   const canRestore = captureAgentRunRestore(threadId);
-  const canHydrate = captureAgentStreamHydration(threadId);
   const [snapshot, messages] = await Promise.all([
     deps.apiService.getThreadSnapshot(threadId),
     deps.apiService.getMessages(threadId, { limit: 100 }),
   ]);
 
-  if (!canHydrate(snapshot) || !canRestore(snapshot.activeRun?.runId ?? null)) {
+  if (!canRestore(snapshot.activeRun?.runId ?? null)) {
     return;
   }
 
@@ -81,8 +79,6 @@ export async function restoreThreadFromSnapshot(
   if (!isVisible) {
     return;
   }
-  // The event position advances only with the conversation it describes.
-  state.applyThreadSnapshotState(threadId, snapshot);
 
   const pendingInputRequest = mapSnapshotPendingInputRequest(snapshot);
 
