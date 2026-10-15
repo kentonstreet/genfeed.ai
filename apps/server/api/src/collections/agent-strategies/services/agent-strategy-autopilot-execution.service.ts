@@ -44,9 +44,9 @@ import { PostsService } from '@api/collections/posts/services/posts.service';
 import { scopedWhere } from '@api/index';
 import { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
 import { AutonomousPublishPolicyService } from '@api/services/autonomous-publishing/autonomous-publish-policy.service';
+import { BatchGenerationService } from '@api/services/batch-generation/batch-generation.service';
+import { ReviewBatchItemFormat } from '@api/services/batch-generation/constants/review-batch-item-format.constant';
 import { ContentGatewayService } from '@api/services/content-gateway/content-gateway.service';
-import { ReviewTurboRunItemFormat } from '@api/services/turbo-run/constants/review-turbo-run-item-format.constant';
-import { TurboRunService } from '@api/services/turbo-run/turbo-run.service';
 import {
   ActivityEntityModel,
   ActivityKey,
@@ -58,7 +58,6 @@ import {
   PostCategory,
   TargetExecutionState,
 } from '@genfeedai/contracts';
-import { createPublishingApprovalsRoute } from '@genfeedai/contracts/constants';
 import { toPrismaJson } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { Injectable } from '@nestjs/common';
@@ -73,7 +72,7 @@ export class AgentStrategyAutopilotExecutionService {
     private readonly evaluationsOperationsService: EvaluationsOperationsService,
     private readonly postsService: PostsService,
     private readonly postAccountFanoutService: PostAccountFanoutService,
-    private readonly turboRunService: TurboRunService,
+    private readonly batchGenerationService: BatchGenerationService,
     private readonly autonomousPublishPolicy: AutonomousPublishPolicyService,
     private readonly logger: LoggerService,
   ) {}
@@ -500,7 +499,7 @@ export class AgentStrategyAutopilotExecutionService {
     const reviewHandoff = await this.createPublishingInboxHandoff({
       draftContent,
       draftId,
-      format: this.resolveReviewTurboRunItemFormat(platform),
+      format: this.resolveReviewBatchItemFormat(platform),
       gate,
       opportunity,
       organizationId,
@@ -518,7 +517,7 @@ export class AgentStrategyAutopilotExecutionService {
       'approved',
       {
         decisionReason: reviewHandoff
-          ? `Draft passed publish gate but ${blocker}, so it was handed off to publishing inbox batch ${reviewHandoff.turboRunId}.`
+          ? `Draft passed publish gate but ${blocker}, so it was handed off to publishing inbox batch ${reviewHandoff.batchId}.`
           : `Draft passed publish gate but ${blocker}.`,
       },
     );
@@ -563,7 +562,7 @@ export class AgentStrategyAutopilotExecutionService {
           ? await this.createPublishingInboxHandoff({
               draftContent,
               draftId,
-              format: this.resolveReviewTurboRunItemFormat(platform),
+              format: this.resolveReviewBatchItemFormat(platform),
               gate,
               opportunity,
               organizationId,
@@ -581,10 +580,10 @@ export class AgentStrategyAutopilotExecutionService {
         decisionReason:
           format === 'image'
             ? reviewHandoff
-              ? `Image passed quality gate and was handed off to publishing inbox batch ${reviewHandoff.turboRunId}.`
+              ? `Image passed quality gate and was handed off to publishing inbox batch ${reviewHandoff.batchId}.`
               : 'Image passed quality gate and was approved for downstream review/publishing.'
             : reviewHandoff
-              ? `Draft passed publish gate and was handed off to publishing inbox batch ${reviewHandoff.turboRunId}.`
+              ? `Draft passed publish gate and was handed off to publishing inbox batch ${reviewHandoff.batchId}.`
               : 'Draft passed publish gate and was approved.',
       },
     );
@@ -683,7 +682,7 @@ export class AgentStrategyAutopilotExecutionService {
   private async createPublishingInboxHandoff(input: {
     draftContent: string;
     draftId: string;
-    format: ReviewTurboRunItemFormat;
+    format: ReviewBatchItemFormat;
     gate: PublishGateResult;
     mediaUrl?: string;
     opportunity: AgentStrategyOpportunityDocument;
@@ -692,7 +691,7 @@ export class AgentStrategyAutopilotExecutionService {
     strategy: AgentStrategyDocument;
     userId: string;
   }): Promise<{
-    turboRunId: string;
+    batchId: string;
     postId?: string;
     reviewItemId?: string;
   } | null> {
@@ -700,7 +699,7 @@ export class AgentStrategyAutopilotExecutionService {
       return null;
     }
 
-    const turboRun = await this.turboRunService.createManualReviewTurboRun(
+    const batch = await this.batchGenerationService.createManualReviewBatch(
       {
         agentStrategyId: getStrategyId(input.strategy),
         brandId: getStrategyBrandId(input.strategy) ?? '',
@@ -729,7 +728,7 @@ export class AgentStrategyAutopilotExecutionService {
       input.organizationId,
     );
 
-    const reviewItem = turboRun.items[0];
+    const reviewItem = batch.items[0];
     const linkedPost = await this.postsService.findOne(
       scopedWhere(input.organizationId, { id: input.draftId }),
     );
@@ -742,7 +741,7 @@ export class AgentStrategyAutopilotExecutionService {
             ...getDraftGenerationSettings(linkedPost),
             metadata: {
               ...getDraftMetadata(linkedPost),
-              reviewTurboRunId: turboRun.id,
+              reviewBatchId: batch.id,
               reviewItemId: reviewItem?.id,
               reviewPostId: reviewItem?.postId,
             },
@@ -753,7 +752,7 @@ export class AgentStrategyAutopilotExecutionService {
 
     if (reviewItem?.postId) {
       await this.createPublishingInboxActivity({
-        turboRunId: turboRun.id,
+        batchId: batch.id,
         format: input.format,
         mediaUrl: input.mediaUrl,
         organizationId: input.organizationId,
@@ -767,15 +766,15 @@ export class AgentStrategyAutopilotExecutionService {
     }
 
     return {
-      turboRunId: turboRun.id,
+      batchId: batch.id,
       postId: reviewItem?.postId,
       reviewItemId: reviewItem?.id,
     };
   }
 
-  private resolveReviewTurboRunItemFormat(
+  private resolveReviewBatchItemFormat(
     platform?: string,
-  ): ReviewTurboRunItemFormat {
+  ): ReviewBatchItemFormat {
     const normalizedPlatform = platform?.toLowerCase();
 
     if (
@@ -790,8 +789,8 @@ export class AgentStrategyAutopilotExecutionService {
   }
 
   private async createPublishingInboxActivity(input: {
-    turboRunId: string;
-    format: ReviewTurboRunItemFormat;
+    batchId: string;
+    format: ReviewBatchItemFormat;
     mediaUrl?: string;
     organizationId: string;
     platform?: string;
@@ -801,10 +800,9 @@ export class AgentStrategyAutopilotExecutionService {
     topic: string;
     userId: string;
   }): Promise<void> {
-    const href = createPublishingApprovalsRoute({
-      run: input.turboRunId,
-      item: input.reviewItemId,
-    });
+    const href = `/publishing/review?batch=${input.batchId}${
+      input.reviewItemId ? `&item=${input.reviewItemId}` : ''
+    }`;
     const label = `Autopilot ${input.format} ready for review`;
     const description = `${input.topic} is ready in the publishing inbox.`;
 
@@ -818,7 +816,7 @@ export class AgentStrategyAutopilotExecutionService {
         source: ActivitySource.POST_GENERATION,
         userId: input.userId,
         value: JSON.stringify({
-          turboRunId: input.turboRunId,
+          batchId: input.batchId,
           description,
           format: input.format,
           href,
@@ -839,7 +837,7 @@ export class AgentStrategyAutopilotExecutionService {
       });
     } catch (error) {
       this.logger.warn('Failed to create publishing inbox activity', {
-        turboRunId: input.turboRunId,
+        batchId: input.batchId,
         error,
         postId: input.postId,
         reviewItemId: input.reviewItemId,

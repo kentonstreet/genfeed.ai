@@ -141,7 +141,7 @@ export function buildReadyDraftReceipt(
   const metadata = { ...readArtifactRecord(generation.metadata) };
   for (const key of [
     'cadenceQualityReceipt',
-    'reviewTurboRunId',
+    'reviewBatchId',
     'reviewItemId',
     'reviewPostId',
   ])

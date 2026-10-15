@@ -1,20 +1,20 @@
-import { runWithGenerationEntry } from '@api/action-origin/action-origin.context';
 import { AgentMessagesService } from '@api/collections/agent-messages/services/agent-messages.service';
 import { AgentThreadsService } from '@api/collections/agent-threads/services/agent-threads.service';
 import { CreditsUtilsService } from '@api/collections/credits/services/credits.utils.service';
 import { SettingsService } from '@api/collections/settings/services/settings.service';
+import { normalizeRequestedSkillSlugs } from '@api/collections/skills/utils/requested-skill-slugs.util';
 import { AGENT_RUNTIME_ACTION_IDS } from '@api/collections/workflows/services/agent-runtime-workflow-definitions';
 import {
   type SystemWorkflowActionRequest,
   SystemWorkflowRunnerService,
 } from '@api/collections/workflows/system-workflow-runner.service';
 import { AgentChatModelRegistryService } from '@api/services/agent-orchestrator/agent-chat-model-registry.service';
+import { AgentOrchestratorBatchService } from '@api/services/agent-orchestrator/agent-orchestrator-batch.service';
 import { AgentOrchestratorContextService } from '@api/services/agent-orchestrator/agent-orchestrator-context.service';
 import { AgentOrchestratorPlanModeService } from '@api/services/agent-orchestrator/agent-orchestrator-plan-mode.service';
 import { AgentOrchestratorRecurringTaskService } from '@api/services/agent-orchestrator/agent-orchestrator-recurring-task.service';
 import { AgentOrchestratorStreamLoopService } from '@api/services/agent-orchestrator/agent-orchestrator-stream-loop.service';
 import { AgentOrchestratorSyncLoopService } from '@api/services/agent-orchestrator/agent-orchestrator-sync-loop.service';
-import { AgentOrchestratorTurboRunService } from '@api/services/agent-orchestrator/agent-orchestrator-turbo-run.service';
 import { AgentOrchestratorUiActionService } from '@api/services/agent-orchestrator/agent-orchestrator-ui-action.service';
 import { AgentStreamEffectsService } from '@api/services/agent-orchestrator/agent-stream-effects.service';
 import { AgentThreadEventRecorderService } from '@api/services/agent-orchestrator/agent-thread-event-recorder.service';
@@ -22,24 +22,16 @@ import type {
   AgentChatContext,
   AgentChatRequest,
   AgentChatResult,
+  AgentGenerationSettings,
   AgentThreadUiActionRequest,
 } from '@api/services/agent-orchestrator/interfaces/agent-chat.interface';
 import type { ResolvedAgentExecutionPolicy } from '@api/services/agent-orchestrator/interfaces/agent-execution-policy.interface';
 import { persistComposerGenerationSource } from '@api/services/agent-orchestrator/persist-composer-generation-source';
-import {
-  type AgentInitiatingPrincipal,
-  projectAgentInitiatingPrincipal,
-} from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import { buildAgentRoutingMetadata } from '@api/services/agent-orchestrator/utils/agent-routing-policy.util';
 import {
   buildSeedThreadTitle,
   maybeUpdateThreadTitle,
 } from '@api/services/agent-orchestrator/utils/agent-thread-title.util';
-import {
-  optionalString,
-  projectAgentTurnRequest,
-  requiredString,
-} from '@api/services/agent-orchestrator/utils/agent-turn-request-projection.util';
 import { announceUiActionRun } from '@api/services/agent-orchestrator/utils/agent-ui-action-announcement.util';
 import { AgentExecutionLaneService } from '@api/services/agent-threading/services/agent-execution-lane.service';
 import {
@@ -48,18 +40,21 @@ import {
 } from '@api/services/agent-threading/services/agent-runtime-session.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
+  AgentAutonomyMode,
   AgentMessageRole,
+  AgentThreadMode,
   AgentThreadStatus,
   AgentType,
   isExplicitAgentMediaGenerationMode,
+  KnowledgeSourcePurpose,
   resolveAgentTurnGenerationMode,
   toRouterPriority,
 } from '@genfeedai/contracts';
+import type { KnowledgeSelection } from '@genfeedai/contracts/interfaces';
 import {
   toAgentScopeMetadata,
   type ValidatedAgentScope,
 } from '@genfeedai/contracts/interfaces';
-import { parseGenerationEntry } from '@genfeedai/contracts/interfaces/content/generation-entry.interface';
 import { readRecord } from '@genfeedai/utils/data/extract.util';
 import {
   BadRequestException,
@@ -72,10 +67,7 @@ export type PreparedAgentTurnState = {
   campaignId?: string;
   executionId: string;
   organizationId: string;
-  request: AgentChatRequest & {
-    initiatingPrincipal?: AgentInitiatingPrincipal;
-    threadId: string;
-  };
+  request: AgentChatRequest & { threadId: string };
   strategyId?: string;
   threadId: string;
   userId: string;
@@ -91,8 +83,242 @@ export type AgentTurnWorkflowResult = {
   threadId: string;
 };
 
+type AgentTurnWorkflowRequest = AgentChatRequest & {
+  campaignId?: string;
+  strategyId?: string;
+};
+
 const ARCHIVED_THREAD_WRITE_ERROR =
   'This thread is archived. Unarchive it before sending messages or running actions.';
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${field} is required`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function optionalNumber(
+  value: unknown,
+  field: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < minimum ||
+    value > maximum
+  ) {
+    throw new Error(
+      `${field} must be an integer from ${minimum} to ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function projectGenerationSettings(
+  value: unknown,
+): AgentGenerationSettings | undefined {
+  if (value === undefined) return undefined;
+  const settings = readRecord(value);
+  const aspectRatio = requiredString(
+    settings.aspectRatio,
+    'request.generationSettings.aspectRatio',
+  ).trim();
+  const prioritize = toRouterPriority(optionalString(settings.prioritize));
+  if (settings.prioritize !== undefined && !prioritize) {
+    throw new Error('request.generationSettings.prioritize is unsupported');
+  }
+  const duration = optionalNumber(
+    settings.duration,
+    'request.generationSettings.duration',
+    1,
+    60,
+  );
+  const model = optionalString(settings.model);
+  const outputs = optionalNumber(
+    settings.outputs,
+    'request.generationSettings.outputs',
+    1,
+    8,
+  );
+  const resolution = optionalString(settings.resolution);
+  return {
+    aspectRatio,
+    ...(duration !== undefined ? { duration } : {}),
+    ...(model ? { model } : {}),
+    ...(outputs !== undefined ? { outputs } : {}),
+    ...(prioritize ? { prioritize } : {}),
+    ...(resolution ? { resolution } : {}),
+  };
+}
+
+function projectStringList(value: unknown, path: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => typeof item !== 'string' || !item.trim())
+  ) {
+    throw new Error(`${path} must be a list of non-empty strings`);
+  }
+  return value.length > 0 ? (value as string[]) : undefined;
+}
+
+function projectKnowledgeSelection(
+  value: unknown,
+): KnowledgeSelection | undefined {
+  if (value === undefined) return undefined;
+  const selection = readRecord(value);
+  const sourceIds = projectStringList(
+    selection.sourceIds,
+    'request.knowledgeSelection.sourceIds',
+  );
+  const spaceIds = projectStringList(
+    selection.spaceIds,
+    'request.knowledgeSelection.spaceIds',
+  );
+  const purposes = projectStringList(
+    selection.purposes,
+    'request.knowledgeSelection.purposes',
+  );
+  if (
+    purposes?.some(
+      (purpose) =>
+        !Object.values(KnowledgeSourcePurpose).includes(
+          purpose as KnowledgeSourcePurpose,
+        ),
+    )
+  ) {
+    throw new Error('request.knowledgeSelection.purposes is unsupported');
+  }
+  if (!sourceIds && !spaceIds && !purposes) return undefined;
+  return {
+    ...(sourceIds ? { sourceIds } : {}),
+    ...(spaceIds ? { spaceIds } : {}),
+    ...(purposes ? { purposes: purposes as KnowledgeSourcePurpose[] } : {}),
+  };
+}
+
+function projectAgentTurnRequest(value: unknown): AgentTurnWorkflowRequest & {
+  threadId: string;
+} {
+  const request = readRecord(value);
+  const content = requiredString(request.content, 'request.content');
+  const threadId = requiredString(request.threadId, 'request.threadId');
+  const source = optionalString(request.source);
+  if (source && !['agent', 'onboarding', 'proactive'].includes(source)) {
+    throw new Error(`Unsupported agent request source: ${source}`);
+  }
+  const creditBudget = request.creditBudget;
+  if (
+    creditBudget !== undefined &&
+    (typeof creditBudget !== 'number' ||
+      !Number.isFinite(creditBudget) ||
+      creditBudget < 0)
+  ) {
+    throw new Error('request.creditBudget must be finite and nonnegative');
+  }
+  const autonomyMode = request.autonomyMode;
+  if (
+    autonomyMode !== undefined &&
+    !Object.values(AgentAutonomyMode).includes(
+      autonomyMode as AgentAutonomyMode,
+    )
+  ) {
+    throw new Error('request.autonomyMode is unsupported');
+  }
+  const generationMode = optionalString(request.generationMode);
+  if (generationMode && !['auto', 'image', 'video'].includes(generationMode)) {
+    throw new Error(`Unsupported generation mode: ${generationMode}`);
+  }
+  const agentMode = optionalString(request.agentMode);
+  if (
+    agentMode &&
+    !(Object.values(AgentThreadMode) as string[]).includes(agentMode)
+  ) {
+    throw new Error(`Unsupported agent mode: ${agentMode}`);
+  }
+  return {
+    content,
+    threadId,
+    ...(creditBudget !== undefined
+      ? { creditBudget: creditBudget as number }
+      : {}),
+    ...(autonomyMode !== undefined
+      ? { autonomyMode: autonomyMode as AgentAutonomyMode }
+      : {}),
+    ...(optionalString(request.agentType)
+      ? { agentType: optionalString(request.agentType) as AgentType }
+      : {}),
+    ...(Array.isArray(request.artifactReferences)
+      ? { artifactReferences: request.artifactReferences }
+      : {}),
+    ...(Array.isArray(request.attachments)
+      ? { attachments: request.attachments }
+      : {}),
+    ...(request.brandId === null || typeof request.brandId === 'string'
+      ? { brandId: request.brandId }
+      : {}),
+    ...(optionalString(request.campaignId)
+      ? { campaignId: optionalString(request.campaignId) }
+      : {}),
+    ...(optionalString(request.clientRequestId)
+      ? { clientRequestId: optionalString(request.clientRequestId) }
+      : {}),
+    ...(typeof request.expectedContextVersion === 'number'
+      ? { expectedContextVersion: request.expectedContextVersion }
+      : {}),
+    ...(generationMode
+      ? {
+          generationMode: generationMode as AgentChatRequest['generationMode'],
+        }
+      : {}),
+    ...(request.generationSettings !== undefined
+      ? {
+          generationSettings: projectGenerationSettings(
+            request.generationSettings,
+          ),
+        }
+      : {}),
+    ...(request.requestedSkillSlugs !== undefined
+      ? {
+          requestedSkillSlugs: normalizeRequestedSkillSlugs(
+            request.requestedSkillSlugs,
+          ),
+        }
+      : {}),
+    ...(request.knowledgeSelection !== undefined
+      ? {
+          knowledgeSelection: projectKnowledgeSelection(
+            request.knowledgeSelection,
+          ),
+        }
+      : {}),
+    ...(optionalString(request.model)
+      ? { model: optionalString(request.model) }
+      : {}),
+    ...(readRecord(request.pageContext) !== request.pageContext
+      ? {}
+      : { pageContext: readRecord(request.pageContext) }),
+    ...(agentMode ? { agentMode: agentMode as AgentThreadMode } : {}),
+    ...(source ? { source: source as AgentChatRequest['source'] } : {}),
+    ...(optionalString(request.strategyId)
+      ? { strategyId: optionalString(request.strategyId) }
+      : {}),
+    ...(optionalString(request.systemPromptOverride)
+      ? { systemPromptOverride: optionalString(request.systemPromptOverride) }
+      : {}),
+    ...(optionalString(request.transferId)
+      ? { transferId: optionalString(request.transferId) }
+      : {}),
+  };
+}
 
 @Injectable()
 export class AgentTurnWorkflowExecutionService implements OnModuleInit {
@@ -105,7 +331,7 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     private readonly agentChatModelRegistry: AgentChatModelRegistryService,
     private readonly contextService: AgentOrchestratorContextService,
     private readonly planModeService: AgentOrchestratorPlanModeService,
-    private readonly turboRunService: AgentOrchestratorTurboRunService,
+    private readonly batchService: AgentOrchestratorBatchService,
     private readonly recurringTaskService: AgentOrchestratorRecurringTaskService,
     private readonly streamLoopService: AgentOrchestratorStreamLoopService,
     private readonly syncLoopService: AgentOrchestratorSyncLoopService,
@@ -132,9 +358,7 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
       const state = input.state as PreparedAgentTurnState;
       return {
         decision: 'final' as const,
-        final: await runWithGenerationEntry(state.request.generationEntry, () =>
-          this.execute(state),
-        ),
+        final: await this.execute(state),
         state,
         toolItems: [],
       };
@@ -148,49 +372,31 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     );
     registerAction(
       AGENT_RUNTIME_ACTION_IDS.UI_ACTION,
-      ({ context, input, provenance }) => {
-        const request = readRecord(input.request);
-        const generationEntry = parseGenerationEntry(request.generationEntry);
-        const initiatingPrincipal = projectAgentInitiatingPrincipal(
-          request.initiatingPrincipal,
-          context,
-        );
-        return runWithGenerationEntry(generationEntry, () =>
-          this.executeUiAction(
-            request as unknown as AgentThreadUiActionRequest,
-            {
-              executionId: provenance.executionId,
-              generationEntry,
-              ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
-              organizationId: context.organizationId,
-              userId: context.userId,
-            },
-          ),
-        );
-      },
+      ({ context, input, provenance }) =>
+        this.executeUiAction(
+          readRecord(input.request) as unknown as AgentThreadUiActionRequest,
+          {
+            executionId: provenance.executionId,
+            organizationId: context.organizationId,
+            userId: context.userId,
+          },
+        ),
     );
     registerAction(
       AGENT_RUNTIME_ACTION_IDS.INPUT_RESPONSE,
       ({ context, input, provenance }) => {
         const request = readRecord(input.request);
-        const initiatingPrincipal = projectAgentInitiatingPrincipal(
-          request.initiatingPrincipal,
-          context,
-        );
-        return runWithGenerationEntry(request.generationEntry, () =>
-          this.resumeInput({
-            answer: requiredString(request.answer, 'request.answer'),
-            executionId: provenance.executionId,
-            ...(optionalString(request.fieldId)
-              ? { fieldId: optionalString(request.fieldId) }
-              : {}),
-            ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
-            organizationId: context.organizationId,
-            scope: readRecord(request.scope) as unknown as ValidatedAgentScope,
-            threadId: requiredString(request.threadId, 'request.threadId'),
-            userId: context.userId,
-          }),
-        );
+        return this.resumeInput({
+          answer: requiredString(request.answer, 'request.answer'),
+          executionId: provenance.executionId,
+          ...(optionalString(request.fieldId)
+            ? { fieldId: optionalString(request.fieldId) }
+            : {}),
+          organizationId: context.organizationId,
+          scope: readRecord(request.scope) as unknown as ValidatedAgentScope,
+          threadId: requiredString(request.threadId, 'request.threadId'),
+          userId: context.userId,
+        });
       },
     );
   }
@@ -376,7 +582,7 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     const handledDeterministically =
       request.source !== 'proactive' &&
       request.creditBudget === undefined &&
-      ((await this.turboRunService.tryHandleTurboRunTurnStream(
+      ((await this.batchService.tryHandleBatchGenerationTurnStream(
         {
           context,
           model,
@@ -423,11 +629,11 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     if (
       state.request.source !== 'proactive' ||
       !state.strategyId ||
-      !this.turboRunService.tryExecuteCadence
+      !this.batchService.tryExecuteCadence
     )
       return null;
     return this.executionLaneService.runExclusive(state.threadId, () =>
-      this.turboRunService.tryExecuteCadence(state),
+      this.batchService.tryExecuteCadence(state),
     );
   }
 
@@ -492,7 +698,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
       ...baseContext,
       generationPriority,
       generationSettings: request.generationSettings,
-      generationEntry: parseGenerationEntry(request.generationEntry),
       hostSupportsApproval: request.hostSupportsApproval ?? true,
       ...(request.knowledgeSelection
         ? { knowledgeSelection: request.knowledgeSelection }
@@ -576,33 +781,8 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     return this.readCompletedTurn(state.threadId, state.organizationId, model);
   }
 
-  /**
-   * The authenticated principal the accepted turn acts for. Proactive,
-   * campaign and strategy runs are system turns: they are enqueued without a
-   * request principal and never acquire one here. The schedules they save bind
-   * to the strategy's persisted actor instead
-   * (`AgentStrategyScheduleAuthorityService`), read live at each save.
-   */
-  private resolveTurnPrincipal(
-    state: PreparedAgentTurnState,
-  ): AgentInitiatingPrincipal | undefined {
-    if (
-      state.request.source === 'proactive' ||
-      state.strategyId ||
-      state.campaignId
-    ) {
-      return undefined;
-    }
-    return projectAgentInitiatingPrincipal(state.request.initiatingPrincipal, {
-      organizationId: state.organizationId,
-      userId: state.userId,
-    });
-  }
-
   private buildBaseContext(state: PreparedAgentTurnState): AgentChatContext {
-    const initiatingPrincipal = this.resolveTurnPrincipal(state);
     return {
-      ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
       ...(state.request.requestedSkillSlugs?.length
         ? { requestedSkillSlugs: state.request.requestedSkillSlugs }
         : {}),
@@ -614,7 +794,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
         : {}),
       executionId: state.executionId,
       executionMode: 'background',
-      generationEntry: parseGenerationEntry(state.request.generationEntry),
       organizationId: state.organizationId,
       userId: state.userId,
       ...(state.campaignId ? { campaignId: state.campaignId } : {}),
@@ -742,7 +921,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     answer: string;
     executionId: string;
     fieldId?: string;
-    initiatingPrincipal?: AgentInitiatingPrincipal;
     organizationId: string;
     scope: ValidatedAgentScope;
     threadId: string;

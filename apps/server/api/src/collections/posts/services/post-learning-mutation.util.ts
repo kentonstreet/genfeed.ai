@@ -431,14 +431,10 @@ async function readPostMutationSnapshots(
     // tenant-scope-ignore: exact original-org tombstone read is required after owned soft deletion.
     const current = await tx.post.findFirst({
       where: { id: row.id, organizationId: plan.organizationId },
-      select: {
-        ...learningPublicationPostSelect,
-        ingredientLinks: { select: { ingredient: true } },
-      },
+      select: { ...learningPublicationPostSelect, ingredients: true },
     });
     if (!current) throw new ConflictException('Post vanished during mutation.');
-    const { ingredientLinks, ...canonical } = current;
-    const ingredients = ingredientLinks.map((link) => link.ingredient);
+    const { ingredients, ...canonical } = current;
     snapshots.push({
       row: canonical,
       material: projectPostArtifactMaterial(

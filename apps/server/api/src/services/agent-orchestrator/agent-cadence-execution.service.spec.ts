@@ -48,19 +48,10 @@ function setup() {
     generateContent: vi.fn().mockResolvedValue({
       success: true,
       creditsUsed: GENERATE_CONTENT_TEXT_CREDITS,
-      data: {
-        content: 'Useful content',
-        postId: 'draft',
-        receiptId: 'receipt',
-      },
+      data: { content: 'Useful content' },
     }),
   };
-  const posts = {
-    create: vi.fn(),
-    patchOneWhere: vi
-      .fn()
-      .mockResolvedValue({ id: 'draft', description: 'Useful content' }),
-  };
+  const posts = { create: vi.fn().mockResolvedValue({ id: 'draft' }) };
   const optimizers = {
     analyzeContent: vi
       .fn()
@@ -176,15 +167,7 @@ describe('active cadence workflow execution', () => {
       GENERATE_CONTENT_TEXT_CREDITS,
     );
     expect(s.text.generateContent).toHaveBeenCalledOnce();
-    expect(s.posts.create).not.toHaveBeenCalled();
-    expect(s.posts.patchOneWhere).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'draft',
-        organizationId: 'organization',
-        brandId: 'brand',
-        isDeleted: false,
-        targetExecutionState: TargetExecutionState.DRAFT,
-      }),
+    expect(s.posts.create).toHaveBeenCalledWith(
       expect.objectContaining({
         agentStrategyId: 'strategy',
         organizationId: 'organization',
@@ -192,7 +175,6 @@ describe('active cadence workflow execution', () => {
         workflowExecutionId: state.executionId,
         targetExecutionState: TargetExecutionState.DRAFT,
       }),
-      [],
     );
     expect(s.strategies.recordRun).toHaveBeenCalledWith(
       'strategy',
@@ -204,30 +186,9 @@ describe('active cadence workflow execution', () => {
       'organization',
     );
   });
-  it('refuses a missing receipt-bound draft while preserving paid usage', async () => {
-    const s = setup();
-    s.posts.patchOneWhere.mockResolvedValue(null);
-    s.autopilot.executeQueuedRun.mockImplementation(
-      async ({ draftGenerator }) => draftGenerator(s.input),
-    );
-    await expect(s.service.tryExecute(state)).rejects.toThrow(
-      'receipt-bound cadence draft',
-    );
-    expect(s.posts.create).not.toHaveBeenCalled();
-    expect(s.strategies.recordRun).toHaveBeenCalledWith(
-      'strategy',
-      expect.objectContaining({
-        contentGenerated: 0,
-        creditsUsed: GENERATE_CONTENT_TEXT_CREDITS,
-        status: AgentStrategyRunStatus.FAILED,
-      }),
-      'organization',
-    );
-  });
-
   it('retains paid usage when draft persistence fails and aborts the run', async () => {
     const s = setup();
-    s.posts.patchOneWhere.mockRejectedValue(new Error('Persistence failed'));
+    s.posts.create.mockRejectedValue(new Error('Persistence failed'));
     s.autopilot.executeQueuedRun.mockImplementation(
       async ({ draftGenerator }) => draftGenerator(s.input),
     );

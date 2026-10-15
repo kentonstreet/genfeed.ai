@@ -190,8 +190,7 @@ describe('PostsService batchSchedule', () => {
       parentId: null,
       isDeleted: false,
       ingredients: [],
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [],
+      _count: { children: 0, ingredients: 0 },
       publishApprovalId: null,
       reviewVersionPinId: null,
       category: PostCategory.TEXT,
@@ -228,7 +227,7 @@ describe('PostsService batchSchedule', () => {
         parentId: 'parent-1',
         platform: CredentialPlatform.TWITTER,
         promptUsed: 'Write a concise launch post',
-        reviewTurboRunId: 'review-batch-1',
+        reviewBatchId: 'review-batch-1',
         reviewItemId: 'review-item-1',
         sourceActionId: 'action-1',
         sourceWorkflowId: 'workflow-1',
@@ -255,24 +254,13 @@ describe('PostsService batchSchedule', () => {
       agentStrategyId: 'strategy-1',
       agentThreadId: 'thread-1',
       credentialId: 'credential-1',
-      ingredientLinks: {
-        create: [
-          {
-            ingredientId: 'ingredient-1',
-            organizationId: 'org-1',
-            position: 0,
-          },
-          {
-            ingredientId: 'ingredient-2',
-            organizationId: 'org-1',
-            position: 1,
-          },
-        ],
+      ingredients: {
+        connect: [{ id: 'ingredient-1' }, { id: 'ingredient-2' }],
       },
       organizationId: 'org-1',
       parentId: 'parent-1',
       promptUsed: 'Write a concise launch post',
-      reviewTurboRunId: 'review-batch-1',
+      reviewBatchId: 'review-batch-1',
       reviewItemId: 'review-item-1',
       sourceActionId: 'action-1',
       sourceWorkflowId: 'workflow-1',
@@ -373,13 +361,7 @@ describe('PostsService batchSchedule', () => {
     let root: (Record<string, unknown> & { id: string }) | undefined;
     let children = 0;
     post.findFirst.mockImplementation(async () =>
-      root
-        ? {
-            ...root,
-            _count: { children, ingredientLinks: 0 },
-            ingredientLinks: [],
-          }
-        : null,
+      root ? { ...root, _count: { children, ingredients: 0 } } : null,
     );
     post.create
       .mockImplementationOnce(({ data }: { data: Record<string, unknown> }) => {
@@ -623,8 +605,7 @@ describe('PostsService batchSchedule', () => {
       targetExecutionState: TargetExecutionState.DRAFT,
       visibility: PostVisibility.PUBLIC,
       ingredients: [],
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [],
+      _count: { children: 0, ingredients: 0 },
       organizationId: 'org-1',
       publishApprovalId: null,
     });
@@ -664,8 +645,7 @@ describe('PostsService batchSchedule', () => {
       targetExecutionState: TargetExecutionState.DRAFT,
       visibility: PostVisibility.PUBLIC,
       ingredients: [],
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [],
+      _count: { children: 0, ingredients: 0 },
       organizationId: 'org-1',
       publishApprovalId: null,
     });
@@ -697,8 +677,7 @@ describe('PostsService batchSchedule', () => {
       targetExecutionState: TargetExecutionState.DRAFT,
       visibility: PostVisibility.PUBLIC,
       ingredients: [],
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [],
+      _count: { children: 0, ingredients: 0 },
       organizationId: 'org-1',
       publishApprovalId: null,
     });
@@ -723,8 +702,7 @@ describe('PostsService batchSchedule', () => {
       targetExecutionState: TargetExecutionState.DRAFT,
       visibility: PostVisibility.PUBLIC,
       ingredients: [],
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [],
+      _count: { children: 0, ingredients: 0 },
       organizationId: 'org-1',
       publishApprovalId: null,
     });
@@ -745,8 +723,7 @@ describe('PostsService batchSchedule', () => {
       isDeleted: false,
       targetExecutionState: TargetExecutionState.DRAFT,
       visibility: PostVisibility.PUBLIC,
-      _count: { children: 0, ingredientLinks: 0 },
-      ingredientLinks: [{ ingredient: { id: 'ingredient-1' } }],
+      _count: { children: 0, ingredients: 0 },
       organizationId: 'org-1',
       publishApprovalId: null,
 
@@ -754,6 +731,7 @@ describe('PostsService batchSchedule', () => {
       credentialId: 'credential-1',
       description: 'Existing caption',
       id: 'post-1',
+      ingredients: [{ id: 'ingredient-1' }],
       parentId: null,
       platform: CredentialPlatform.TWITTER,
       status: PostStatus.DRAFT,
@@ -795,14 +773,14 @@ describe('PostsService batchSchedule', () => {
         brandId: null,
         isDeleted: false,
         parentId: null,
-        _count: { children: 0, ingredientLinks: 0 },
-        ingredientLinks: [{ ingredient: { id: 'ingredient-1' } }],
+        _count: { children: 0, ingredients: 0 },
         publishApprovalId: null,
 
         category: 'IMAGE',
         credentialId: 'credential-1',
         description: 'Existing caption',
         id: 'post-1',
+        ingredients: [{ id: 'ingredient-1' }],
         organizationId: 'org-1',
         platform: CredentialPlatform.INSTAGRAM,
         targetExecutionState: TargetExecutionState.SCHEDULED,
@@ -828,14 +806,14 @@ describe('PostsService batchSchedule', () => {
         brandId: null,
         isDeleted: false,
         parentId: null,
-        _count: { children: 0, ingredientLinks: 0 },
-        ingredientLinks: [{ ingredient: { id: 'ingredient-1' } }],
+        _count: { children: 0, ingredients: 0 },
         publishApprovalId: null,
 
         category: 'VIDEO',
         credentialId: 'credential-1',
         description: 'Existing caption',
         id: 'post-1',
+        ingredients: [{ id: 'ingredient-1' }],
         organizationId: 'org-1',
         platform: CredentialPlatform.YOUTUBE,
         targetExecutionState: TargetExecutionState.SCHEDULED,
@@ -860,14 +838,14 @@ describe('PostsService batchSchedule', () => {
         brandId: null,
         isDeleted: false,
         parentId: null,
-        _count: { children: 0, ingredientLinks: 0 },
-        ingredientLinks: [{ ingredient: { id: 'ingredient-1' } }],
+        _count: { children: 0, ingredients: 0 },
         publishApprovalId: null,
 
         category: 'VIDEO',
         credentialId: 'credential-1',
         description: 'Existing caption',
         id: 'post-1',
+        ingredients: [{ id: 'ingredient-1' }],
         organizationId: 'org-1',
         platform: CredentialPlatform.YOUTUBE,
         targetExecutionState: TargetExecutionState.SCHEDULED,
@@ -885,8 +863,7 @@ describe('PostsService batchSchedule', () => {
         brandId: null,
         isDeleted: false,
         parentId: null,
-        _count: { children: 0, ingredientLinks: 0 },
-        ingredientLinks: [],
+        _count: { children: 0, ingredients: 0 },
         publishApprovalId: null,
 
         category: 'TEXT',
@@ -1106,29 +1083,10 @@ describe('PostsService batchSchedule', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           credentialId: 'credential-1',
-          ingredientLinks: {
-            createMany: {
-              data: [
-                { ingredientId: 'ing-1', organizationId: 'org-1', position: 0 },
-                { ingredientId: 'ing-2', organizationId: 'org-1', position: 1 },
-              ],
-              skipDuplicates: true,
-            },
-            deleteMany: { ingredientId: { notIn: ['ing-1', 'ing-2'] } },
-            updateMany: [
-              { data: { position: 0 }, where: { ingredientId: 'ing-1' } },
-              { data: { position: 1 }, where: { ingredientId: 'ing-2' } },
-            ],
-          },
+          ingredients: { set: [{ id: 'ing-1' }, { id: 'ing-2' }] },
           platform: CredentialPlatform.TWITTER,
         }),
-        include: {
-          credential: true,
-          ingredientLinks: {
-            include: { ingredient: true },
-            orderBy: [{ position: 'asc' }, { id: 'asc' }],
-          },
-        },
+        include: { credential: true, ingredients: true },
       }),
     );
   });
@@ -1337,11 +1295,8 @@ describe('post owner learning mutation protocol', () => {
           children: rows.filter(
             (child) => child.parentId === row.id && !child.isDeleted,
           ).length,
-          ingredientLinks: (row.ingredients as unknown[]).length,
+          ingredients: (row.ingredients as unknown[]).length,
         },
-        ingredientLinks: (row.ingredients as unknown[]).map((ingredient) => ({
-          ingredient,
-        })),
       };
       return select
         ? Object.fromEntries(
@@ -1435,14 +1390,12 @@ describe('post owner learning mutation protocol', () => {
       ) => {
         const row = rows.find((row) => matches(row, where));
         if (!row) throw new Error('stale post');
-        const { ingredientLinks, ...scalars } = data;
+        const { ingredients, ...scalars } = data;
         Object.assign(row, scalars);
-        if (ingredientLinks)
-          row.ingredients = (
-            ingredientLinks as {
-              createMany: { data: { ingredientId: string }[] };
-            }
-          ).createMany.data.map(({ ingredientId }) => ({ id: ingredientId }));
+        if (ingredients)
+          row.ingredients = (ingredients as { set: { id: string }[] }).set.map(
+            (value) => ({ ...value }),
+          );
         return { ...row } as never;
       },
     };
@@ -1752,11 +1705,8 @@ describe('PostsService child creation authority', () => {
           children: rows.filter(
             (child) => child.parentId === row.id && !child.isDeleted,
           ).length,
-          ingredientLinks: (row.ingredients as unknown[]).length,
+          ingredients: (row.ingredients as unknown[]).length,
         },
-        ingredientLinks: (row.ingredients as unknown[]).map((ingredient) => ({
-          ingredient,
-        })),
       };
       return select
         ? Object.fromEntries(
@@ -1969,6 +1919,7 @@ describe('PostsService child creation authority', () => {
     expect(value.order.slice(-3)).toEqual(['commit', 'cache', 'telemetry']);
     expect(value.bind).toHaveBeenCalledTimes(1);
     expect(value.tx.post.create.mock.calls[0][0].data).toMatchObject({
+      ingredients: { connect: [] },
       tags: { connect: [] },
       parentId: 'parent',
     });

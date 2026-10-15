@@ -8,12 +8,10 @@ import {
 import { SuggestHashtagsDto } from '@api/collections/optimizers/dto/hashtags.dto';
 import { OptimizeContentDto } from '@api/collections/optimizers/dto/optimize.dto';
 import { GenerateVariantsDto } from '@api/collections/optimizers/dto/variants.dto';
-import type { OptimizerAnalysisContinuation } from '@api/collections/optimizers/services/optimizer-analysis-continuation.types';
 import { DEFAULT_TEXT_MODEL } from '@api/constants/default-text-model.constant';
 import { HandleErrors } from '@api/helpers/decorators/error-handler.decorator';
 import { calculateEstimatedTextCredits } from '@api/helpers/utils/text-pricing/text-pricing.util';
 import { scopedWhere } from '@api/index';
-import { buildReplicateStructuredPrompt } from '@api/services/integrations/llm/replicate-structured-prompt.util';
 import { ReplicateService } from '@api/services/integrations/replicate/services/replicate.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
@@ -46,34 +44,6 @@ export class OptimizersService {
     private readonly replicateService: ReplicateService,
   ) {}
 
-  /** Read-only first-attempt estimate using the same prompt, schema, model and output bound as analysis. */
-  async estimateAnalysisCredits(
-    dto: AnalyzeContentDto,
-    reauthorize: () => Promise<void>,
-  ): Promise<number> {
-    await reauthorize();
-    const model = await this.readPricedDefaultTextModel();
-    await reauthorize();
-    const prompt = buildReplicateStructuredPrompt(
-      this.buildAnalysisPrompt(
-        dto.content,
-        dto.contentType,
-        dto.platform,
-        dto.goals,
-      ),
-      contentAnalysisSchema,
-      CONTENT_ANALYSIS_SCHEMA_NAME,
-    );
-    const quote = calculateEstimatedTextCredits(
-      model,
-      { max_completion_tokens: 2048, prompt },
-      'x'.repeat(2048 * 4),
-    );
-    if (!Number.isFinite(quote) || quote < 0)
-      throw new Error('The quality evaluation price is unavailable.');
-    return quote;
-  }
-
   /**
    * Analyze content and return score + suggestions
    */
@@ -84,9 +54,7 @@ export class OptimizersService {
     userId?: string,
     onBilling?: (amount: number) => void,
     creditBudget?: number,
-    continuation?: OptimizerAnalysisContinuation,
   ): Promise<Record<string, unknown>> {
-    await continuation?.reauthorize();
     this.logger.debug('Analyzing content', {
       contentType: dto.contentType,
       organizationId,
@@ -101,12 +69,12 @@ export class OptimizersService {
       dto.goals,
       onBilling,
       creditBudget,
-      continuation,
     );
-    await continuation?.reauthorize();
 
+    // Get metadata
     const metadata = this.extractMetadata(dto.content);
 
+    // Create and save score
     const score = await this.prisma.contentScore.create({
       data: {
         organizationId,
@@ -120,13 +88,9 @@ export class OptimizersService {
           platform: dto.platform,
           suggestions: analysis.suggestions,
           userId,
-          ...(continuation
-            ? { breakoutQuality: continuation.scoreBinding }
-            : {}),
         } as Prisma.InputJsonValue,
       },
     });
-    await continuation?.reauthorize();
 
     this.logger.debug('Content analyzed successfully', {
       overallScore: analysis.overallScore,
@@ -152,6 +116,7 @@ export class OptimizersService {
         platform: dto.platform,
       });
 
+      // Get optimized version from AI
       const result = await this.performAIOptimization(
         dto.content,
         dto.contentType,
@@ -221,6 +186,7 @@ export class OptimizersService {
       const count = dto.count || 10;
       const strategy = dto.strategy || 'balanced';
 
+      // Get hashtag suggestions from AI
       const prompt = this.buildHashtagPrompt(
         dto.content,
         dto.platform,
@@ -431,7 +397,6 @@ Give each slot a day, a time like "09:00 AM", a 0-100 confidence and the reason 
     goals?: string[],
     onBilling?: (amount: number) => void,
     creditBudget?: number,
-    continuation?: OptimizerAnalysisContinuation,
   ): Promise<ContentAnalysis> {
     const prompt = this.buildAnalysisPrompt(
       content,
@@ -447,7 +412,6 @@ Give each slot a day, a time like "09:00 AM", a 0-100 confidence and the reason 
       CONTENT_ANALYSIS_SCHEMA_NAME,
       onBilling,
       creditBudget,
-      continuation,
     );
   }
 
@@ -660,16 +624,35 @@ text, format (portrait, landscape or square), style, mood, camera${dto.targetMed
     schemaName: string,
     onBilling?: (amount: number) => void,
     creditBudget?: number,
-    continuation?: OptimizerAnalysisContinuation,
   ): Promise<TResult> {
     const pricedModel =
       creditBudget === undefined
         ? undefined
-        : await this.readPricedDefaultTextModel();
-    if (continuation && creditBudget === undefined)
+        : await this.modelsService.findOne({
+            key: baseModelKey(DEFAULT_TEXT_MODEL),
+          });
+    if (creditBudget !== undefined && !pricedModel)
       throw new Error(
-        'A trusted quality continuation requires a bounded credit budget.',
+        `Model pricing is not configured for ${DEFAULT_TEXT_MODEL}`,
       );
+    if (pricedModel) {
+      const rates =
+        pricedModel.pricingType === 'per-token'
+          ? [
+              pricedModel.inputCostPerMillionTokens,
+              pricedModel.outputCostPerMillionTokens,
+            ]
+          : [pricedModel.cost];
+      if (
+        rates.some(
+          (value) =>
+            typeof value !== 'number' || !Number.isFinite(value) || value < 0,
+        )
+      )
+        throw new Error(
+          `Model pricing is incomplete for ${DEFAULT_TEXT_MODEL}`,
+        );
+    }
     return this.replicateService.generateStructuredTextSync(
       DEFAULT_TEXT_MODEL,
       {
@@ -678,7 +661,6 @@ text, format (portrait, landscape or square), style, mood, camera${dto.targetMed
           creditBudget === undefined
             ? undefined
             : async (attemptInput) => {
-                await continuation?.reauthorize();
                 const quote = calculateEstimatedTextCredits(
                   pricedModel ?? {},
                   attemptInput,
@@ -693,8 +675,6 @@ text, format (portrait, landscape or square), style, mood, camera${dto.targetMed
                   throw new Error(
                     'The quality evaluation exceeds its remaining credit budget.',
                   );
-                await continuation?.beforeAttempt(quote);
-                await continuation?.reauthorize();
               },
         onAttempt: async (attemptInput, output) => {
           const charge = pricedModel
@@ -702,36 +682,12 @@ text, format (portrait, landscape or square), style, mood, camera${dto.targetMed
             : await this.calculateDefaultTextCharge(attemptInput, output);
           if (creditBudget !== undefined) creditBudget -= charge;
           onBilling?.(charge);
-          await continuation?.acceptedAttempt(charge);
-          await continuation?.reauthorize();
         },
         prompt,
         schema,
         schemaName,
       },
     );
-  }
-
-  private async readPricedDefaultTextModel() {
-    const model = await this.modelsService.findOne({
-      key: baseModelKey(DEFAULT_TEXT_MODEL),
-    });
-    if (!model)
-      throw new Error(
-        `Model pricing is not configured for ${DEFAULT_TEXT_MODEL}`,
-      );
-    const rates =
-      model.pricingType === 'per-token'
-        ? [model.inputCostPerMillionTokens, model.outputCostPerMillionTokens]
-        : [model.cost];
-    if (
-      rates.some(
-        (value) =>
-          typeof value !== 'number' || !Number.isFinite(value) || value < 0,
-      )
-    )
-      throw new Error(`Model pricing is incomplete for ${DEFAULT_TEXT_MODEL}`);
-    return model;
   }
 
   private async calculateDefaultTextCharge(

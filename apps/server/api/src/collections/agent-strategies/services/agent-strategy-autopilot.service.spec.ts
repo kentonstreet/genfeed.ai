@@ -140,8 +140,8 @@ describe('AgentStrategyAutopilotService', () => {
       }),
       patch: vi.fn().mockResolvedValue({ id: draftId }),
     };
-    const turboRunService = {
-      createManualReviewTurboRun: vi.fn().mockResolvedValue({
+    const batchGenerationService = {
+      createManualReviewBatch: vi.fn().mockResolvedValue({
         id: 'batch-1',
         items: [
           {
@@ -214,7 +214,7 @@ describe('AgentStrategyAutopilotService', () => {
       evaluationsOperationsService as never,
       postsService as never,
       postAccountFanoutService as never,
-      turboRunService as never,
+      batchGenerationService as never,
       autonomousPublishPolicy,
       logger as never,
     );
@@ -235,7 +235,7 @@ describe('AgentStrategyAutopilotService', () => {
       logger,
       trendsService,
       agentStrategiesService,
-      turboRunService,
+      batchGenerationService,
       contentGatewayService,
       evaluationsOperationsService,
       opportunitiesService,
@@ -296,7 +296,7 @@ describe('AgentStrategyAutopilotService', () => {
       }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -623,10 +623,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -717,10 +717,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -807,10 +807,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -918,7 +918,7 @@ describe('AgentStrategyAutopilotService', () => {
       expect.objectContaining({ decisionReason: expect.any(String) }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).not.toHaveBeenCalled();
   });
 
@@ -1079,7 +1079,7 @@ describe('AgentStrategyAutopilotService', () => {
       expect.objectContaining({ decisionReason: expect.any(String) }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).not.toHaveBeenCalled();
   });
 
@@ -1334,7 +1334,7 @@ describe('AgentStrategyAutopilotService', () => {
     ).not.toHaveBeenCalled();
     expect(deps.postAccountFanoutService.resolveTargets).not.toHaveBeenCalled();
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       expect.objectContaining({ agentStrategyId: strategyId }),
       userId,
