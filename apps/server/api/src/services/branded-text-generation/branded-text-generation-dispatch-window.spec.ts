@@ -102,7 +102,6 @@ function setup() {
     resolveActiveSkills: vi.fn().mockResolvedValue([]),
   };
   const openRouter = {
-    assertApiKeyAvailable: vi.fn(),
     chatCompletion: vi.fn().mockResolvedValue({
       choices: [{ message: { content: 'Hello world' } }],
       id: 'gen-1',
