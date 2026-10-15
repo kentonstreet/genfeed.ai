@@ -2,8 +2,7 @@
 'use client';
 
 import { isSaaS } from '@genfeedai/config/deployment';
-import { hasOrganizationBillingHint } from '@genfeedai/config/license';
-import { MemberRole, SubscriptionStatus } from '@genfeedai/contracts';
+import { MemberRole } from '@genfeedai/contracts';
 import type { AccessBootstrapState } from '@genfeedai/services/auth/auth.service';
 import { UsersService } from '@genfeedai/services/organization/users.service';
 import {
@@ -12,7 +11,13 @@ import {
 } from '@providers/access-state/access-state.provider';
 import { clearClientProtectedBootstrapCache } from '@providers/protected-bootstrap/client-protected-bootstrap';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,14 +45,25 @@ vi.mock('@genfeedai/config/deployment', () => ({
   isSaaS: vi.fn(() => true),
 }));
 
-vi.mock('@genfeedai/config/license', () => ({
-  hasOrganizationBillingHint: vi.fn(() => true),
-}));
-
 vi.mock('@genfeedai/services/organization/users.service', () => ({
   UsersService: {
     getInstance: vi.fn(),
   },
+}));
+
+const socketState = vi.hoisted(() => ({
+  handlers: new Map<string, (data: unknown) => void>(),
+  isReady: true,
+}));
+
+vi.mock('@genfeedai/hooks/utils/use-socket-manager/use-socket-manager', () => ({
+  useSocketManager: () => ({
+    isReady: socketState.isReady,
+    subscribe: (event: string, handler: (data: unknown) => void) => {
+      socketState.handlers.set(event, handler);
+      return () => socketState.handlers.delete(event);
+    },
+  }),
 }));
 
 const loadClientProtectedBootstrapMock = vi.hoisted(() =>
@@ -91,6 +107,8 @@ describe('AccessStateProvider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    socketState.handlers.clear();
+    socketState.isReady = true;
     loadClientProtectedBootstrapMock.mockResolvedValue(null);
     useAuthMock.mockReturnValue({
       isLoaded: true,
@@ -103,7 +121,6 @@ describe('AccessStateProvider', () => {
       organizationId: 'org_123',
     });
     vi.mocked(isSaaS).mockReturnValue(true);
-    vi.mocked(hasOrganizationBillingHint).mockReturnValue(true);
   });
 
   it('derives access flags from bootstrap state', () => {
@@ -138,6 +155,72 @@ describe('AccessStateProvider', () => {
     expect(screen.getByTestId('payg')).toHaveTextContent('true');
     expect(screen.getByTestId('access')).toHaveTextContent('false');
     expect(screen.getByTestId('needs-onboarding')).toHaveTextContent('true');
+  });
+
+  describe('remaining credits (paywall signal)', () => {
+    function CreditsConsumer() {
+      const { hasCreditsRemaining, hasPaygCredits } = useAccessState();
+
+      return (
+        <div>
+          <span data-testid="remaining">{String(hasCreditsRemaining)}</span>
+          <span data-testid="payg">{String(hasPaygCredits)}</span>
+        </div>
+      );
+    }
+
+    function renderCredits(accessState: AccessBootstrapState) {
+      const Wrapper = createWrapper();
+
+      render(
+        <Wrapper>
+          <AccessStateProvider
+            hasInitialBootstrap
+            initialAccessState={accessState}
+          >
+            <CreditsConsumer />
+          </AccessStateProvider>
+        </Wrapper>,
+      );
+    }
+
+    it('reports no remaining credits once a gifted balance is spent', () => {
+      renderCredits({
+        ...initialAccessState,
+        creditsBalance: 0,
+        hasEverHadCredits: true,
+      });
+
+      expect(screen.getByTestId('remaining')).toHaveTextContent('false');
+      expect(screen.getByTestId('payg')).toHaveTextContent('true');
+    });
+
+    it('tracks the live balance from the credits socket in both directions', async () => {
+      renderCredits({ ...initialAccessState, creditsBalance: 5 });
+      expect(screen.getByTestId('remaining')).toHaveTextContent('true');
+
+      const handler = socketState.handlers.get('/credits/org_123');
+      expect(handler).toBeDefined();
+
+      act(() => handler?.({ balance: 0 }));
+      await waitFor(() => {
+        expect(screen.getByTestId('remaining')).toHaveTextContent('false');
+      });
+      expect(clearClientProtectedBootstrapCache).toHaveBeenCalled();
+
+      act(() => handler?.({ balance: 100 }));
+      await waitFor(() => {
+        expect(screen.getByTestId('remaining')).toHaveTextContent('true');
+      });
+    });
+
+    it('ignores credit events without a numeric balance', () => {
+      renderCredits({ ...initialAccessState, creditsBalance: 5 });
+
+      act(() => socketState.handlers.get('/credits/org_123')?.({}));
+      expect(screen.getByTestId('remaining')).toHaveTextContent('true');
+      expect(clearClientProtectedBootstrapCache).not.toHaveBeenCalled();
+    });
   });
 
   it('uses bootstrap state without forcing a fresh fetch on mount', () => {
@@ -335,101 +418,6 @@ describe('AccessStateProvider', () => {
       expect(screen.getByTestId('asset-gate-locked')).toHaveTextContent(
         'false',
       );
-    });
-  });
-
-  describe('isTrialUsedUp', () => {
-    // Billing on, no subscription, not a super admin, onboarding done, and a
-    // balance that cannot pay for one default image.
-    const usedUpAccessState: AccessBootstrapState = {
-      ...initialAccessState,
-      canAffordDefaultGeneration: false,
-      creditsBalance: 5,
-      isOnboardingCompleted: true,
-    };
-
-    function TrialConsumer() {
-      const { isTrialUsedUp } = useAccessState();
-
-      return <span data-testid="trial-used-up">{String(isTrialUsedUp)}</span>;
-    }
-
-    function renderTrial(accessState: AccessBootstrapState | null) {
-      const Wrapper = createWrapper();
-
-      render(
-        <Wrapper>
-          <AccessStateProvider
-            hasInitialBootstrap
-            initialAccessState={accessState}
-          >
-            <TrialConsumer />
-          </AccessStateProvider>
-        </Wrapper>,
-      );
-    }
-
-    it('is true once the balance cannot pay for one default image', () => {
-      renderTrial(usedUpAccessState);
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('true');
-    });
-
-    it('is false while the balance still pays for one default image', () => {
-      renderTrial({ ...usedUpAccessState, canAffordDefaultGeneration: true });
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('false');
-    });
-
-    it.each([
-      [
-        'an active subscription',
-        { subscriptionStatus: SubscriptionStatus.ACTIVE },
-      ],
-      ['a super admin', { isSuperAdmin: true }],
-      ['a user still onboarding', { isOnboardingCompleted: false }],
-      ['an unknown affordability', { canAffordDefaultGeneration: undefined }],
-    ])('is false for %s', (_label, overrides) => {
-      renderTrial({ ...usedUpAccessState, ...overrides });
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('false');
-    });
-
-    it('is true once the 3-day free trial is over, even with credits left', () => {
-      renderTrial({
-        ...usedUpAccessState,
-        canAffordDefaultGeneration: true,
-        creditsBalance: 60,
-        isTrialExpired: true,
-        trialEndsAt: '2026-10-04T09:00:00.000Z',
-      });
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('true');
-    });
-
-    it.each([
-      [
-        'a subscribed organization',
-        { subscriptionStatus: SubscriptionStatus.TRIALING },
-      ],
-      ['a user still onboarding', { isOnboardingCompleted: false }],
-    ])('ignores an expired trial for %s', (_label, overrides) => {
-      renderTrial({
-        ...usedUpAccessState,
-        canAffordDefaultGeneration: true,
-        isTrialExpired: true,
-        ...overrides,
-      });
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('false');
-    });
-
-    it('is false on deployments without organization billing', () => {
-      vi.mocked(hasOrganizationBillingHint).mockReturnValue(false);
-
-      renderTrial(usedUpAccessState);
-
-      expect(screen.getByTestId('trial-used-up')).toHaveTextContent('false');
     });
   });
 
