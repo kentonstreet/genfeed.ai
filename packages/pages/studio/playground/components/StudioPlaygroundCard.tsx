@@ -25,7 +25,6 @@ import { Skeleton } from '@ui/display/skeleton/skeleton';
 import GenerationStatus from '@ui/feedback/generation-status/GenerationStatus';
 import AssetHoverDetails from '@ui/ingredients/asset-hover-details';
 import BrandModeBadge from '@ui/ingredients/brand-mode-badge';
-import IngredientTileOverlays from '@ui/ingredients/ingredient-tile-overlays';
 import {
   LazyMasonryImage,
   LazyMasonryVideo,
@@ -528,27 +527,9 @@ export default function StudioPlaygroundCard({
           )}
         </div>
 
-        {/* Grid cards share the Library tile overlays; Inspector carries
-            reference, clips and source. */}
-        {isListView ? (
-          renderDetails(!job.ingredient)
-        ) : job.ingredient ? (
-          <>
-            {unbrandedMode ? (
-              <BrandModeBadge
-                brandMode={unbrandedMode}
-                className="pointer-events-none absolute top-1.5 left-1.5 z-10"
-              />
-            ) : null}
-            <IngredientTileOverlays
-              ingredient={job.ingredient}
-              isReviewEnabled
-              onReviewUpdated={assetActions.onRefresh}
-            />
-          </>
-        ) : (
-          renderHoverDetails(true)
-        )}
+        {isListView
+          ? renderDetails(!job.ingredient)
+          : renderHoverDetails(!job.ingredient)}
       </article>
     );
   }

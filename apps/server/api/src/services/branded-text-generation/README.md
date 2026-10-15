@@ -6,27 +6,12 @@ generation through the saved receipt (#5786):
 create → resolve → dispatch → bind artifact → validate
 
 Callers today: `POST /posts/draft-generations` (`PostDraftGenerationService`,
-
-surface `api`, or `onboarding` for the agent first-content tool), account and
-thread generation (`POST /posts/account-generations`), every agent
-text tool (surface `agent`) and breakout text output:
-
-- `refine_text` and `generate_reply_variants` (`BrandedTextActionsService`);
-- social `generate_content` and `draft_thread` replies
-  (`BrandedContentActionsService`), which return the receipt id to the chat.
-
-All agent tools run through `BrandedTextRunnerService`; none has an unreceipted
-fallback. There is no unreceipted draft path: the mode is decided on the server
-by `BrandedModeResolverService` (an approved revision wins; otherwise the
-brand's live DRAFT, created from the Genfeed default style kit when none
-exists, runs as `provisional_brand`). Provisional output always completes as
-`needs_review`.
-
-The receipt binds an artifact, so every completed agent generation also keeps
-its exact text as a DRAFT post (the receipt's artifact). The agent tools
-propose; they add nothing to a thread, schedule or publish until the user
-accepts through the approval-gated save tools.
-
+surface `api`, or `onboarding` for the agent first-content tool), the agent text
+actions (`BrandedTextRunnerService`, surface `agent`) and breakout text output.
+There is no unreceipted draft path: the mode is decided on the server by
+`BrandedModeResolverService` (an approved revision wins; otherwise the brand's
+live DRAFT, created from the Genfeed default style kit when none exists, runs as
+`provisional_brand`). Provisional output always completes as `needs_review`.
 
 ## Guarantees
 
@@ -79,31 +64,6 @@ and propagates unchanged.
 `dispatch_window_expired` (409). Responses carry
 `meta.brandedGenerationReceiptId`.
 
-
-## Account and thread runs
-
-`PostAccountGenerationService` (`POST /posts/account-generations`) makes **one
-dispatch and one receipt per post**, in order, tied by the run's batch id
-(`runId`, also the posts' `groupId`; the requestKey is the same id and the
-candidate index is the post's position). Each later dispatch is told what the
-run already wrote so the posts differ. A thread is one dispatch: its receipt
-binds the whole thread (a receipt artifact holds at most nine posts, so a
-thread has two to nine posts).
-
-- The run takes ONE credit hold for every dispatch before any placeholder
-  exists and answers 402 when the balance cannot cover it. Each dispatch carves
-  its share out of that pool, is charged when the provider recorded an attempt
-  (including a stopped one) and returns its share otherwise; the remainder goes
-  back at the end. BYOK runs and free models hold nothing. There is no fixed
-  post cap.
-- Placeholders stay and are patched as each dispatch finishes: the text,
-  `brandedReceiptId` and `brandedReceiptState`. One failed dispatch never stops
-  the others; its placeholder is `failed` with `targetError.code` and a
-  message, and `POST /posts/:postId/generation-retries` (new `requestKey`)
-  retries it. Nothing is retried or charged automatically.
-- Provisional brands generate `needs_review` output, never compliant.
-
-
 ## Media prompts
 
 Image and video generation (`MediaPromptEnhancementService`) resolves the same
@@ -115,7 +75,6 @@ A failed enhancement stops before any paid call with a typed 502
 (`MEDIA_PROMPT_BRAND_ENHANCEMENT_FAILED`) and never falls back to the raw
 prompt. The only raw path is the user's explicit `brandMode: 'raw'`, which skips
 brand work and records a raw receipt.
-
 
 ## The Genfeed system brand
 
@@ -150,8 +109,6 @@ Approving switches the next system generation to `approved_brand`.
 
 ## Not wired yet
 
-
-Content-intelligence, remaining workflow text/media generators and internal
-surfaces are tracked in #6963 and #6937. The agent `generate_content` article
-and newsletter types are not text-seam surfaces yet.
-
+Account and thread generation, content-intelligence, MCP,
+workflows, schedules, batches, desktop adapters and the internal surfaces that
+will generate on the system brand remain open on #5786.

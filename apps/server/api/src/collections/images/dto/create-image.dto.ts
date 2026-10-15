@@ -272,6 +272,7 @@ export class CreateImageDto extends CreateIngredientDto {
   @IsString({ each: true })
   @IsOptional()
   @Transform(({ value }) => {
+    // Ensure blacklist is always an array
     if (value === undefined || value === null) {
       return undefined;
     }

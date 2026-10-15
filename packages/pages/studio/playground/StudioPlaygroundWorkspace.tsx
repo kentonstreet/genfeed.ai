@@ -985,12 +985,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       )?.jobs ?? [selectedJob]
     );
   }, [selectedJob, visibleJobs]);
-  const selectedParentJob = useMemo(() => {
-    const parentId = selectedJob?.parentId;
-    return parentId
-      ? visibleJobs.find((job) => job.ingredientId === parentId)
-      : undefined;
-  }, [selectedJob, visibleJobs]);
 
   useEffect(() => {
     if (selectedJobId && !selectedJob) {
@@ -2469,14 +2463,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                     onRemix={handleRemixJob}
                     onEdit={handleEditJob}
                     onPreviewRecovered={recoverPreview}
-                    isUseAsReferenceEnabled={canUseGeneratedReference(
-                      selectedJob,
-                    )}
                     onSelect={handleSelectJob}
-                    onUseAsReference={handleUseGeneratedReference}
                     onUseInPost={assetActions.onPublishIngredient}
                     onVary={handleVaryRecipe}
-                    parentJob={selectedParentJob}
                     runJobs={selectedRunJobs}
                   />
                 </StudioPlaygroundFocusedPreview>
@@ -2693,12 +2682,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
             onPreviewRecovered={recoverPreview}
             onRemix={handleRemixJob}
             onEdit={handleEditJob}
-            isUseAsReferenceEnabled={canUseGeneratedReference(selectedJob)}
             onSelect={handleSelectJob}
-            onUseAsReference={handleUseGeneratedReference}
             onUseInPost={assetActions.onPublishIngredient}
             onVary={handleVaryRecipe}
-            parentJob={selectedParentJob}
             runJobs={selectedRunJobs}
           />
         ) : null}

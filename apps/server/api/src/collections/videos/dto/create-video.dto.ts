@@ -250,6 +250,7 @@ export class CreateVideoDto extends CreateIngredientDto {
   @IsString({ each: true })
   @IsOptional()
   @Transform(({ value }) => {
+    // Ensure blacklist is always an array
     if (value === undefined || value === null) {
       return undefined;
     }
@@ -276,6 +277,7 @@ export class CreateVideoDto extends CreateIngredientDto {
   @IsString({ each: true })
   @IsOptional()
   @Transform(({ value }) => {
+    // Ensure sounds is always an array
     if (value === undefined || value === null) {
       return undefined;
     }
