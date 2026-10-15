@@ -1,6 +1,5 @@
 import { getToolsForSurface, toMcpTools } from '@genfeedai/actions';
 import { isPublicMcpRequest } from '@mcp/mcp/public-discovery';
-import { ACCOUNT_AVATAR_ORIGINS } from '@mcp/ui/avatar-origins';
 import { cardResource } from '@mcp/ui/card-app';
 import {
   buildCardView,
@@ -20,6 +19,7 @@ describe('MCP Apps card contract', () => {
       'generate',
       'transform_media',
       'get_articles',
+      'get_account',
     ]) {
       const tool = tools.find((item) => item.name === name);
       expect(tool, name).toBeDefined();
@@ -248,21 +248,16 @@ describe('MCP Apps card contract', () => {
     },
   );
 
-  it('maps job categories, leaves account lookups as messages, and bounds lists', () => {
+  it('maps job category and usage zeroes; bounds lists and user text', () => {
     expect(
       buildCardView('get_job_status', { id: 'job', category: 'VIDEO' })
         ?.cards[0].kind,
     ).toBe('video');
     expect(
-      buildCardView('get_account', { usage: { currentBalance: 0 } }),
-    ).toBeUndefined();
-    const account = toMcpTools(getToolsForSurface('mcp')).find(
-      (tool) => tool.name === 'get_account',
-    );
-    if (!account) throw new Error('Missing get_account');
-    expect(withCardMetadata(account)._meta).not.toHaveProperty(
-      'openai/outputTemplate',
-    );
+      buildCardView('get_account', {
+        usage: { currentBalance: 0, usage7Days: 0, breakdown: [] },
+      })?.cards,
+    ).toHaveLength(2);
     expect(buildCardView('get_account', { profile: { role: 'admin' } })).toBe(
       undefined,
     );
@@ -319,9 +314,7 @@ describe('MCP Apps card contract', () => {
     );
     if (!tool) throw new Error('Missing generate');
 
-    expect(MCP_CARD_RESOURCE_URI).toMatch(
-      /^ui:\/\/genfeed\/content-cards-v5-[a-f0-9]{12}\.html$/,
-    );
+    expect(MCP_CARD_RESOURCE_URI).toBe('ui://genfeed/content-cards-v4.html');
     expect(withCardMetadata(tool)._meta).toMatchObject({
       'openai/outputTemplate': MCP_CARD_RESOURCE_URI,
       'openai/toolInvocation/invoked': 'Media ready',
@@ -449,11 +442,7 @@ describe('MCP Apps card contract', () => {
       ])._meta.ui.csp,
     ).toEqual({
       connectDomains: [],
-      resourceDomains: [
-        'https://media.example.com',
-        ...ACCOUNT_AVATAR_ORIGINS,
-        'https://mcp.genfeed.ai',
-      ],
+      resourceDomains: ['https://media.example.com'],
     });
   });
 });
