@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import swc from 'unplugin-swc';
@@ -6,19 +5,9 @@ import { defineConfig } from 'vitest/config';
 
 const mcpDir = path.dirname(fileURLToPath(import.meta.url));
 
-const { buildMcpPreview } = createRequire(import.meta.url)('./ui-bundle.cjs');
-
 export default defineConfig({
   oxc: false, // Disable OXC transformer — SWC required for NestJS decorator metadata
   plugins: [
-    {
-      name: 'mcp-preview',
-      enforce: 'pre',
-      async load(id) {
-        if (id.endsWith('?mcp-preview'))
-          return `export default ${JSON.stringify(await buildMcpPreview())};`;
-      },
-    },
     swc.vite({
       jsc: {
         parser: { decorators: true, syntax: 'typescript' },
@@ -29,20 +18,6 @@ export default defineConfig({
   ],
   resolve: {
     alias: [
-      {
-        find: /^@genfeedai\/actions$/,
-        replacement: path.resolve(
-          mcpDir,
-          '../../../packages/actions/src/index.ts',
-        ),
-      },
-      {
-        find: /^@genfeedai\/helpers$/,
-        replacement: path.resolve(
-          mcpDir,
-          '../../../packages/helpers/src/index.ts',
-        ),
-      },
       {
         find: /^@genfeedai\/contracts\/(.*)$/,
         replacement: path.resolve(mcpDir, '../../../packages/contracts/src/$1'),
@@ -78,10 +53,6 @@ export default defineConfig({
           mcpDir,
           '../../../packages/contracts/src/interfaces/index.ts',
         ),
-      },
-      {
-        find: /^@genfeedai\/utils\/(.*)$/,
-        replacement: path.resolve(mcpDir, '../../../packages/utils/$1'),
       },
       {
         find: /^@genfeedai\/ui\/(.*)$/,

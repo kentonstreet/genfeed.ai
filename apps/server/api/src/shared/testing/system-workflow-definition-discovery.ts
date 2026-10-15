@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { buildSocialInboxOutboundWorkflowDefinition } from '@api/collections/social-inbox/services/social-inbox-outbound-workflow-definition';
-import { SystemWorkflowDefinitionRegistrarService } from '@api/collections/workflows/services/system-workflow-definition-registrar.service';
 import { WORKFLOW_ARTIFACT_ACTION_IDS } from '@api/collections/workflows/services/workflow-artifact-lifecycle.service';
 import {
   buildWorkflowArtifactCleanupExecutionDefinition,
@@ -9,8 +8,6 @@ import {
   buildWorkflowArtifactExpiredScopeDefinition,
 } from '@api/collections/workflows/services/workflow-artifact-workflow-definition';
 import type { SystemWorkflowGraphDefinition } from '@api/collections/workflows/system-workflow-definition';
-import type { SystemWorkflowRunnerService } from '@api/collections/workflows/system-workflow-runner.service';
-import { readRecord } from '@genfeedai/utils/data/extract.util';
 
 /**
  * Test-only discovery of every registered system workflow definition: the
@@ -47,6 +44,12 @@ export const PARAMETERIZED_DEFINITIONS: SystemWorkflowGraphDefinition[] = [
     WORKFLOW_ARTIFACT_ACTION_IDS.DISCOVER_EXPIRED,
   ),
 ];
+
+export function readRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
 function isSystemWorkflowDefinition(
   value: unknown,
@@ -103,21 +106,7 @@ export async function collectSystemWorkflowDefinitions(): Promise<
       }
     }
   }
-  for (const definition of collectRegistrarDefinitions()) {
-    definitions.set(definition.canonicalId, definition);
-  }
   return [...definitions.values()];
-}
-
-/** Definitions `SystemWorkflowDefinitionRegistrarService.onModuleInit` actually registers. */
-function collectRegistrarDefinitions(): SystemWorkflowGraphDefinition[] {
-  const registered: SystemWorkflowGraphDefinition[] = [];
-  new SystemWorkflowDefinitionRegistrarService({
-    registerWorkflow: (definition: SystemWorkflowGraphDefinition) => {
-      registered.push(definition);
-    },
-  } as unknown as SystemWorkflowRunnerService).onModuleInit();
-  return registered;
 }
 
 type Constructor = new (...args: unknown[]) => Record<string, unknown>;
@@ -191,16 +180,9 @@ export async function collectServiceRegisteredDefinitions(
       }
       const paramTypes: unknown[] =
         Reflect.getMetadata('design:paramtypes', exported) ?? [];
-      const args = paramTypes.map((type) => {
-        if (type === runnerClass) {
-          return capturingRunner;
-        }
-        // Services that resolve the runner lazily through ModuleRef.get().
-        if ((type as { name?: string } | undefined)?.name === 'ModuleRef') {
-          return { get: () => capturingRunner };
-        }
-        return createPermissiveStub();
-      });
+      const args = paramTypes.map((type) =>
+        type === runnerClass ? capturingRunner : createPermissiveStub(),
+      );
       try {
         const instance = new (exported as Constructor)(...args);
         for (const hook of ['onModuleInit', 'onApplicationBootstrap']) {
