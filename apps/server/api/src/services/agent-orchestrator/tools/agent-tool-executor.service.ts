@@ -6,7 +6,6 @@ import {
   type ApiKeyPublishingContext,
   assertApiKeyAgentPublishingScope as assertScope,
 } from '@api/helpers/utils/auth/api-key-publishing-scope.util';
-import type { ApprovedGenerationQuoteConstraint } from '@api/helpers/utils/credits/generation-credit-cost.util';
 import {
   AgentScopeContextService,
   resolveNestedActionOrigin,
@@ -41,7 +40,6 @@ import { AgentQualityToolHandler } from '@api/services/agent-orchestrator/tools/
 import { AgentReviewToolHandler } from '@api/services/agent-orchestrator/tools/agent-review-tool-handler.service';
 import { AgentRouteRewriteService } from '@api/services/agent-orchestrator/tools/agent-route-rewrite.service';
 import { AgentSpawnToolHandler } from '@api/services/agent-orchestrator/tools/agent-spawn-tool-handler.service';
-import { AgentThreadToolHandler } from '@api/services/agent-orchestrator/tools/agent-thread-tool-handler.service';
 import { AgentToolCatalogHandler } from '@api/services/agent-orchestrator/tools/agent-tool-catalog-handler.service';
 import { dispatchRegisteredAgentTool } from '@api/services/agent-orchestrator/tools/agent-tool-dispatch.routes';
 import { AgentToolMutationAuthorizationService } from '@api/services/agent-orchestrator/tools/agent-tool-mutation-authorization.service';
@@ -64,10 +62,6 @@ import {
   shouldUseKnowledgeWorkflowEntry,
   toWorkflowToolExecutionContext,
 } from '@api/services/agent-orchestrator/tools/knowledge-workflow-execution.util';
-import {
-  type AgentInitiatingPrincipal,
-  projectAgentInitiatingPrincipal,
-} from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import type {
   AgentThreadModeValue,
   CuratedActionName,
@@ -118,7 +112,7 @@ export function agentToolCreditEstimate(
   parameters: Record<string, unknown>,
 ): number | undefined {
   // Batch preparation enforces its authoritative quote against the remaining cap before reserving credits.
-  if (toolName === 'generate_turbo_content') return 0;
+  if (toolName === 'generate_content_batch') return 0;
   // Merging clips runs on the local files queue and is never charged.
   if (getMediaTransformOperation(toolName, parameters) === 'merge') return 0;
   if (UNQUOTED_PAID_AGENT_TOOLS.has(toolName)) return undefined;
@@ -136,28 +130,12 @@ export function agentToolCreditEstimate(
 }
 
 export interface ToolExecutionContext {
-  /** Transient server-only constraint retrieved from a matched claimed approval. */
-  approvedGenerationQuote?: ApprovedGenerationQuoteConstraint;
   generationEntry?: GenerationEntry;
   isProactive?: boolean;
   /** Transient constraint issued by mutation authorization; stripped from incoming contexts. */
   proactiveTextDraftOnly?: true;
   creditBudget?: number;
   apiKeyContext?: ApiKeyPublishingContext;
-  /**
-   * The authenticated principal a schedule saved by this tool call is bound to.
-   * Captured where the request is authenticated; never derived from a workflow
-   * or brand owner. Absent for system turns.
-   */
-  initiatingPrincipal?: AgentInitiatingPrincipal;
-  /**
-   * Transient server-only schedule authority that is not this turn's own user;
-   * stripped from incoming contexts. Set by the executor to the approving
-   * member when a reviewer redeems an approval (the tool then runs as the
-   * requester), and by the workflow tool handler to a strategy's live-refreshed
-   * actor. It takes precedence over `initiatingPrincipal` when a schedule is saved.
-   */
-  scheduleAuthorityPrincipal?: AgentInitiatingPrincipal;
   /** URLs of user-attached images from the chat message */
   attachmentUrls?: string[];
   userId: string;
@@ -200,7 +178,7 @@ export interface ToolExecutionContext {
   /** Agent strategy ID for content attribution */
   strategyId?: string;
   /** Keep batch generation attached to the current live run and stream item previews */
-  streamTurboRunToUser?: boolean;
+  streamBatchToUser?: boolean;
   /** Server-validated immutable organization + mutable brand/version scope. */
   validatedScope?: ValidatedAgentScope;
   /** Server-only proof that this execution came from a confirmed thread UI action. */
@@ -296,9 +274,6 @@ export class AgentToolExecutorService implements OnModuleInit {
 
   @Inject(AgentGenerationSettingsToolHandler)
   private readonly generationSettingsHandler!: AgentGenerationSettingsToolHandler;
-
-  @Inject(AgentThreadToolHandler)
-  private readonly threadHandler!: AgentThreadToolHandler;
 
   @Inject(AgentBrandContextToolHandler)
   private readonly brandContextHandler!: AgentBrandContextToolHandler;
@@ -469,9 +444,6 @@ export class AgentToolExecutorService implements OnModuleInit {
     }
     assertScope(context.apiKeyContext ?? {}, toolName, parameters);
     try {
-      // The runner persists an execution before dispatching its tool node.
-      // Reject inaccessible brands before that write, then recheck at dispatch.
-      await this.assertToolBrandScope(toolName, parameters, context);
       return await runWithActionOrigin(
         {
           ...resolveNestedActionOrigin(ActionOrigin.AGENT),
@@ -527,8 +499,6 @@ export class AgentToolExecutorService implements OnModuleInit {
   ): Promise<AgentToolResult> {
     context = { ...context };
     delete context.proactiveTextDraftOnly;
-    delete context.approvedGenerationQuote;
-    delete context.scheduleAuthorityPrincipal;
     const startTime = Date.now();
     let executionApprovalId: string | undefined;
     let executionResult: AgentToolResult;
@@ -545,9 +515,10 @@ export class AgentToolExecutorService implements OnModuleInit {
           context.validatedScope,
           'tool',
         );
+        await this.assertToolBrandScope(toolName, parameters, context);
+      } else {
+        await this.assertToolBrandAccess(parameters, context);
       }
-
-      await this.assertToolBrandScope(toolName, parameters, context);
       await this.workObjects.assertReady(context, toolName);
       const policyResult = await this.mutationAuthorizationService.authorize(
         toolName,
@@ -569,37 +540,8 @@ export class AgentToolExecutorService implements OnModuleInit {
         return toPlainJson(policyResult.result);
       }
       executionApprovalId = policyResult.approvalId;
-      if (policyResult.approvedGenerationQuote === null) {
-        throw new Error(
-          'The approved generation has no verified quote. Request fresh consent.',
-        );
-      }
-      if (policyResult.approvedGenerationQuote) {
-        context = {
-          ...context,
-          approvedGenerationQuote: policyResult.approvedGenerationQuote,
-        };
-      }
       if (policyResult.executeAsUserId) {
-        // The approving member authorized this exact action, so a schedule it
-        // saves is bound to them (only when they were verified as an active
-        // member and the captured principal is theirs), never to the requester
-        // whose id is only recorded on the approval.
-        const approver = policyResult.approvedByUserId
-          ? projectAgentInitiatingPrincipal(context.initiatingPrincipal, {
-              organizationId: context.organizationId,
-              userId: policyResult.approvedByUserId,
-            })
-          : undefined;
-        // The captured principal describes the reviewer, not the requester the
-        // tool now runs as, so it must not outlive the swap.
-        const { initiatingPrincipal: _reviewerPrincipal, ...requesterContext } =
-          context;
-        context = {
-          ...requesterContext,
-          ...(approver ? { scheduleAuthorityPrincipal: approver } : {}),
-          userId: policyResult.executeAsUserId,
-        };
+        context = { ...context, userId: policyResult.executeAsUserId };
       }
       if (policyResult.constraint) {
         if (toolName !== 'create_post') {
@@ -610,11 +552,31 @@ export class AgentToolExecutorService implements OnModuleInit {
         context = { ...context, proactiveTextDraftOnly: true };
       }
 
-      const result = await this.dispatchToHandler(
-        toolName,
-        parameters,
-        context,
-      );
+      const result = this.instagramInspirationHandler.handles(toolName)
+        ? await this.instagramInspirationHandler.execute(
+            toolName,
+            parameters,
+            context,
+          )
+        : this.xActionsHandler.handles(toolName)
+          ? await this.xActionsHandler.execute(toolName, parameters, context)
+          : [
+                'request_input',
+                'present_work_object',
+                'ingest_source_media',
+              ].includes(toolName)
+            ? await this.workObjects.execute(toolName, parameters, context)
+            : this.generationSettingsHandler.handles(toolName)
+              ? await this.generationSettingsHandler.execute(
+                  toolName,
+                  parameters,
+                  context,
+                )
+              : await this.dispatchRegisteredTool(
+                  toolName,
+                  parameters,
+                  context,
+                );
       const scopedResult = await this.routeRewriteService.scopeToolResultHrefs(
         result,
         context,
@@ -650,51 +612,16 @@ export class AgentToolExecutorService implements OnModuleInit {
     return toPlainJson(executionResult);
   }
 
-  /** Routes a tool to the handler that owns it, else the registered dispatch table. */
-  private async dispatchToHandler(
-    toolName: CuratedActionName,
-    parameters: Record<string, unknown>,
-    context: ToolExecutionContext,
-  ): Promise<AgentToolResult> {
-    if (this.instagramInspirationHandler.handles(toolName)) {
-      return this.instagramInspirationHandler.execute(
-        toolName,
-        parameters,
-        context,
-      );
-    }
-    if (this.xActionsHandler.handles(toolName)) {
-      return this.xActionsHandler.execute(toolName, parameters, context);
-    }
-    if (this.threadHandler.handles(toolName)) {
-      return this.threadHandler.execute(toolName, parameters, context);
-    }
-    if (
-      ['request_input', 'present_work_object', 'ingest_source_media'].includes(
-        toolName,
-      )
-    ) {
-      return this.workObjects.execute(toolName, parameters, context);
-    }
-    if (this.generationSettingsHandler.handles(toolName)) {
-      return this.generationSettingsHandler.execute(
-        toolName,
-        parameters,
-        context,
-      );
-    }
-    return this.dispatchRegisteredTool(toolName, parameters, context);
-  }
-
-  private async assertToolBrandScope(
-    toolName: CuratedActionName,
+  private async assertToolBrandAccess(
     parameters: Record<string, unknown>,
     context: ToolExecutionContext,
   ): Promise<void> {
     const actor = {
       userId: context.userId,
       organizationId: context.organizationId,
-      ...context.apiKeyContext,
+      isApiKey: context.apiKeyContext?.isApiKey,
+      apiKeyId: context.apiKeyContext?.apiKeyId,
+      scopes: context.apiKeyContext?.scopes,
     };
     const parameterBrandId = readOptionalString(parameters.brandId);
     for (const brandId of new Set(
@@ -704,15 +631,25 @@ export class AgentToolExecutorService implements OnModuleInit {
     )) {
       await this.brandAccessService.assert(actor, brandId);
     }
-    const scope = context.validatedScope;
-    if (!scope) return;
+  }
 
-    // A newly created brand can be polled without rebinding the current thread.
-    // Both the current and requested brands were authorized above.
+  private async assertToolBrandScope(
+    toolName: CuratedActionName,
+    parameters: Record<string, unknown>,
+    context: ToolExecutionContext,
+  ): Promise<void> {
+    const scope = context.validatedScope;
+    if (!scope) {
+      throw new Error('Validated agent scope is required for tool execution.');
+    }
+    await this.assertToolBrandAccess(parameters, context);
+    const parameterBrandId = readOptionalString(parameters.brandId);
+
     if (
-      toolName !== 'get_brand_scan_status' &&
       parameterBrandId &&
-      parameterBrandId !== scope.brandId
+      parameterBrandId !== scope.brandId &&
+      toolName !== 'create_brand_from_url' &&
+      toolName !== 'get_brand_scan_status'
     ) {
       throw new Error(
         'Tool brand parameters must match the validated thread brand scope.',

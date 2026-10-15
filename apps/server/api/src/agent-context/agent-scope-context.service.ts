@@ -218,7 +218,6 @@ export class AgentScopeContextService {
     threadId: string;
     userId: string;
     isApiKey?: boolean;
-    apiKeyId?: string;
     scopes?: string[];
   }): Promise<ValidatedAgentScope> {
     const thread = await this.findThread(

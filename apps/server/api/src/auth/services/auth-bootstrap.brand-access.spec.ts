@@ -104,19 +104,6 @@ function fixture() {
         .fn()
         .mockResolvedValue({ id: 'opaque-user', isOnboardingCompleted: true }),
     } as unknown as Dependencies[7],
-    {
-      canAffordDefaultGeneration: vi.fn().mockResolvedValue(true),
-    } as unknown as Dependencies[8],
-    {
-      getState: vi
-        .fn()
-        .mockResolvedValue({ isTrialExpired: false, trialEndsAt: null }),
-    } as unknown as Dependencies[9],
-    {
-      resolve: vi
-        .fn()
-        .mockResolvedValue({ isTrialSubject: false, threshold: null }),
-    } as unknown as Dependencies[10],
   );
   return {
     member,
@@ -201,14 +188,15 @@ describe('Cloud bootstrap live brand policy across warmed caches', () => {
     f.member.brands = [];
     await f.service.getBootstrap(request);
     f.findKey.mockResolvedValue({ scopes: ['read'] });
-    const keyRequest = Object.assign({}, request, {
+    const keyRequest = {
+      ...request,
       user: {
         ...request.user,
         isApiKey: true,
         apiKeyId: 'key-a',
         scopes: ['admin'],
       },
-    });
+    };
     const result = await f.service.getBootstrap(keyRequest);
     expect(result.brands).toEqual([]);
     expect(result.access.memberRole).toBe(MemberRole.USER);
