@@ -131,12 +131,7 @@ export class BrandOsRevisionsService {
       if (existing && !sourcePreviewTokenHash) return this.toRevision(existing);
       const draft = this.normalize(
         content ??
-          (await this.buildSeedContent(
-            brand,
-            organizationId,
-            brandId,
-            !existing,
-          )),
+          (await this.buildCurrentBrandContent(brand, organizationId, brandId)),
         organizationId,
         brandId,
       );
@@ -191,12 +186,15 @@ export class BrandOsRevisionsService {
         return this.toRevision(existing);
       if (existing)
         await this.supersedeDefaultKitRows(tx, organizationId, brandId);
-      const content = await this.buildSeedContent(
-        brand,
-        organizationId,
-        brandId,
-        rows.length === 0,
-      );
+      const content =
+        rows.length === 0 && !hasOwnVoice
+          ? buildGenfeedDefaultKitDraft({
+              description: brand.description,
+              id: brandId,
+              label: brand.label,
+              organization: organizationId,
+            })
+          : await this.buildCurrentBrandContent(brand, organizationId, brandId);
       return this.createDraft(
         tx,
         organizationId,
@@ -384,27 +382,6 @@ export class BrandOsRevisionsService {
         }),
       );
     });
-  }
-
-  /**
-   * The one place a revision is seeded from the brand itself. A brand with no
-   * history and no voice of its own starts from the marked Genfeed default kit,
-   * whichever path seeds it, so approve can refuse it until the owner edits it.
-   */
-  private async buildSeedContent(
-    brand: Brand,
-    organizationId: string,
-    brandId: string,
-    isFirstRevision: boolean,
-  ): Promise<IBrandKitDraft> {
-    if (isFirstRevision && !hasOwnBrandVoice(brand.agentConfig))
-      return buildGenfeedDefaultKitDraft({
-        description: brand.description,
-        id: brandId,
-        label: brand.label,
-        organization: organizationId,
-      });
-    return this.buildCurrentBrandContent(brand, organizationId, brandId);
   }
 
   private async buildCurrentBrandContent(
