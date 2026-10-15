@@ -121,19 +121,8 @@ describe('shouldShowCreditsNav cosmetic context', () => {
   });
 
   it('keeps remembered cloud profiles hidden in explicit local mode', () => {
-    expect(
-      shouldShowCreditsNav({
-        clientSurface: 'desktop',
-        selectedServerKind: 'cloud',
-        runtimeMode: 'local',
-      }),
-    ).toBe(false);
-    expect(
-      shouldShowCreditsNav({
-        clientSurface: 'desktop',
-        selectedServerKind: 'cloud',
-      }),
-    ).toBe(false);
+    expect(shouldShowCreditsNav({clientSurface:'desktop', selectedServerKind:'cloud',runtimeMode:'local'})).toBe(false);
+    expect(shouldShowCreditsNav({clientSurface:'desktop', selectedServerKind:'cloud'})).toBe(false);
   });
 
   it('keeps self-hosted and unknown desktop contexts hidden despite cloud or license hints', () => {

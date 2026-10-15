@@ -102,17 +102,6 @@ const desktopBridge: IGenfeedDesktopBridge = {
         ipcRenderer.off(DESKTOP_IPC_CHANNELS.bootstrapChanged, listener);
       };
     },
-    getWindowChrome: async () =>
-      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowChromeState),
-    onDidChangeWindowChrome: (callback) => {
-      const listener = (_event: unknown, state: unknown) =>
-        callback(state as Parameters<typeof callback>[0]);
-      ipcRenderer.on(DESKTOP_IPC_CHANNELS.windowChromeChanged, listener);
-
-      return () => {
-        ipcRenderer.off(DESKTOP_IPC_CHANNELS.windowChromeChanged, listener);
-      };
-    },
     onToggleSidebar: (callback) => {
       const listener = () => callback();
       ipcRenderer.on(DESKTOP_IPC_CHANNELS.toggleSidebar, listener);
@@ -127,8 +116,7 @@ const desktopBridge: IGenfeedDesktopBridge = {
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.authCompleteWithCode, code),
     getSession: async () =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.authGetSession),
-    login: async (continuation) =>
-      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.authLogin, continuation),
+    login: async () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.authLogin),
     logout: async () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.authLogout),
     onDidChangeSession: (callback) => {
       const listener = (_event: unknown, session: unknown) => {

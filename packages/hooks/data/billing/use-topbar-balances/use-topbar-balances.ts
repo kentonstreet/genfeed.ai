@@ -1,7 +1,6 @@
 'use client';
 
 import { useBrand } from '@contexts/user/brand-context/brand-context';
-import { useRoutedOrganization } from '@contexts/user/organization-context/organization-context';
 import { shouldShowCreditsNav } from '@genfeedai/config/license';
 import type {
   ITopbarBalanceSegment,
@@ -59,10 +58,10 @@ const runtimeScope = (
 
 export function useTopbarBalances(): UseTopbarBalancesReturn {
   const { organizationId } = useBrand();
-  const { confirmedOrganizationId, isRouteConfirmed } = useRoutedOrganization();
   const {
     isLoaded: isAuthLoaded,
     isSignedIn,
+    orgId,
     sessionId,
     userId,
   } = useAuthIdentity();
@@ -106,8 +105,6 @@ export function useTopbarBalances(): UseTopbarBalancesReturn {
     ],
   );
 
-  // Route reconciliation verifies the organization used by API requests;
-  // Better Auth's session activeOrganizationId can remain null or stale.
   const isEnabled =
     showCredits &&
     shouldShowCreditsNav(
@@ -118,8 +115,7 @@ export function useTopbarBalances(): UseTopbarBalancesReturn {
     Boolean(userId) &&
     Boolean(sessionId) &&
     Boolean(organizationId) &&
-    isRouteConfirmed &&
-    confirmedOrganizationId === organizationId;
+    orgId === organizationId;
 
   const scope = runtimeScope(runtime);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runtime endpoint getter must be captured for this request scope

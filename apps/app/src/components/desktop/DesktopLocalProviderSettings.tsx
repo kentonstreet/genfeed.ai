@@ -11,7 +11,6 @@ import { Input } from '@ui/primitives/input';
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useReducer, useState } from 'react';
 import { getDesktopBridge } from '@/lib/desktop/runtime';
-import { useDesktopLocalModeEnabled } from '@/lib/desktop/use-desktop-local-mode-enabled';
 
 const PROVIDER_PRESETS: Record<
   DesktopGenerationProviderKind,
@@ -149,19 +148,7 @@ function providerReducer(
   }
 }
 
-export default function DesktopLocalProviderSettings(
-  props: DesktopLocalProviderSettingsProps,
-) {
-  // Cloud-only builds expose no way into (or out of) local mode from settings.
-  const isLocalModeEnabled = useDesktopLocalModeEnabled();
-  if (!isLocalModeEnabled) {
-    return null;
-  }
-
-  return <DesktopLocalProviderSettingsPanel {...props} />;
-}
-
-function DesktopLocalProviderSettingsPanel({
+export default function DesktopLocalProviderSettings({
   variant = 'compact',
 }: DesktopLocalProviderSettingsProps) {
   const translate = useTranslations('common.desktop.provider');
@@ -314,13 +301,6 @@ function DesktopLocalProviderSettingsPanel({
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           {translate('inactive.description')}
-        </p>
-        <p
-          role="status"
-          data-testid="desktop-provider-generation-cost"
-          className="mt-2 text-xs text-muted-foreground"
-        >
-          {costTranslate(getDesktopLocalCostState(runtime))}
         </p>
         <Button
           className="mt-3 rounded px-2 py-1 text-xs"

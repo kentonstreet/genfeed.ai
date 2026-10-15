@@ -21,14 +21,12 @@ import type {
   IDesktopSyncConsentInput,
   IDesktopSyncOpAck,
   IDesktopTerminalCreateOptions,
-  IDesktopWindowChromeState,
   IDesktopWorkflowGenerationOptions,
   IDesktopWorkspaceCloudLinkInput,
 } from '@genfeedai/contracts/desktop';
 import {
   DESKTOP_APP_PROTOCOL_SCHEME,
   DESKTOP_IPC_CHANNELS,
-  isDesktopLocalModeEnabled,
   parseDesktopThreadLink,
 } from '@genfeedai/contracts/desktop';
 import {
@@ -74,20 +72,17 @@ import {
   DESKTOP_PROCESS_EXCEPTION_SOURCE,
 } from './main/process-exceptions.util';
 import {
-  assertDesktopRuntimeAvailable,
-  assertDesktopServerSwitchAvailable,
   commitDesktopRuntimeSwitch,
   createDesktopRuntimeContext,
   getDesktopProviderContext,
-  selectDesktopRuntimeDataService,
-  transitionDesktopRuntimeToCloud,
 } from './main/runtime-context.util';
 import {
   activateDesktopLocalMode,
-  assertDesktopLocalModeEnabled,
   createLocalRuntimeCleanupBarrier,
   createUnwoundLocalRuntimeState,
   restoreDesktopRuntimeMode,
+  selectDesktopDataService,
+  switchDesktopToCloud,
   type UnwoundLocalRuntimeState,
   unwindFailedLocalRuntimeAfterClose,
 } from './main/runtime-mode.util';
@@ -154,8 +149,7 @@ let appShellService: DesktopAppShellService;
 let isOfflineMode = false;
 const runtimeContextId = randomUUID();
 let runtimeContextRevision = 0;
-let runtimeContextStatus: IDesktopRuntimeContext['status'] = 'ready';
-let isDesktopServerSwitchPending = false;
+let runtimeContextStatus: 'ready' | 'switching' = 'ready';
 let publicLocalProvider: IDesktopRuntimeContext['localProvider'] = null;
 let runtimeContextCache: IDesktopRuntimeContext | null = null;
 
@@ -231,9 +225,6 @@ const telemetryService = new DesktopTelemetryService(environment);
 
 const trayService = new DesktopTrayService();
 const shortcutsService = new DesktopShortcutsService();
-
-/** Centres the 12px traffic lights in the shell's 40px topbar band. */
-const MAC_TRAFFIC_LIGHT_POSITION = { x: 14, y: 14 };
 
 const EXTERNAL_NAVIGATION_HOSTS = new Set([
   'app.genfeed.ai',
@@ -437,15 +428,12 @@ const setActiveWorkspaceId = async (workspaceId: string): Promise<void> => {
 };
 
 function getDataService(): IDesktopDataService {
-  return selectDesktopRuntimeDataService<IDesktopDataService>(
-    runtimeContextStatus,
-    {
-      cloudService,
-      hasCloudSession: Boolean(sessionService.getSession()),
-      isOfflineMode,
-      localService,
-    },
-  );
+  return selectDesktopDataService<IDesktopDataService>({
+    cloudService,
+    hasCloudSession: Boolean(sessionService.getSession()),
+    isOfflineMode,
+    localService,
+  });
 }
 
 const emitQuickGenerate = (): void => {
@@ -677,7 +665,6 @@ const invalidateLocalRuntimeAttempt = (): void => {
 };
 
 const requireLocalRuntime = (): void => {
-  assertDesktopRuntimeAvailable(runtimeContextStatus);
   if (!isOfflineMode || !localService) {
     throw new Error(
       'Local mode is not enabled. Select Local workspace before using this feature.',
@@ -922,10 +909,7 @@ const createWindow = async (): Promise<void> => {
     minWidth: 1280,
     show: false,
     title: 'GenFeed',
-    // macOS: the renderer's topbar is the titlebar. The traffic lights sit
-    // centred in its first 40px band; the shell leaves room for them.
-    titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
-    trafficLightPosition: MAC_TRAFFIC_LIGHT_POSITION,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       additionalArguments: [
         `--genfeed-app-origin=${appShellService.appOrigin}`,
@@ -942,15 +926,6 @@ const createWindow = async (): Promise<void> => {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
   });
-
-  const emitWindowChrome = (): void => {
-    mainWindow?.webContents.send(
-      DESKTOP_IPC_CHANNELS.windowChromeChanged,
-      getWindowChromeState(),
-    );
-  };
-  mainWindow.on('enter-full-screen', emitWindowChrome);
-  mainWindow.on('leave-full-screen', emitWindowChrome);
 
   const isDev = !app.isPackaged;
 
@@ -1068,9 +1043,8 @@ const createWindow = async (): Promise<void> => {
     await mainWindow.loadURL(buildDesktopFailureScreenUrl());
   }
 
-  const openLocalWorkspaceFromMenu = (): void => {
+  buildDesktopMenu(mainWindow, () => {
     void (async () => {
-      assertDesktopRuntimeAvailable(runtimeContextStatus);
       await activateDesktopLocalMode(
         initializeLocalRuntime,
         () => {
@@ -1079,8 +1053,6 @@ const createWindow = async (): Promise<void> => {
         undefined,
         invalidateLocalRuntimeAttempt,
       );
-      // Local mode is already committed even when the folder dialog is canceled.
-      await emitBootstrap();
       const workspace = await openAndActivateWorkspace();
       if (!workspace) return;
       await emitBootstrap();
@@ -1095,12 +1067,7 @@ const createWindow = async (): Promise<void> => {
         `open local workspace failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     });
-  };
-
-  buildDesktopMenu(
-    mainWindow,
-    isDesktopLocalModeEnabled() ? openLocalWorkspaceFromMenu : null,
-  );
+  });
 };
 
 const showDesktopStartupFailure = async (error: unknown): Promise<void> => {
@@ -1380,10 +1347,9 @@ const handleAuthCallback = async (
   await emitSession();
   await emitBootstrap();
   if (mainWindow) {
-    // Reopen the page the completed sign-in started from (#6276).
     await loadCanonicalApp(
       mainWindow,
-      appShellService.buildInitialUrl(session, result.continuation),
+      appShellService.buildInitialUrl(session),
     );
   }
   void new Notification({
@@ -1427,10 +1393,6 @@ const registerProtocolHandling = (): void => {
   });
 };
 
-const getWindowChromeState = (): IDesktopWindowChromeState => ({
-  isFullScreen: mainWindow?.isFullScreen() ?? false,
-});
-
 const registerIpcHandlers = (): void => {
   // The canonical apps/app shell is always available. Database-backed channels
   // are guarded by LOCAL_RUNTIME_IPC_CHANNELS and cannot initialize PGlite as a
@@ -1438,10 +1400,6 @@ const registerIpcHandlers = (): void => {
   registerPrivilegedIpcHandler(
     DESKTOP_IPC_CHANNELS.appRuntimeContext,
     async () => getRuntimeContext(),
-  );
-  registerPrivilegedIpcHandler(
-    DESKTOP_IPC_CHANNELS.windowChromeState,
-    async () => getWindowChromeState(),
   );
   registerPrivilegedIpcHandler(DESKTOP_IPC_CHANNELS.appBootstrap, async () =>
     getBootstrap(),
@@ -1453,8 +1411,6 @@ const registerIpcHandlers = (): void => {
   registerPrivilegedIpcHandler(
     DESKTOP_IPC_CHANNELS.appEnableOfflineMode,
     async () => {
-      assertDesktopLocalModeEnabled();
-      assertDesktopRuntimeAvailable(runtimeContextStatus);
       try {
         await activateDesktopLocalMode(
           initializeLocalRuntime,
@@ -1476,28 +1432,31 @@ const registerIpcHandlers = (): void => {
   registerPrivilegedIpcHandler(
     DESKTOP_IPC_CHANNELS.appUseCloudMode,
     async () => {
-      assertDesktopRuntimeAvailable(runtimeContextStatus);
-      await transitionDesktopRuntimeToCloud({
-        previous: {
-          status: runtimeContextStatus,
-          isOfflineMode,
-          localProvider: publicLocalProvider,
-        },
-        publish: (state) => {
-          runtimeContextStatus = state.status;
-          isOfflineMode = state.isOfflineMode;
-          publicLocalProvider = state.localProvider;
+      runtimeContextStatus = 'switching';
+      emitRuntimeContext();
+      let committed = false;
+      try {
+        await switchDesktopToCloud({
+          closeLocalRuntime: async () => {
+            await prismaService?.getClient().$disconnect();
+            await pgliteService?.close();
+          },
+          exit: () => app.exit(0),
+          persistCloudMode: () => {
+            desktopStore.setValueSync(OFFLINE_MODE_KEY, 'cloud');
+            isOfflineMode = false;
+            committed = true;
+          },
+          relaunch: () => app.relaunch(),
+        });
+      } catch (error) {
+        if (!committed) {
+          runtimeContextStatus = 'ready';
+          publicLocalProvider = null;
           emitRuntimeContext();
-        },
-        closeLocalRuntime: async () => {
-          await prismaService?.getClient().$disconnect();
-          await pgliteService?.close();
-        },
-        persistCloudMode: () =>
-          desktopStore.setValueSync(OFFLINE_MODE_KEY, 'cloud'),
-        relaunch: () => app.relaunch(),
-        exit: () => app.exit(0),
-      });
+        }
+        throw error;
+      }
     },
   );
   registerPrivilegedIpcHandler(
@@ -1528,17 +1487,9 @@ const registerIpcHandlers = (): void => {
     DESKTOP_IPC_CHANNELS.authGetSession,
     async () => null,
   );
-  registerPrivilegedIpcHandler(
-    DESKTOP_IPC_CHANNELS.authLogin,
-    async (_event: unknown, continuation: unknown) => {
-      // Bound to this PKCE attempt; validated when its callback lands.
-      await openValidatedExternalUrl(
-        sessionService.getLoginUrl(
-          typeof continuation === 'string' ? continuation : undefined,
-        ),
-      );
-    },
-  );
+  registerPrivilegedIpcHandler(DESKTOP_IPC_CHANNELS.authLogin, async () => {
+    await openValidatedExternalUrl(sessionService.getLoginUrl());
+  });
   registerPrivilegedIpcHandler(
     DESKTOP_IPC_CHANNELS.authCompleteWithCode,
     async (_event: unknown, raw: unknown) => {
@@ -1590,7 +1541,6 @@ const registerIpcHandlers = (): void => {
   registerPrivilegedIpcHandler(
     DESKTOP_IPC_CHANNELS.cloudGenerateContent,
     async (_event: unknown, params: IDesktopGenerationOptions) => {
-      assertDesktopRuntimeAvailable(runtimeContextStatus);
       try {
         return await runDataService((service) =>
           service.generateContent({
@@ -2110,50 +2060,40 @@ const requireCliAgentRuntime = (): DesktopCliAgentRuntimeService => {
 const switchDesktopServer = async (
   selection: IDesktopServerSelection,
 ): Promise<void> => {
-  assertDesktopServerSwitchAvailable(
-    runtimeContextStatus,
-    isDesktopServerSwitchPending,
-  );
-  isDesktopServerSwitchPending = true;
-  try {
-    const target =
-      selection?.kind === 'self-hosted'
-        ? selection.selfHosted?.apiEndpoint || 'your self-hosted server'
-        : 'Genfeed Cloud';
-    const options = {
-      buttons: ['Switch and restart', 'Cancel'],
-      cancelId: 1,
-      defaultId: 0,
-      detail:
-        'Genfeed Desktop restarts to connect. You stay signed in to each server separately.',
-      message: `Switch Genfeed Desktop to ${target}?`,
-      type: 'question' as const,
-    };
-    const { response } = mainWindow
-      ? await dialog.showMessageBox(mainWindow, options)
-      : await dialog.showMessageBox(options);
+  const target =
+    selection?.kind === 'self-hosted'
+      ? selection.selfHosted?.apiEndpoint || 'your self-hosted server'
+      : 'Genfeed Cloud';
+  const options = {
+    buttons: ['Switch and restart', 'Cancel'],
+    cancelId: 1,
+    defaultId: 0,
+    detail:
+      'Genfeed Desktop restarts to connect. You stay signed in to each server separately.',
+    message: `Switch Genfeed Desktop to ${target}?`,
+    type: 'question' as const,
+  };
+  const { response } = mainWindow
+    ? await dialog.showMessageBox(mainWindow, options)
+    : await dialog.showMessageBox(options);
 
-    const profile = await commitDesktopRuntimeSwitch(
-      () => runtimeContextStatus,
-      response === 0,
-      () => serverService.select(selection),
-      (status) => {
-        runtimeContextStatus = status;
-        emitRuntimeContext();
-      },
-    );
-    logService?.info(`switching desktop server to ${profile.id}`);
-    cliAgentRuntimeService?.cancelAll();
-    terminalService.killAll();
-    await sessionService.detachShellCookie();
-    await prismaService?.getClient().$disconnect();
-    await pgliteService?.close();
-    await appShellService.stop();
-    app.relaunch();
-    app.exit(0);
-  } finally {
-    isDesktopServerSwitchPending = false;
-  }
+  const profile = await commitDesktopRuntimeSwitch(
+    response === 0,
+    () => serverService.select(selection),
+    (status) => {
+      runtimeContextStatus = status;
+      emitRuntimeContext();
+    },
+  );
+  logService?.info(`switching desktop server to ${profile.id}`);
+  cliAgentRuntimeService?.cancelAll();
+  terminalService.killAll();
+  await sessionService.detachShellCookie();
+  await prismaService?.getClient().$disconnect();
+  await pgliteService?.close();
+  await appShellService.stop();
+  app.relaunch();
+  app.exit(0);
 };
 
 app.on('before-quit', (event) => {

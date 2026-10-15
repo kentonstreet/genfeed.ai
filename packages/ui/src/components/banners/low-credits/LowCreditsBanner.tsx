@@ -4,7 +4,6 @@ import {
   hasOrganizationBillingHint,
   shouldShowCreditsNav,
 } from '@genfeedai/config/license';
-import { useAccessState } from '@genfeedai/contexts/providers/access-state/access-state.provider';
 import { ButtonVariant } from '@genfeedai/contracts';
 import {
   APP_ROUTES,
@@ -19,9 +18,9 @@ import { getDesktopCreditsVisibility } from '@genfeedai/services/core/desktop-ru
 import { Button } from '@ui/primitives/button';
 import { TriangleAlert, X } from 'lucide-react';
 import Link from 'next/link';
-import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+const LOW_CREDITS_THRESHOLD = 1000;
 const DISMISS_KEY = 'genfeed:low-credits-dismissed:v1';
 const DISMISS_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -31,11 +30,6 @@ interface DismissState {
 }
 
 interface LowCreditsBannerProps {
-  /**
-   * Gates the ordinary low-balance warning. The "cannot afford a generation"
-   * paywall state always shows, so unpaid users see why generation stopped.
-   */
-  isLowBalanceWarningEnabled?: boolean;
   variant?: 'inline' | 'shell';
 }
 
@@ -89,22 +83,12 @@ interface LowCreditsContentProps extends LowCreditsBannerProps {
   creditsBreakdown: ReturnType<typeof useSubscription>['creditsBreakdown'];
 }
 function LowCreditsContent({
-  isLowBalanceWarningEnabled = true,
   variant = 'shell',
   creditsBreakdown,
 }: LowCreditsContentProps) {
-  const translate = useTranslations('ui.lowCreditsBanner');
   const { orgHref } = useOrgUrl();
-  const { accessState, isTrialUsedUp } = useAccessState();
-  const isTrialEnded = isTrialUsedUp && accessState?.isTrialExpired === true;
-  // Server-computed and relative to the organization's plan or pack (see
-  // `LowCreditThresholdService`). Unknown means no ordinary low warning.
-  const lowCreditThreshold = coerceFiniteBalance(
-    accessState?.lowCreditThreshold,
-  );
   const isBillingEnabled = hasOrganizationBillingHint();
   const ctaHref = orgHref(APP_ROUTES.SETTINGS.CREDITS);
-  const plansHref = orgHref(APP_ROUTES.SETTINGS.SUBSCRIPTION);
   // Match TopbarCreditsBar: GEN wallet from topbar balances is the source of
   // truth the operator already sees. creditsBreakdown can be null when the
   // subscription query is still loading or was historically gated on ACTIVE.
@@ -124,19 +108,11 @@ function LowCreditsContent({
   }, [balance]);
 
   const severity = useMemo(() => {
-    if (isTrialUsedUp) {
-      return 'critical';
-    }
-    if (!isLowBalanceWarningEnabled || balance === null) {
+    if (balance === null || balance >= LOW_CREDITS_THRESHOLD) {
       return null;
     }
-    if (balance <= 0) {
-      return 'critical';
-    }
-    return lowCreditThreshold !== null && balance < lowCreditThreshold
-      ? 'warning'
-      : null;
-  }, [balance, isLowBalanceWarningEnabled, isTrialUsedUp, lowCreditThreshold]);
+    return balance === 0 ? 'critical' : 'warning';
+  }, [balance]);
 
   const handleDismiss = useCallback(() => {
     if (balance === null) {
@@ -151,38 +127,24 @@ function LowCreditsContent({
     setIsDismissed(true);
   }, [balance]);
 
-  // Out of generating credits is the paywall state, so it cannot be dismissed.
-  if (!severity || (isDismissed && !isTrialUsedUp)) {
+  if (!severity || isDismissed) {
     return null;
   }
 
   const isCritical = severity === 'critical';
-  const title = isTrialEnded
-    ? translate('trialEndedTitle')
-    : isTrialUsedUp
-      ? translate('generationUnaffordableTitle')
-      : isCritical
-        ? "You've run out of credits"
-        : "You're running low on credits";
-  // Expired trial credits cannot be spent, so the badge must not count them.
-  const balanceLabel = isTrialEnded
-    ? translate('trialEndedBadge')
-    : isCritical && balance !== null && balance > 0
-      ? `${formatCreditBalanceExact(balance)} left`
-      : isCritical
-        ? '0 credits left'
-        : `${formatCreditBalanceExact(balance)} remaining`;
-  const description = isTrialEnded
-    ? translate('trialEndedBody')
-    : isTrialUsedUp
-      ? translate('generationUnaffordableBody')
-      : isBillingEnabled
-        ? isCritical
-          ? 'Top up your balance to keep generating content, running workflows, and using your organization tools without interruption.'
-          : 'Your current balance is getting tight. Top up now so active generations and automations do not get blocked later.'
-        : isCritical
-          ? 'Your local install is missing usable provider capacity. Add or update API keys so generations and workflows can keep running.'
-          : 'Your provider capacity is getting tight. Review API keys now so active generations and automations do not get blocked later.';
+  const title = isCritical
+    ? "You've run out of credits"
+    : "You're running low on credits";
+  const balanceLabel = isCritical
+    ? '0 credits left'
+    : `${formatCreditBalanceExact(balance)} remaining`;
+  const description = isBillingEnabled
+    ? isCritical
+      ? 'Top up your balance to keep generating content, running workflows, and using your organization tools without interruption.'
+      : 'Your current balance is getting tight. Top up now so active generations and automations do not get blocked later.'
+    : isCritical
+      ? 'Your local install is missing usable provider capacity. Add or update API keys so generations and workflows can keep running.'
+      : 'Your provider capacity is getting tight. Review API keys now so active generations and automations do not get blocked later.';
   const ctaLabel = isBillingEnabled ? 'Top up credits' : 'Buy credits';
   const isInline = variant === 'inline';
 
@@ -261,35 +223,23 @@ function LowCreditsContent({
                   : 'bg-warning text-warning-foreground hover:bg-warning/80',
               )}
             >
-              {isTrialUsedUp ? translate('buyCredits') : ctaLabel}
+              {ctaLabel}
             </Link>
 
-            {isTrialUsedUp ? (
-              <Link
-                href={plansHref}
-                className={cn(
-                  'inline-flex items-center justify-center border border-red-400/20 text-sm font-semibold text-foreground transition-colors hover:bg-red-500/[0.12]',
-                  isInline ? 'h-9 rounded-lg px-3.5' : 'h-10 rounded-xl px-4',
-                )}
-              >
-                {translate('seePlans')}
-              </Link>
-            ) : (
-              <Button
-                variant={ButtonVariant.UNSTYLED}
-                withWrapper={false}
-                onClick={handleDismiss}
-                className={cn(
-                  'inline-flex items-center justify-center border transition-colors',
-                  isInline ? 'size-9 rounded-lg' : 'size-10 rounded-xl',
-                  isCritical
-                    ? 'border-red-400/15 text-red-200 hover:bg-red-500/[0.12]'
-                    : 'border-amber-400/15 text-amber-200 hover:bg-amber-500/[0.12]',
-                )}
-                ariaLabel="Dismiss low credits banner"
-                icon={<X className="size-4" />}
-              />
-            )}
+            <Button
+              variant={ButtonVariant.UNSTYLED}
+              withWrapper={false}
+              onClick={handleDismiss}
+              className={cn(
+                'inline-flex items-center justify-center border transition-colors',
+                isInline ? 'size-9 rounded-lg' : 'size-10 rounded-xl',
+                isCritical
+                  ? 'border-red-400/15 text-red-200 hover:bg-red-500/[0.12]'
+                  : 'border-amber-400/15 text-amber-200 hover:bg-amber-500/[0.12]',
+              )}
+              ariaLabel="Dismiss low credits banner"
+              icon={<X className="size-4" />}
+            />
           </div>
         </div>
       </div>

@@ -1,26 +1,3 @@
-vi.mock('next-intl', async () => {
-  const { createTranslateFromCatalog } = await import(
-    '@ui/tests/next-intl.stub'
-  );
-  return {
-    useTranslations: createTranslateFromCatalog({
-      ui: {
-        lowCreditsBanner: {
-          buyCredits: 'Buy credits',
-          generationUnaffordableBody:
-            'Everything you made stays in your Library. Buy a credit pack or pick a plan to keep generating.',
-          generationUnaffordableTitle: 'Not enough credits to keep generating',
-          seePlans: 'See plans',
-          trialEndedBadge: 'Trial over',
-          trialEndedBody:
-            'Your 3-day free trial is over and any free credits left have expired.',
-          trialEndedTitle: 'Your free trial has ended',
-        },
-      },
-    }),
-  };
-});
-
 vi.mock(
   '@genfeedai/hooks/ui/use-desktop-runtime-context/use-desktop-runtime-context',
   () => ({
@@ -36,24 +13,6 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockUseSubscription = vi.fn();
 const mockGetTopbarBalances = vi.fn();
-const accessState = vi.hoisted(() => ({
-  isTrialExpired: false,
-  isTrialUsedUp: false,
-  lowCreditThreshold: 1000 as number | null,
-}));
-
-vi.mock(
-  '@genfeedai/contexts/providers/access-state/access-state.provider',
-  () => ({
-    useAccessState: () => ({
-      accessState: {
-        isTrialExpired: accessState.isTrialExpired,
-        lowCreditThreshold: accessState.lowCreditThreshold,
-      },
-      isTrialUsedUp: accessState.isTrialUsedUp,
-    }),
-  }),
-);
 
 vi.mock(
   '@genfeedai/hooks/data/subscription/use-subscription/use-subscription',
@@ -65,15 +24,6 @@ vi.mock(
 vi.mock('@genfeedai/contexts/user/brand-context/brand-context', () => ({
   useBrand: () => ({ organizationId: 'org-1' }),
 }));
-vi.mock(
-  '@genfeedai/contexts/user/organization-context/organization-context',
-  () => ({
-    useRoutedOrganization: () => ({
-      confirmedOrganizationId: 'org-1',
-      isRouteConfirmed: true,
-    }),
-  }),
-);
 
 vi.mock('@genfeedai/config/license', async (importOriginal) => {
   const actual =
@@ -163,10 +113,6 @@ describe('LowCreditsBanner', () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { gcTime: 0, retry: false } },
     });
-    accessState.isTrialUsedUp = false;
-    accessState.isTrialExpired = false;
-    // The server-computed threshold (10% of a 10,000-credit plan here).
-    accessState.lowCreditThreshold = 1000;
     mockUseSubscription.mockReset();
     mockGetTopbarBalances.mockReset();
     mockGetTopbarBalances.mockResolvedValue({ segments: [] });
@@ -222,42 +168,6 @@ describe('LowCreditsBanner', () => {
     );
   });
 
-  it('warns relative to the server threshold, not a fixed number', () => {
-    accessState.lowCreditThreshold = 50;
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 250 },
-    });
-
-    const { rerender } = renderBanner(<LowCreditsBanner />);
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 40 },
-    });
-    rerender(<LowCreditsBanner />);
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      "You're running low on credits",
-    );
-  });
-
-  it('shows no ordinary low warning without a server threshold, but still the empty state', () => {
-    accessState.lowCreditThreshold = null;
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 5 },
-    });
-
-    const { rerender } = renderBanner(<LowCreditsBanner />);
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 0 },
-    });
-    rerender(<LowCreditsBanner />);
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      "You've run out of credits",
-    );
-  });
-
   it('supports the inline library notice variant', () => {
     mockUseSubscription.mockReturnValue({
       creditsBreakdown: { total: 250 },
@@ -296,80 +206,6 @@ describe('LowCreditsBanner', () => {
         "You've run out of credits",
       );
     });
-  });
-
-  it('shows a non-dismissible upgrade state once the balance cannot pay for a generation', () => {
-    accessState.isTrialUsedUp = true;
-    localStorage.setItem(
-      'genfeed:low-credits-dismissed:v1',
-      JSON.stringify({ balance: 5, timestamp: Date.now() }),
-    );
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 5 },
-    });
-
-    renderBanner(<LowCreditsBanner />);
-
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Not enough credits to keep generating',
-    );
-    expect(screen.getByRole('alert')).toHaveTextContent('5 left');
-    expect(screen.getByRole('link', { name: 'Buy credits' })).toHaveAttribute(
-      'href',
-      '/test-org/~/settings/credits',
-    );
-    expect(screen.getByRole('link', { name: 'See plans' })).toHaveAttribute(
-      'href',
-      '/test-org/~/settings/subscription',
-    );
-    expect(
-      screen.queryByRole('button', { name: 'Dismiss low credits banner' }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('explains an ended free trial without counting the expired credits', () => {
-    accessState.isTrialUsedUp = true;
-    accessState.isTrialExpired = true;
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 60 },
-    });
-
-    renderBanner(<LowCreditsBanner />);
-
-    const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Your free trial has ended');
-    expect(alert).toHaveTextContent('Trial over');
-    expect(alert).not.toHaveTextContent('60 left');
-    expect(screen.getByRole('link', { name: 'See plans' })).toHaveAttribute(
-      'href',
-      '/test-org/~/settings/subscription',
-    );
-    expect(
-      screen.queryByRole('button', { name: 'Dismiss low credits banner' }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('shows the paywall state even when the low-balance warning flag is off', () => {
-    accessState.isTrialUsedUp = true;
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 5 },
-    });
-
-    renderBanner(<LowCreditsBanner isLowBalanceWarningEnabled={false} />);
-
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Not enough credits to keep generating',
-    );
-  });
-
-  it('hides the ordinary low-balance warning when its flag is off', () => {
-    mockUseSubscription.mockReturnValue({
-      creditsBreakdown: { total: 50 },
-    });
-
-    renderBanner(<LowCreditsBanner isLowBalanceWarningEnabled={false} />);
-
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('keeps the billing CTA in EE mode', () => {
