@@ -403,8 +403,6 @@ const UI_TEST_MESSAGES = {
       save: 'Save YouTube settings',
       saving: 'Saving…',
       saved: 'YouTube settings saved',
-      refreshFailed:
-        'YouTube settings saved, but the view could not refresh. Reload to see the latest settings.',
       saveFailed: 'Could not save YouTube settings.',
     },
     tiktokPublishing: {
@@ -670,10 +668,6 @@ const UI_TEST_MESSAGES = {
       generate: 'Generate draft',
       generating: 'Generating…',
       failed: 'Could not generate a draft. Please try again.',
-      savedReady: 'Draft saved with your approved brand kit.',
-      savedNeedsReview:
-        'Draft saved in a provisional style until you approve your own brand kit.',
-      viewReceipt: 'View receipt',
       platform: 'Channel',
       account: 'Publishing account',
       noAccount: 'Draft only — connect an account later',
@@ -741,16 +735,6 @@ const UI_TEST_MESSAGES = {
       appliedContext: 'Applied context',
       brand: 'This brand',
       brandLabel: 'Brand prompt enhancement',
-      brandMode: {
-        approved_brand: 'Approved brand',
-        provisional_brand: 'Provisional brand',
-        raw: 'Not branded',
-      },
-      brandModeHint: {
-        provisional_brand:
-          'Your brand kit is not approved yet. This was generated from the draft kit and is not checked for compliance.',
-        raw: 'The prompt was sent exactly as typed. No brand was applied.',
-      },
       description:
         'Improve image and video prompts automatically. These preferences apply in Studio and all connected agents.',
       enhancementSkipped: 'Enhancement skipped',

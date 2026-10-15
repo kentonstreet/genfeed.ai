@@ -834,7 +834,9 @@ export class TiktokService {
         settings,
       );
 
-      const description = htmlToText(post.description);
+      const description =
+        htmlToText(post.description) ||
+        'this will be a #funny photo on your @tiktok #fyp';
 
       const res = await firstValueFrom(
         this.httpService.post(
@@ -852,7 +854,7 @@ export class TiktokService {
               description,
               disable_comment: disableOptions.comment,
               privacy_level: privacyLevel,
-              title: description || post.label || '',
+              title: post.label || 'Check out this photo!',
             },
             post_mode: draftMode ? 'MEDIA_UPLOAD' : 'DIRECT_POST',
             source_info: {
