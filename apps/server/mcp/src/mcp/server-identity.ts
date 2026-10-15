@@ -1,5 +1,5 @@
 import type { McpAccessMode } from '@genfeedai/actions';
-import type { Implementation } from '@modelcontextprotocol/server';
+import type { Implementation } from '@modelcontextprotocol/sdk/types.js';
 import { MCP_BRAND_ICON_FILES } from './brand-icons';
 
 export const MCP_SERVER_NAME = 'genfeed-mcp-server';
