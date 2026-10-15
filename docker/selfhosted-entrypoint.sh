@@ -35,10 +35,9 @@ export GENFEEDAI_PUBLIC_URL=${GENFEEDAI_PUBLIC_URL:-http://localhost:3000}
 export GENFEED_STORAGE_PATH=${GENFEED_STORAGE_PATH:-/data/files}
 export TEMP_DIR=${TEMP_DIR:-/data/tmp/videos}
 
-# Community runs the local Better Auth handler by default so a fresh install can
-# sign up its first user. Set BETTER_AUTH_ENABLED=false for the seeded
-# single-user workspace with no login wall.
-export BETTER_AUTH_ENABLED=${BETTER_AUTH_ENABLED:-true}
+# Community defaults to LOCAL mode: a seeded single-org workspace with no login
+# wall. Setting BETTER_AUTH_ENABLED=true turns on the local Better Auth handler.
+export BETTER_AUTH_ENABLED=${BETTER_AUTH_ENABLED:-false}
 export NEXT_PUBLIC_BETTER_AUTH_ENABLED=${NEXT_PUBLIC_BETTER_AUTH_ENABLED:-$BETTER_AUTH_ENABLED}
 if [ "$BETTER_AUTH_ENABLED" = "false" ]; then
   export NEXT_PUBLIC_BETTER_AUTH_ENABLED=false
@@ -89,16 +88,16 @@ for i in $(seq 1 $MIGRATE_RETRIES); do
   sleep "$MIGRATE_DELAY"
 done
 
-API_PORT=$(echo "$GENFEEDAI_API_URL" | sed 's|.*:||')
 echo "[entrypoint] Reconciling reference data..."
-if ! PORT=${API_PORT} node --max-old-space-size=8192 --expose-gc -r tsconfig-paths/register \
+if ! node --max-old-space-size=8192 --expose-gc -r tsconfig-paths/register \
   apps/server/dist/apps/api-reference-data-sync/main --live; then
   echo "[entrypoint] FATAL: reference-data sync failed" >&2
   exit 1
 fi
 echo "[entrypoint] Reference-data sync completed"
 
-# Derive the remaining service ports from their env URLs
+# Derive service ports from their env URLs
+API_PORT=$(echo "$GENFEEDAI_API_URL" | sed 's|.*:||')
 FILES_PORT=$(echo "$GENFEEDAI_MICROSERVICES_FILES_URL" | sed 's|.*:||')
 NOTIFICATIONS_PORT=$(echo "$GENFEEDAI_MICROSERVICES_NOTIFICATIONS_URL" | sed 's|.*:||')
 WORKERS_PORT=$(echo "$GENFEEDAI_MICROSERVICES_WORKERS_URL" | sed 's|.*:||')
