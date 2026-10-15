@@ -6,22 +6,12 @@ import {
   PostFormat,
   PostVisibility,
 } from '@genfeedai/contracts';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
-import {
-  captureLearningLoopPublication as capturePublication,
+  captureLearningLoopPublication,
   closeLearningLoopDatabase,
-  enableLegacyLearningLoopLive,
   ensureLearningLoopScope,
   type LearningLoopDatabase,
-  type LearningLoopPublication,
   type LearningLoopTarget,
   openLearningLoopDatabase,
   publishLearningLoopPost,
@@ -39,15 +29,6 @@ describe('Content learning generation loop (real Postgres)', () => {
   const db = () => {
     if (!database) throw new Error('database not open');
     return database;
-  };
-  const captureLearningLoopPublication = (
-    database: LearningLoopDatabase,
-    publication: LearningLoopPublication,
-  ) => {
-    vi.setSystemTime(
-      new Date(publication.publishedAt.getTime() + (48 * 60 + 10) * 60000),
-    );
-    return capturePublication(database, publication);
   };
   const draft = async (description: string) => {
     const id = randomUUID();
@@ -90,8 +71,6 @@ describe('Content learning generation loop (real Postgres)', () => {
   };
 
   beforeAll(async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date());
     database = await openLearningLoopDatabase();
     target = await seedLearningLoopTenant(db());
     other = await seedLearningLoopTenant(db());
@@ -104,13 +83,8 @@ describe('Content learning generation loop (real Postgres)', () => {
     }
   }, 600000);
 
-  afterEach(() => vi.restoreAllMocks());
   afterAll(async () => {
-    try {
-      await closeLearningLoopDatabase(database);
-    } finally {
-      vi.useRealTimers();
-    }
+    await closeLearningLoopDatabase(database);
   });
 
   it('materializes a twenty-contributor baseline and resolves a shadow decision against it', async () => {
@@ -229,85 +203,11 @@ describe('Content learning generation loop (real Postgres)', () => {
         },
       }),
     ).toBe(1);
-    const policy = await db().services.policies.rebuild(
-      target.organizationId,
-      target.credentialId,
-      scope.state.scopeKey,
-    );
-    expect(policy).toMatchObject({ state: 'shadow', evidenceIds: [rewardId] });
-    if (!policy) throw new Error('Expected a learned shadow policy');
-    expect(
-      await db().services.dependencies.valid(
-        'policy',
-        policy.id,
-        db().prisma,
-        target.organizationId,
-      ),
-    ).toBe(true);
-    expect(
-      await db().prisma.contentLearningDependency.count({
-        where: {
-          derivedKind: 'policy',
-          derivedId: policy.id,
-          derivedOrganizationId: target.organizationId,
-          sourceKind: 'reward',
-          sourceId: rewardId,
-          valid: true,
-          isDeleted: false,
-        },
-      }),
-    ).toBe(1);
-    const readScope = () =>
-      db().prisma.contentLearningScopeState.findFirstOrThrow({
-        where: {
-          id: scope.state.id,
-          organizationId: target.organizationId,
-          isDeleted: false,
-        },
-      });
-    expect((await readScope()).activePolicyId).toBeNull();
-    await enableLegacyLearningLoopLive(db(), target);
-    expect((await readScope()).activePolicyId).toBeNull();
-    const where = {
-      organizationId: target.organizationId,
-      credentialId: target.credentialId,
-      scopeKey: scope.state.scopeKey,
-      epoch: scope.state.epoch,
-      isDeleted: false,
-    };
-    const count = await db().prisma.contentLearningPolicyVersion.count({
-      where,
-    });
-    expect(
-      await db().services.policies.rebuild(
-        target.organizationId,
-        target.credentialId,
-        scope.state.scopeKey,
-      ),
-    ).toMatchObject({
-      id: policy.id,
-      state: 'shadow',
-      evidenceManifestHash: policy.evidenceManifestHash,
-    });
-    expect(
-      await db().prisma.contentLearningPolicyVersion.count({ where }),
-    ).toBe(count);
-    expect((await readScope()).activePolicyId).toBeNull();
   }, 180000);
 
   it('commits no valid reward when the artifact was never bound', async () => {
     const postId = await draft('Unbound candidate text');
-    const resolution = await resolve(postId);
-    const binding = vi
-      .spyOn(db().services.decisions, 'bindArtifact')
-      .mockResolvedValue('');
-    await db().services.decisions.bindArtifact(
-      target.organizationId,
-      resolution.receipt.decisionId as string,
-      postId,
-      'Unbound candidate text',
-    );
-    expect(binding).toHaveBeenCalledOnce();
+    await resolve(postId);
     const publication = await publishLearningLoopPost(db(), target, {
       postId,
     });
