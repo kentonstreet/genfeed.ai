@@ -443,17 +443,15 @@ export class SocialSourcesService {
       context,
       reference.platform,
       externalId,
-      [SocialSourceType.TIMELINE],
     );
 
-    // Timeline snapshots can remove their posts. URL imports must use a
-    // durable non-timeline source, or create an inactive POST container.
+    // Reuse the existing item's source; fall back to an import container when
+    // the original source was since removed.
     const existingSource = existing
       ? await this.prisma.socialSource.findFirst({
           where: scopedWhere(context.organizationId, {
             brandId: context.brandId,
             id: existing.sourceId,
-            sourceType: { not: SocialSourceType.TIMELINE },
           }),
         })
       : null;
@@ -585,9 +583,6 @@ export class SocialSourcesService {
         normalizePlatform(source.platform),
         source.handle,
         {
-          ...(source.sourceType === SocialSourceType.OWN_ACCOUNT
-            ? { captureBreakoutEvidence: true }
-            : {}),
           brandId: source.brandId,
           credentialId: source.credentialId ?? undefined,
           includeReplies: true,
@@ -611,16 +606,11 @@ export class SocialSourcesService {
       const normalizedPosts = collected.posts.map((item) =>
         normalizeCollectedPost(source, item),
       );
-      const { posts, rejectedCount } = collected.breakoutAttempt
-        ? await this.sourcePostsService.upsertCollectedPosts(
-            source,
-            normalizedPosts,
-            collected,
-          )
-        : await this.sourcePostsService.upsertCollectedPosts(
-            source,
-            normalizedPosts,
-          );
+      const { posts, rejectedCount } =
+        await this.sourcePostsService.upsertCollectedPosts(
+          source,
+          normalizedPosts,
+        );
       const latestPost = posts[0];
       const rejectedPostMessage =
         rejectedCount > 0

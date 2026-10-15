@@ -106,36 +106,6 @@ describe('TiktokService', () => {
     vi.clearAllMocks();
   });
 
-  describe('getPublishStatus', () => {
-    it('stops polling when a private post completes without a public ID', async () => {
-      (httpService.post as Mock).mockReturnValue(
-        of({ data: { data: { status: 'PUBLISH_COMPLETE' } } }),
-      );
-      expect(
-        await service.getPublishStatus('access', 'publish-private', 3, 0),
-      ).toEqual({ status: 'PUBLISH_COMPLETE' });
-      expect(httpService.post).toHaveBeenCalledTimes(1);
-    });
-
-    it('normalizes TikTok’s documented publicaly_available_post_id field', async () => {
-      (httpService.post as Mock).mockReturnValue(
-        of({
-          data: {
-            data: {
-              status: 'PUBLISH_COMPLETE',
-              publicaly_available_post_id: ['video-123'],
-            },
-          },
-        }),
-      );
-      expect(
-        await service.getPublishStatus('access', 'publish-public', 1, 0),
-      ).toEqual(
-        expect.objectContaining({ publicly_available_post_id: ['video-123'] }),
-      );
-    });
-  });
-
   describe('uploadVideo', () => {
     it('sends request and returns data', async () => {
       const mockPost = buildMockPost({ label: 'Test video' });
@@ -176,7 +146,6 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         mockPost,
-        { privacyLevel: 'private', musicUsageAccepted: true },
       );
 
       expect(res.data?.post_id).toEqual('post-123');
@@ -220,7 +189,7 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         mockPost,
-        { privacyLevel: 'private', musicUsageAccepted: true },
+        {},
         'credential-42',
       );
 
@@ -264,7 +233,6 @@ describe('TiktokService', () => {
           'account-id',
           'http://video.url',
           mockPost,
-          { privacyLevel: 'private', musicUsageAccepted: true },
         ),
       ).rejects.toThrow('TikTok API returned non-200 status');
 
@@ -334,142 +302,6 @@ describe('TiktokService', () => {
     });
   });
 
-  describe('uploadImage', () => {
-    const arrangeUpload = () => {
-      vi.spyOn(service, 'getValidCredential').mockResolvedValue(
-        asCredential({ accessToken: 'test-token' }),
-      );
-
-      vi.spyOn(service, 'getCreatorInfo').mockResolvedValue({
-        comment_disabled: false,
-        creator_avatar_url: '',
-        creator_nickname: 'Test',
-        creator_username: 'test',
-        duet_disabled: false,
-        max_video_post_duration_sec: 600,
-        privacy_level_options: ['SELF_ONLY', 'PUBLIC_TO_EVERYONE'],
-        stitch_disabled: false,
-      });
-
-      (httpService.post as Mock).mockReturnValue(
-        of({
-          data: { data: { publish_id: 'test-id' } },
-          status: 200,
-        }),
-      );
-
-      vi.spyOn(service, 'getPublishStatus').mockResolvedValue({
-        publicly_available_post_id: ['post-123'],
-        status: 'PUBLISH_COMPLETE',
-      } as unknown as import('@genfeedai/contracts/interfaces').ITikTokPublishStatusData);
-    };
-
-    const photoPostInfo = () =>
-      (
-        (httpService.post as Mock).mock.calls[0][1] as {
-          post_info: { description: string; title: string };
-        }
-      ).post_info;
-
-    const publishPhoto = (post: TikTokPublishPost) =>
-      service.uploadImage(
-        'org-id',
-        'account-id',
-        ['https://cdn.genfeed.ai/photo.jpg'],
-        post,
-        false,
-        { musicUsageAccepted: true, privacyLevel: 'private' },
-      );
-
-    it('sends the converted creator caption without promotional text', async () => {
-      arrangeUpload();
-
-      await publishPhoto(
-        buildMockPost({
-          description: '<p>My own caption</p>',
-          label: 'Internal title',
-        }),
-      );
-
-      expect(httpService.post).toHaveBeenCalledWith(
-        'https://open.tiktokapis.com/v2/post/publish/content/init/',
-        expect.objectContaining({
-          media_type: 'PHOTO',
-          post_mode: 'DIRECT_POST',
-        }),
-        expect.any(Object),
-      );
-      expect(photoPostInfo()).toMatchObject({
-        auto_add_music: true,
-        brand_content_toggle: false,
-        brand_organic_toggle: false,
-        description: 'My own caption',
-        disable_comment: true,
-        privacy_level: 'SELF_ONLY',
-        title: 'My own caption',
-      });
-      expect(JSON.stringify(photoPostInfo())).not.toContain(
-        'this will be a #funny photo',
-      );
-      expect(JSON.stringify(photoPostInfo())).not.toContain(
-        'Check out this photo!',
-      );
-    });
-
-    it('uses the creator label as the title when the converted description is empty', async () => {
-      arrangeUpload();
-
-      await publishPhoto(
-        buildMockPost({
-          description: '<p></p>',
-          label: 'Pier at dusk',
-        }),
-      );
-
-      expect(photoPostInfo()).toMatchObject({
-        description: '',
-        title: 'Pier at dusk',
-      });
-    });
-
-    it('uses the converted description as the title when the label is empty', async () => {
-      arrangeUpload();
-
-      await publishPhoto(
-        buildMockPost({
-          description: '<p>Only the caption</p>',
-          label: '',
-        }),
-      );
-
-      expect(photoPostInfo()).toMatchObject({
-        description: 'Only the caption',
-        title: 'Only the caption',
-      });
-    });
-
-    it('sends an empty description and title when the creator supplied neither', async () => {
-      arrangeUpload();
-
-      await publishPhoto(
-        buildMockPost({
-          description: null,
-          label: null,
-        }),
-      );
-
-      expect(photoPostInfo()).toMatchObject({
-        description: '',
-        title: '',
-      });
-      const payload = JSON.stringify(
-        (httpService.post as Mock).mock.calls[0][1],
-      );
-      expect(payload).not.toContain('this will be a #funny photo');
-      expect(payload).not.toContain('Check out this photo!');
-    });
-  });
-
   describe('channel target settings', () => {
     /**
      * The composer's choices only reach TikTok through the publish body, so
@@ -527,62 +359,26 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         buildMockPost({ label: 'Test video' }),
-        { privacyLevel: 'public', musicUsageAccepted: true },
+        { privacyLevel: 'public' },
       );
 
       expect(postInfoOf().privacy_level).toBe('PUBLIC_TO_EVERYONE');
     });
 
-    it('requires the creator music confirmation before posting', async () => {
-      arrangeUpload();
-      await expect(
-        service.uploadVideo(
-          'org-id',
-          'account-id',
-          'http://video.url',
-          buildMockPost({ label: 'Test video' }),
-          { privacyLevel: 'private' },
-        ),
-      ).rejects.toThrow('Music Usage Confirmation');
-      expect(httpService.post).not.toHaveBeenCalled();
-    });
+    it('falls back to the safe default when the account cannot offer the requested level', async () => {
+      // TikTok rejects the whole publish for a level missing from
+      // `privacy_level_options`, so an unavailable choice must degrade.
+      arrangeUpload({ privacy_level_options: ['SELF_ONLY'] });
 
-    it('sends the creator caption and commercial disclosure without adding promotional text', async () => {
-      arrangeUpload();
       await service.uploadVideo(
         'org-id',
         'account-id',
         'http://video.url',
-        buildMockPost({
-          description: '<p>My own caption</p>',
-          label: 'Internal title',
-        }),
-        {
-          privacyLevel: 'public',
-          musicUsageAccepted: true,
-          commercialContent: true,
-          yourBrand: true,
-        },
+        buildMockPost({ label: 'Test video' }),
+        { privacyLevel: 'public' },
       );
-      expect(postInfoOf()).toMatchObject({
-        title: 'My own caption',
-        brand_content_toggle: false,
-        brand_organic_toggle: true,
-      });
-    });
 
-    it('rejects an unavailable privacy selection before initializing a post', async () => {
-      arrangeUpload({ privacy_level_options: ['SELF_ONLY'] });
-      await expect(
-        service.uploadVideo(
-          'org-id',
-          'account-id',
-          'http://video.url',
-          buildMockPost({ label: 'Test video' }),
-          { privacyLevel: 'public', musicUsageAccepted: true },
-        ),
-      ).rejects.toThrow('not available');
-      expect(httpService.post).not.toHaveBeenCalled();
+      expect(postInfoOf().privacy_level).toBe('SELF_ONLY');
     });
 
     it('disables the interactions the composer turned off', async () => {
@@ -593,13 +389,7 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         buildMockPost({ label: 'Test video' }),
-        {
-          privacyLevel: 'private',
-          musicUsageAccepted: true,
-          allowComments: false,
-          allowDuet: false,
-          allowStitch: true,
-        },
+        { allowComments: false, allowDuet: false, allowStitch: true },
       );
 
       expect(postInfoOf()).toMatchObject({
@@ -618,17 +408,13 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         buildMockPost({ label: 'Test video' }),
-        {
-          privacyLevel: 'private',
-          musicUsageAccepted: true,
-          allowComments: true,
-        },
+        { allowComments: true },
       );
 
       expect(postInfoOf().disable_comment).toBe(true);
     });
 
-    it('keeps interactions disabled until the creator opts in', async () => {
+    it('leaves interactions enabled when the composer set nothing', async () => {
       arrangeUpload();
 
       await service.uploadVideo(
@@ -636,13 +422,12 @@ describe('TiktokService', () => {
         'account-id',
         'http://video.url',
         buildMockPost({ label: 'Test video' }),
-        { privacyLevel: 'private', musicUsageAccepted: true },
       );
 
       expect(postInfoOf()).toMatchObject({
-        disable_comment: true,
-        disable_duet: true,
-        disable_stitch: true,
+        disable_comment: false,
+        disable_duet: false,
+        disable_stitch: false,
       });
     });
   });

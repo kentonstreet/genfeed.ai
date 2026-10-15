@@ -19,7 +19,6 @@ import {
   type ChannelTargetSettings,
   readChannelSettingBoolean,
   readChannelSettingString,
-  validateTikTokPublishingSettings,
 } from '@genfeedai/contracts/api-types/contracts';
 import type {
   ISocialTrend,
@@ -241,11 +240,6 @@ export class TiktokService {
     }
 
     const requestedPrivacy = readChannelSettingString(settings, 'privacyLevel');
-    const consentIssues = validateTikTokPublishingSettings(
-      settings,
-      availablePrivacyLevels,
-    );
-    if (consentIssues.length > 0) throw new Error(consentIssues.join(' '));
     const privacyLevel = resolveTikTokPrivacyLevel(
       availablePrivacyLevels,
       requestedPrivacy,
@@ -290,7 +284,7 @@ export class TiktokService {
     }
 
     const allowed = readChannelSettingBoolean(settings, key);
-    return allowed !== true;
+    return allowed === undefined ? false : !allowed;
   }
 
   /**
@@ -326,14 +320,16 @@ export class TiktokService {
       this.RETRY_DELAY_MS,
     );
 
-    if (statusData?.status === TikTokPublishStatus.PUBLISH_COMPLETE) {
-      this.loggerService.log(`${context} publish completed`);
+    if (statusData?.publicly_available_post_id?.[0]) {
+      this.loggerService.log(
+        `${context} success - got post_id: ${statusData.publicly_available_post_id[0]}`,
+      );
       return {
         ...res.data,
         data: {
           ...res.data.data,
           isPending: false,
-          post_id: statusData.publicly_available_post_id?.[0],
+          post_id: statusData.publicly_available_post_id[0],
           publish_id: publishId,
           status: statusData.status,
         },
@@ -678,25 +674,20 @@ export class TiktokService {
         settings,
       );
 
-      const description = htmlToText(post.description);
+      const description =
+        htmlToText(post.description) || 'Check out this video! #fyp';
 
       const res = await firstValueFrom(
         this.httpService.post(
           `${this.endpoint}/post/publish/video/init/`,
           {
             post_info: {
-              brand_content_toggle:
-                settings.commercialContent === true &&
-                settings.brandedContent === true,
-              brand_organic_toggle:
-                settings.commercialContent === true &&
-                settings.yourBrand === true,
               description,
               disable_comment: disableOptions.comment,
               disable_duet: disableOptions.duet,
               disable_stitch: disableOptions.stitch,
               privacy_level: privacyLevel,
-              title: description || post.label || '',
+              title: post.label || 'Check out this video!',
             },
             source_info: {
               source: 'PULL_FROM_URL',
@@ -834,7 +825,9 @@ export class TiktokService {
         settings,
       );
 
-      const description = htmlToText(post.description);
+      const description =
+        htmlToText(post.description) ||
+        'this will be a #funny photo on your @tiktok #fyp';
 
       const res = await firstValueFrom(
         this.httpService.post(
@@ -843,16 +836,10 @@ export class TiktokService {
             media_type: 'PHOTO',
             post_info: {
               auto_add_music: true,
-              brand_content_toggle:
-                settings.commercialContent === true &&
-                settings.brandedContent === true,
-              brand_organic_toggle:
-                settings.commercialContent === true &&
-                settings.yourBrand === true,
               description,
               disable_comment: disableOptions.comment,
               privacy_level: privacyLevel,
-              title: description || post.label || '',
+              title: post.label || 'Check out this photo!',
             },
             post_mode: draftMode ? 'MEDIA_UPLOAD' : 'DIRECT_POST',
             source_info: {
@@ -896,7 +883,6 @@ export class TiktokService {
   ): Promise<ITikTokPublishStatusData | null> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
 
-    let lastData: ITikTokPublishStatusData | null = null;
     try {
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const res = await firstValueFrom(
@@ -914,19 +900,17 @@ export class TiktokService {
           ),
         );
 
-        const raw: ITikTokPublishStatusData = res.data?.data || {};
-        const data = {
-          ...raw,
-          publicly_available_post_id:
-            raw.publicaly_available_post_id ?? raw.publicly_available_post_id,
-        };
-        lastData = data;
+        const data = res.data?.data || {};
         this.loggerService.log(`${url} attempt ${attempt + 1}`, {
           publicly_available_post_id: data.publicly_available_post_id,
           status: data.status,
         });
 
-        if (data.status === TikTokPublishStatus.PUBLISH_COMPLETE) {
+        // Check if the post is published and has a publicly available ID
+        if (
+          data.status === TikTokPublishStatus.PUBLISH_COMPLETE &&
+          data.publicly_available_post_id?.length > 0
+        ) {
           return data;
         }
 
@@ -943,14 +927,30 @@ export class TiktokService {
         }
       }
 
+      // If we've exhausted all attempts without getting post_id, log final attempt
+      const finalRes = await firstValueFrom(
+        this.httpService.post(
+          `${this.endpoint}/post/publish/status/fetch/`,
+          {
+            publish_id: publishId,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': this.contentType,
+            },
+          },
+        ),
+      );
+
       this.loggerService.warn(
-        `${url} max attempts (${maxAttempts}) reached while processing`,
+        `${url} max attempts (${maxAttempts}) reached without getting publicly_available_post_id`,
         {
-          finalStatus: lastData?.status,
-          publishId,
+          finalStatus: finalRes.data?.data?.status,
+          fullResponse: finalRes.data,
         },
       );
-      return lastData;
+      return finalRes.data?.data || null;
     } catch (error: unknown) {
       this.loggerService.error(`${url} failed`, error);
       throw error;

@@ -24,7 +24,7 @@
     "symbol": "BillingAccountMigrationService.run"
   },
   {
-    "actual": 166,
+    "actual": 180,
     "file": "apps/server/api/src/collections/clip-projects/services/clip-generation-dispatch.service.ts",
     "metric": "method-lines",
     "symbol": "ClipGenerationDispatchService.retryFailedClips"
@@ -54,7 +54,7 @@
     "symbol": "LearningRunService.execute"
   },
   {
-    "actual": 1101,
+    "actual": 1114,
     "file": "apps/server/api/src/collections/content-runs/services/brand-remix-run-execution.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/collections/content-runs/services/brand-remix-run-execution.service.ts"
@@ -66,7 +66,7 @@
     "symbol": "ListeningTopicAnalysisService.persistAnalysis"
   },
   {
-    "actual": 1013,
+    "actual": 1022,
     "file": "apps/server/api/src/collections/models/services/models.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/collections/models/services/models.service.ts"
@@ -90,10 +90,16 @@
     "symbol": "apps/server/api/src/collections/social-inbox/services/social-inbox-ingestion.service.ts"
   },
   {
-    "actual": 1174,
+    "actual": 1181,
     "file": "apps/server/api/src/endpoints/ads-research/ads-research.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/endpoints/ads-research/ads-research.service.ts"
+  },
+  {
+    "actual": 276,
+    "file": "apps/server/api/src/endpoints/onboarding/proactive-onboarding.service.ts",
+    "metric": "method-lines",
+    "symbol": "ProactiveOnboardingService.prepareBrand"
   },
   {
     "actual": 198,
@@ -102,7 +108,7 @@
     "symbol": "PublicYoutubeClipsService.onModuleInit"
   },
   {
-    "actual": 164,
+    "actual": 169,
     "file": "apps/server/api/src/endpoints/webhooks/heygen/webhooks.heygen.service.ts",
     "metric": "method-lines",
     "symbol": "HeygenWebhookService.handleCallback"
@@ -138,7 +144,7 @@
     "symbol": "AgentTurnWorkflowExecutionService.constructor"
   },
   {
-    "actual": 203,
+    "actual": 206,
     "file": "apps/server/api/src/services/agent-orchestrator/tools/agent-analytics-tool-handler.service.ts",
     "metric": "method-lines",
     "symbol": "AgentAnalyticsToolHandler.getAnalytics"
@@ -162,7 +168,7 @@
     "symbol": "AgentToolExecutorService.constructor"
   },
   {
-    "actual": 1254,
+    "actual": 1262,
     "file": "apps/server/api/src/services/content-optimization/content-optimization.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/services/content-optimization/content-optimization.service.ts"
@@ -228,7 +234,7 @@
     "symbol": "apps/server/telegram/src/services/telegram-bot-manager.service.ts"
   },
   {
-    "actual": 159,
+    "actual": 161,
     "file": "apps/server/workers/src/crons/ingredients/cron.ingredients.service.ts",
     "metric": "method-lines",
     "symbol": "CronIngredientsService.checkStuckProcessingIngredients"
@@ -240,13 +246,19 @@
     "symbol": "CronIngredientsService.refreshMissingMetadataDimensions"
   },
   {
-    "actual": 34,
+    "actual": 209,
+    "file": "apps/server/workers/src/crons/tiktok/cron.tiktok-status.service.ts",
+    "metric": "method-lines",
+    "symbol": "CronTiktokStatusService.checkPostStatus"
+  },
+  {
+    "actual": 32,
     "file": "apps/server/workers/src/scheduling/platform-schedules.processor.ts",
     "metric": "constructor-dependencies",
     "symbol": "PlatformSchedulesProcessor.constructor"
   },
   {
-    "actual": 1046,
+    "actual": 1052,
     "file": "apps/server/workers/src/services/scheduled-post-delivery.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/workers/src/services/scheduled-post-delivery.service.ts"

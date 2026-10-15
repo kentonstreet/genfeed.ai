@@ -428,6 +428,8 @@ export interface ApifySoundData {
   examples?: ApifyVideoData[];
 }
 
+// ==================== Instagram Comment Interfaces ====================
+
 /**
  * Raw Instagram comment data from Apify scraper
  */
@@ -477,6 +479,8 @@ export interface ApifyInstagramUser {
   isVerified?: boolean;
   isPrivate?: boolean;
 }
+
+// ==================== TikTok Comment Interfaces ====================
 
 /**
  * Raw TikTok comment data from Apify scraper
@@ -533,6 +537,8 @@ export interface ApifyTikTokUser {
   videoCount?: number;
 }
 
+// ==================== YouTube Comment Interfaces ====================
+
 /**
  * Raw YouTube comment data from Apify scraper
  */
@@ -581,6 +587,8 @@ export interface ApifyYouTubeChannel {
   viewCount?: number;
   customUrl?: string;
 }
+
+// ==================== Generic Social Comment Interface ====================
 
 /**
  * Platform-agnostic normalized comment for reply bot system

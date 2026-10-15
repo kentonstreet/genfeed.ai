@@ -88,6 +88,8 @@ export class TrendsService {
     return result;
   }
 
+  // ==================== Orchestrator Methods ====================
+
   /**
    * Calculate virality score — delegates to TrendFilteringService
    */
@@ -234,6 +236,7 @@ export class TrendsService {
       return [];
     }
 
+    // No cached trends, fetch fresh
     this.loggerService.log('No cached trends found, fetching fresh data');
     const fetchedTrends = await this.fetchAndCacheTrends(
       organizationId,
@@ -404,6 +407,8 @@ export class TrendsService {
     };
   }
 
+  // ==================== Delegated: Content Ideas ====================
+
   /**
    * Generate AI-powered content ideas for trends
    */
@@ -422,6 +427,8 @@ export class TrendsService {
       byokApiKeyOverride,
     );
   }
+
+  // ==================== Delegated: Analysis ====================
 
   /**
    * Mark expired trends as historical
@@ -548,6 +555,8 @@ export class TrendsService {
     );
   }
 
+  // ==================== Delegated: Read Queries ====================
+
   /**
    * Get a single trend by ID
    */
@@ -619,6 +628,8 @@ export class TrendsService {
       limit,
     );
   }
+
+  // ==================== Delegated: Video/Hashtag/Sound ====================
 
   /**
    * Get viral videos
@@ -757,6 +768,8 @@ export class TrendsService {
   markExpiredSoundsAsHistorical(): Promise<number> {
     return this.trendVideoService.markExpiredSoundsAsHistorical();
   }
+
+  // ==================== Delegated: Turnover Analytics ====================
 
   /**
    * Get trend appearance and death counts by platform for the given period.

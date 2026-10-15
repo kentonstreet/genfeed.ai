@@ -21,10 +21,6 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
 }));
 
-vi.mock('@hooks/navigation/use-org-url', () => ({
-  useOrgUrl: () => ({ href: (path: string) => `/org-1/brand-1${path}` }),
-}));
-
 vi.mock('@hooks/navigation/use-collection-scope/use-collection-scope', () => ({
   isBrandResourceReady: () => true,
   useCollectionScope: () => ({
@@ -375,7 +371,7 @@ describe('DiscoveryTrends', () => {
     // detail route before the click and cmd-click opens it in a new tab.
     expect(screen.getByRole('link', { name: 'Open AI video' })).toHaveAttribute(
       'href',
-      '/org-1/brand-1/discovery/trends/detail/trend-1',
+      '/discovery/trends/detail/trend-1',
     );
 
     // Market viral videos, not the brand's own uploads.
