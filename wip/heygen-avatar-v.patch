@@ -1,0 +1,1513 @@
+diff --git a/apps/server/api/src/seeds/fixtures/heygen-rate-schemas.ts b/apps/server/api/src/seeds/fixtures/heygen-rate-schemas.ts
+new file mode 100644
+index 00000000..940b4402
+--- /dev/null
++++ b/apps/server/api/src/seeds/fixtures/heygen-rate-schemas.ts
+@@ -0,0 +1,96 @@
++import type { SchemaFixture } from '@api/seeds/reviewed-provider-rates-seed.types';
++
++/**
++ * Provider schemas for the HeyGen rate-sheet entries. HeyGen publishes no
++ * Replicate-style prediction schema, so the seed carries these hand-written
++ * ones, limited to the fields we send and read from the 2026-10-10 API notes.
++ *
++ * `resolution` is deliberately absent from the avatar input schema: HeyGen
++ * prices by output second whatever the resolution, and a `resolution` property
++ * would make the quote demand a resolution selector the rate sheet does not
++ * carry, leaving the model unpriceable.
++ */
++const SPEECH_OPENAPI: SchemaFixture['openapi'] = {
++  components: {
++    schemas: {
++      Input: {
++        properties: {
++          expressiveness_boost: {
++            description: 'Instant voices only.',
++            maximum: 1,
++            minimum: 0,
++            type: 'number',
++          },
++          language: { type: 'string' },
++          model: { const: 'heygen-voice-1', type: 'string' },
++          text: { maxLength: 5000, minLength: 1, type: 'string' },
++          voice_id: { type: 'string' },
++        },
++        required: ['model', 'voice_id', 'text'],
++        title: 'Input',
++        type: 'object',
++      },
++      Output: {
++        properties: {
++          audio_url: { format: 'uri', type: 'string' },
++          duration: { type: 'number' },
++        },
++        required: ['audio_url'],
++        title: 'Output',
++        type: 'object',
++      },
++    },
++  },
++  openapi: '3.1.0',
++};
++
++function avatarOpenapi(
++  engine: 'avatar_iv' | 'avatar_v',
++): SchemaFixture['openapi'] {
++  return {
++    components: {
++      schemas: {
++        Input: {
++          properties: {
++            avatar_id: { type: 'string' },
++            engine: {
++              properties: { type: { const: engine, type: 'string' } },
++              type: 'object',
++            },
++            script: { maxLength: 5000, type: 'string' },
++            type: { const: 'avatar', type: 'string' },
++            voice_id: { type: 'string' },
++          },
++          required: ['type', 'avatar_id'],
++          title: 'Input',
++          type: 'object',
++        },
++        Output: {
++          properties: {
++            status: { type: 'string' },
++            video_id: { type: 'string' },
++          },
++          required: ['video_id'],
++          title: 'Output',
++          type: 'object',
++        },
++      },
++    },
++    openapi: '3.1.0',
++  };
++}
++
++export const HEYGEN_SCHEMA_FIXTURES: Readonly<Record<string, SchemaFixture>> = {
++  'heygen/avatar-iv': {
++    openapi: avatarOpenapi('avatar_iv'),
++    schemaFamily: 'heygen-avatar-video-v1',
++  },
++  'heygen/avatar-v': {
++    openapi: avatarOpenapi('avatar_v'),
++    schemaFamily: 'heygen-avatar-video-v1',
++  },
++  'heygen/heygen-voice-1': {
++    openapi: SPEECH_OPENAPI,
++    schemaFamily: 'heygen-speech-v1',
++  },
++};
+diff --git a/apps/server/api/src/seeds/reviewed-provider-rates-seed.spec.ts b/apps/server/api/src/seeds/reviewed-provider-rates-seed.spec.ts
+index f1778671..50fd1f0d 100644
+--- a/apps/server/api/src/seeds/reviewed-provider-rates-seed.spec.ts
++++ b/apps/server/api/src/seeds/reviewed-provider-rates-seed.spec.ts
+@@ -349,3 +349,162 @@ describe('rate sheet frozen variant metadata', () => {
+     expect(prisma.modelProviderContract.upsert).not.toHaveBeenCalled();
+   });
+ });
++
++describe('HeyGen rate sheet entries', () => {
++  const NOW = '2026-12-31T00:00:00Z';
++
++  function heygenEntry(endpoint: string): ReviewedRateSheetEntry {
++    const entry = REVIEWED_RATE_SHEET_ENTRIES.find(
++      (candidate) => candidate.endpoint === endpoint,
++    );
++    if (!entry) throw new Error(`The sheet must carry ${endpoint}`);
++    return entry;
++  }
++
++  /** Seed the entry against a bare registry row and project its billing profile. */
++  async function seededProfile(endpoint: string) {
++    const prisma = harness(
++      modelRow({
++        endpoint,
++        key: endpoint,
++        provider: 'heygen',
++        providerInputSchema: null,
++      }),
++      undefined,
++      [],
++    );
++    const written = await seedReviewedProviderRates(prisma as never, [
++      heygenEntry(endpoint),
++    ]);
++    expect(written).toBe(1);
++    const create =
++      prisma.modelProviderContract.upsert.mock.calls[0]?.[0].create;
++    const profile = projectModelBillablePricingProfile(
++      {
++        ...modelRow({ endpoint, key: endpoint, provider: 'heygen' }),
++        cost: 0,
++        costPerUnit: null,
++        isActive: true,
++        isDeleted: false,
++        minCost: null,
++        pendingProviderContractVersion: null,
++        pricingType: 'flat',
++        providerCostUsd: null,
++        providerInputSchema: create.inputSchema,
++        reviewedProviderContractVersion: create.version,
++      } as never,
++      [
++        {
++          ...create,
++          discoveredAt: new Date(create.discoveredAt),
++          lastSeenAt: new Date(create.lastSeenAt),
++        },
++      ],
++    );
++    return { create, prisma, profile };
++  }
++
++  it('seeds HeyGen from the shipped schema fixtures without an observed contract', async () => {
++    const { create, prisma } = await seededProfile('heygen/heygen-voice-1');
++
++    expect(create).toMatchObject({
++      endpoint: 'heygen/heygen-voice-1',
++      provider: 'heygen',
++      reviewStatus: 'approved',
++      reviewedBy: RATE_SHEET_REVIEWER,
++      schemaFamily: 'heygen-speech-v1',
++    });
++    expect(create.outputSchema).toHaveProperty('properties.audio_url');
++    expect(prisma.model.updateMany.mock.calls[0]?.[0].data).toMatchObject({
++      providerSchemaFamily: 'heygen-speech-v1',
++      providerSyncStatus: 'fresh',
++    });
++  });
++
++  it('quotes HeyGen Voice per submitted character at the list price and 3.33x margin', async () => {
++    const { profile } = await seededProfile('heygen/heygen-voice-1');
++    const quote = (characters: number) =>
++      quoteModelBillablePricing(
++        profile,
++        {
++          characters,
++          modelKey: 'heygen/heygen-voice-1',
++          provider: 'heygen',
++        },
++        3.33,
++        NOW,
++      );
++
++    expect(quote(1000)).toMatchObject({
++      snapshot: { credits: 10, providerCostUsd: 0.03 },
++      status: 'priced',
++    });
++    expect(quote(5000)).toMatchObject({
++      snapshot: { credits: applyMargin(0.15, 3.33), providerCostUsd: 0.15 },
++      status: 'priced',
++    });
++    // Without a character count the request is unpriceable, never flat-billed.
++    expect(
++      quoteModelBillablePricing(
++        profile,
++        { modelKey: 'heygen/heygen-voice-1', provider: 'heygen' },
++        3.33,
++        NOW,
++      ),
++    ).toMatchObject({ status: 'unresolved' });
++  });
++
++  it('quotes Avatar IV by avatar type: photo is cheaper than video and studio avatars', async () => {
++    const { profile } = await seededProfile('heygen/avatar-iv');
++    const credits = (avatarType: string) => {
++      const quote = quoteModelBillablePricing(
++        profile,
++        {
++          duration: 5,
++          modelKey: 'heygen/avatar-iv',
++          provider: 'heygen',
++          selectors: { avatar_type: avatarType },
++        },
++        3.33,
++        NOW,
++      );
++      if (quote.status !== 'priced') throw new Error(quote.reason);
++      return quote.snapshot.credits;
++    };
++
++    expect(credits('photo_avatar')).toBe(applyMargin(0.1925, 3.33));
++    expect(credits('digital_twin')).toBe(applyMargin(0.4025, 3.33));
++    expect(credits('studio_avatar')).toBe(applyMargin(0.4025, 3.33));
++    expect(credits('photo_avatar')).toBeLessThan(credits('digital_twin'));
++    // An avatar type the sheet does not price is refused, not guessed.
++    expect(
++      quoteModelBillablePricing(
++        profile,
++        {
++          duration: 5,
++          modelKey: 'heygen/avatar-iv',
++          provider: 'heygen',
++          selectors: { avatar_type: 'prompt' },
++        },
++        3.33,
++        NOW,
++      ),
++    ).toMatchObject({ status: 'unresolved' });
++  });
++
++  it('quotes Avatar V at 200 credits for a 5-second clip', async () => {
++    const { profile } = await seededProfile('heygen/avatar-v');
++
++    expect(
++      quoteModelBillablePricing(
++        profile,
++        { duration: 5, modelKey: 'heygen/avatar-v', provider: 'heygen' },
++        3.33,
++        NOW,
++      ),
++    ).toMatchObject({
++      snapshot: { credits: 200, providerCostUsd: 0.6 },
++      status: 'priced',
++    });
++  });
++});
+diff --git a/apps/server/api/src/seeds/reviewed-provider-rates-seed.ts b/apps/server/api/src/seeds/reviewed-provider-rates-seed.ts
+index 5d0eaf76..428b8780 100644
+--- a/apps/server/api/src/seeds/reviewed-provider-rates-seed.ts
++++ b/apps/server/api/src/seeds/reviewed-provider-rates-seed.ts
+@@ -2,6 +2,8 @@ import {
+   deriveRequiredSelectorKeys,
+   parseContractReviewedPricing,
+ } from '@api/collections/models/utils/model-billable-pricing-profile.util';
++import { HEYGEN_SCHEMA_FIXTURES } from '@api/seeds/fixtures/heygen-rate-schemas';
++import type { SchemaFixture } from '@api/seeds/reviewed-provider-rates-seed.types';
+ import flux3Openapi from '@api/services/prompt-builder/builders/replicate/fixtures/flux-3-image.schema.json';
+ import ideogramOpenapi from '@api/services/prompt-builder/builders/replicate/fixtures/ideogram-4-5.schema.json';
+ import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+@@ -20,11 +22,6 @@ export interface RateSeedLogger {
+ /** Marks a contract the sheet wrote, as opposed to one an operator approved. */
+ export const RATE_SHEET_REVIEWER = 'rate-sheet';
+ 
+-interface SchemaFixture {
+-  openapi: typeof flux3Openapi | typeof ideogramOpenapi;
+-  schemaFamily: string;
+-}
+-
+ /** Input schemas the pre-sheet seeds shipped, for rows that have none yet. */
+ const SCHEMA_FIXTURES: Readonly<Record<string, SchemaFixture>> = {
+   'black-forest-labs/flux-3-image': {
+@@ -39,6 +36,7 @@ const SCHEMA_FIXTURES: Readonly<Record<string, SchemaFixture>> = {
+     openapi: ideogramOpenapi,
+     schemaFamily: 'ideogram-image-edit-v1',
+   },
++  ...HEYGEN_SCHEMA_FIXTURES,
+ };
+ 
+ function conditionalDimensions(
+@@ -285,7 +283,8 @@ export async function seedReviewedProviderRates(
+   for (const entry of entries)
+     if (
+       entry.provider === ModelProvider.REPLICATE ||
+-      entry.provider === ModelProvider.FAL
++      entry.provider === ModelProvider.FAL ||
++      entry.provider === ModelProvider.HEYGEN
+     )
+       if (await seedEntry(prisma, entry, logger)) written += 1;
+   return written;
+diff --git a/apps/server/api/src/seeds/reviewed-provider-rates-seed.types.ts b/apps/server/api/src/seeds/reviewed-provider-rates-seed.types.ts
+new file mode 100644
+index 00000000..c678e60e
+--- /dev/null
++++ b/apps/server/api/src/seeds/reviewed-provider-rates-seed.types.ts
+@@ -0,0 +1,18 @@
++import type { Prisma } from '@genfeedai/prisma';
++
++/** OpenAPI-shaped JSON document whose Input and Output schemas the seed ships. */
++export interface SchemaFixtureOpenapi extends Prisma.InputJsonObject {
++  components: {
++    schemas: {
++      Input: Prisma.InputJsonObject;
++      Output: Prisma.InputJsonObject;
++    };
++  };
++  openapi: string;
++}
++
++/** Schemas shipped for a rate-sheet row that has none observed from its provider. */
++export interface SchemaFixture {
++  openapi: SchemaFixtureOpenapi;
++  schemaFamily: string;
++}
+diff --git a/apps/server/api/src/services/integrations/heygen/helpers/heygen-avatar-engine.ts b/apps/server/api/src/services/integrations/heygen/helpers/heygen-avatar-engine.ts
+new file mode 100644
+index 00000000..23077755
+--- /dev/null
++++ b/apps/server/api/src/services/integrations/heygen/helpers/heygen-avatar-engine.ts
+@@ -0,0 +1,69 @@
++import type {
++  HeyGenAvatarEngine,
++  HeyGenAvatarLookFacts,
++  HeyGenAvatarPricingSelector,
++  HeyGenEngineConfig,
++} from '@api/services/integrations/heygen/heygen-avatar-engine.types';
++import { MODEL_KEYS } from '@genfeedai/contracts/constants';
++
++/** Rate-sheet and catalog key for each engine. */
++export const HEYGEN_AVATAR_ENGINE_MODEL_KEYS: Readonly<
++  Record<HeyGenAvatarEngine, string>
++> = {
++  avatar_iv: MODEL_KEYS.HEYGEN_AVATAR_IV,
++  avatar_v: MODEL_KEYS.HEYGEN_AVATAR_V,
++};
++
++const PRICED_AVATAR_TYPES: readonly HeyGenAvatarPricingSelector['avatar_type'][] =
++  ['digital_twin', 'photo_avatar', 'studio_avatar'];
++
++/**
++ * The Avatar IV price band for a look, or null when the type is not one the
++ * sheet prices (`image`, `prompt`, or unknown). An unpriced look is refused,
++ * never billed at a guessed band.
++ */
++export function heyGenAvatarPricingSelector(
++  avatarType: string | null,
++): HeyGenAvatarPricingSelector | null {
++  const priced = PRICED_AVATAR_TYPES.find((type) => type === avatarType);
++  return priced ? { avatar_type: priced } : null;
++}
++
++/**
++ * Why an engine cannot render this look, or null when it can.
++ *
++ * Avatar IV needs a priced avatar type and `avatar_iv` in the look's
++ * `supported_api_engines`. Avatar V is opt-in per look: custom video
++ * (`digital_twin`) avatars only, and only when the look lists `avatar_v`.
++ * HeyGen answers an unlisted engine with a 400, so this fails before a
++ * paid submission rather than after.
++ */
++export function heyGenAvatarEngineIneligibility(
++  engine: HeyGenAvatarEngine,
++  avatar: HeyGenAvatarLookFacts,
++): string | null {
++  if (!avatar.supportedEngines.includes(engine))
++    return `This avatar does not support the ${engine === 'avatar_v' ? 'Avatar V' : 'Avatar IV'} engine.`;
++  if (engine === 'avatar_v')
++    return avatar.avatarType === 'digital_twin'
++      ? null
++      : 'Avatar V takes custom video (digital twin) avatars only.';
++  return heyGenAvatarPricingSelector(avatar.avatarType)
++    ? null
++    : 'This avatar type has no verified Avatar IV price.';
++}
++
++/** Model keys the router may pick for this look; empty when it can render none. */
++export function eligibleHeyGenAvatarModelKeys(
++  avatar: HeyGenAvatarLookFacts,
++): string[] {
++  return (Object.keys(HEYGEN_AVATAR_ENGINE_MODEL_KEYS) as HeyGenAvatarEngine[])
++    .filter((engine) => heyGenAvatarEngineIneligibility(engine, avatar) === null)
++    .map((engine) => HEYGEN_AVATAR_ENGINE_MODEL_KEYS[engine]);
++}
++
++export function buildHeyGenEngineConfig(
++  engine: HeyGenAvatarEngine,
++): HeyGenEngineConfig {
++  return { type: engine };
++}
+diff --git a/apps/server/api/src/services/integrations/heygen/helpers/heygen-speech.ts b/apps/server/api/src/services/integrations/heygen/helpers/heygen-speech.ts
+new file mode 100644
+index 00000000..a0dc3fea
+--- /dev/null
++++ b/apps/server/api/src/services/integrations/heygen/helpers/heygen-speech.ts
+@@ -0,0 +1,138 @@
++import { HEYGEN_API_ORIGIN } from '@api/services/integrations/heygen/helpers/heygen-video';
++import type {
++  HeyGenSpeechBody,
++  HeyGenSpeechInput,
++  HeyGenSpeechResult,
++} from '@api/services/integrations/heygen/heygen-speech.types';
++
++/** HeyGen Voice speaks through the synchronous text-to-speech model endpoint. */
++export const HEYGEN_SPEECH_PATH = '/v3/models/audio/tts';
++export const HEYGEN_SPEECH_URL = `${HEYGEN_API_ORIGIN}${HEYGEN_SPEECH_PATH}`;
++
++/**
++ * The only model id we send. The pricing page also lists a `heygen-voice-1-turbo`
++ * id that the API reference never mentions, so it is not offered.
++ */
++export const HEYGEN_SPEECH_MODEL_ID: HeyGenSpeechBody['model'] =
++  'heygen-voice-1';
++
++/** Documented request limit: 1 to 5,000 characters per call. */
++export const HEYGEN_SPEECH_TEXT_MAX = 5_000;
++
++/**
++ * The docs say the request stays open until the file is assembled but give no
++ * ceiling, so this bound is ours, not HeyGen's.
++ */
++export const HEYGEN_SPEECH_TIMEOUT_MS = 120_000;
++
++/** Responses HeyGen documents as "did not complete and is safe to retry". */
++export const HEYGEN_SPEECH_RETRYABLE_STATUSES: ReadonlySet<number> = new Set([
++  502, 503, 504,
++]);
++export const HEYGEN_SPEECH_MAX_ATTEMPTS = 3;
++export const HEYGEN_SPEECH_RETRY_BASE_DELAY_MS = 1_000;
++
++const LANGUAGE_TAG = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/;
++
++/**
++ * Billable characters: HeyGen charges per submitted Unicode character,
++ * spaces and punctuation included. Counting code points (not UTF-16 units)
++ * keeps emoji and astral characters at one each, the way the docs describe.
++ */
++export function countHeyGenSpeechCharacters(text: string): number {
++  return Array.from(text).length;
++}
++
++/**
++ * Builds the strict TTS body. The text is sent exactly as given, untrimmed, so
++ * the characters we quote are the characters HeyGen bills.
++ */
++export function buildHeyGenSpeechBody(
++  input: HeyGenSpeechInput,
++): HeyGenSpeechBody {
++  const voiceId = input.voiceId.trim();
++  if (!voiceId) throw new Error('HeyGen Voice requires a voice id.');
++  if (!input.text.trim()) throw new Error('HeyGen Voice requires text.');
++  const characters = countHeyGenSpeechCharacters(input.text);
++  if (characters > HEYGEN_SPEECH_TEXT_MAX)
++    throw new Error(
++      `HeyGen Voice accepts at most ${HEYGEN_SPEECH_TEXT_MAX} characters per request.`,
++    );
++  const language = input.language?.trim();
++  if (language && !LANGUAGE_TAG.test(language))
++    throw new Error('HeyGen Voice language must be a language code like en.');
++  const boost = input.expressivenessBoost;
++  if (
++    boost !== undefined &&
++    (!Number.isFinite(boost) || boost < 0 || boost > 1)
++  )
++    throw new Error('HeyGen Voice expressiveness must be between 0 and 1.');
++  return {
++    model: HEYGEN_SPEECH_MODEL_ID,
++    text: input.text,
++    voice_id: voiceId,
++    ...(language ? { language } : {}),
++    ...(boost === undefined ? {} : { expressiveness_boost: boost }),
++  };
++}
++
++/**
++ * Reads `{ data: { audio_url, duration } }`. Only an https `audio_url` is
++ * accepted. `duration` is optional in practice, so a missing or invalid value
++ * is left out rather than guessed.
++ */
++export function readHeyGenSpeech(
++  payload: unknown,
++  characters: number,
++): HeyGenSpeechResult {
++  const data =
++    payload && typeof payload === 'object'
++      ? (payload as { data?: unknown }).data
++      : undefined;
++  const record =
++    data && typeof data === 'object'
++      ? (data as { audio_url?: unknown; duration?: unknown })
++      : {};
++  const audioUrl =
++    typeof record.audio_url === 'string' ? record.audio_url.trim() : '';
++  if (!audioUrl.startsWith('https://'))
++    throw new Error('HeyGen Voice returned no https audio url.');
++  const duration =
++    typeof record.duration === 'number' &&
++    Number.isFinite(record.duration) &&
++    record.duration >= 0
++      ? record.duration
++      : undefined;
++  return {
++    audioUrl,
++    characters,
++    ...(duration === undefined ? {} : { duration }),
++  };
++}
++
++/** Machine-readable error fields from HeyGen's `{ error: { code, param } }` envelope. */
++export function readHeyGenErrorEnvelope(payload: unknown): {
++  code?: string;
++  param?: string;
++} {
++  const error =
++    payload && typeof payload === 'object'
++      ? (payload as { error?: unknown }).error
++      : undefined;
++  if (!error || typeof error !== 'object') return {};
++  const { code, param } = error as { code?: unknown; param?: unknown };
++  return {
++    ...(typeof code === 'string' ? { code } : {}),
++    ...(typeof param === 'string' ? { param } : {}),
++  };
++}
++
++/** Seconds from a `Retry-After` header, when it is a non-negative whole number. */
++export function readHeyGenRetryAfter(headers: unknown): number | undefined {
++  if (!headers || typeof headers !== 'object') return undefined;
++  const entry = Object.entries(headers as Record<string, unknown>).find(
++    ([name]) => name.toLowerCase() === 'retry-after',
++  );
++  const value = Number(entry?.[1]);
++  return Number.isInteger(value) && value >= 0 ? value : undefined;
++}
+diff --git a/apps/server/api/src/services/integrations/heygen/heygen-avatar-engine.types.ts b/apps/server/api/src/services/integrations/heygen/heygen-avatar-engine.types.ts
+new file mode 100644
+index 00000000..c660a625
+--- /dev/null
++++ b/apps/server/api/src/services/integrations/heygen/heygen-avatar-engine.types.ts
+@@ -0,0 +1,26 @@
++import type { HeyGenAvatarRef } from '@genfeedai/contracts/interfaces';
++
++/** Engines priced in the rate sheet; Avatar III is deliberately not offered. */
++export type HeyGenAvatarEngine = 'avatar_iv' | 'avatar_v';
++
++/** What eligibility needs from a look, both read from `GET /v3/avatars/looks`. */
++export type HeyGenAvatarLookFacts = Pick<
++  HeyGenAvatarRef,
++  'avatarType' | 'supportedEngines'
++>;
++
++/** The `engine` object on `POST /v3/videos` for the avatar variant. */
++export interface HeyGenEngineConfig {
++  type: HeyGenAvatarEngine;
++}
++
++/** An engine chosen for one look, carrying the facts it was checked against. */
++export interface HeyGenAvatarEngineSelection {
++  avatar: HeyGenAvatarLookFacts;
++  engine: HeyGenAvatarEngine;
++}
++
++/** The rate-sheet selector that picks an Avatar IV price band. */
++export interface HeyGenAvatarPricingSelector {
++  avatar_type: 'digital_twin' | 'photo_avatar' | 'studio_avatar';
++}
+diff --git a/apps/server/api/src/services/integrations/heygen/heygen-speech.types.ts b/apps/server/api/src/services/integrations/heygen/heygen-speech.types.ts
+new file mode 100644
+index 00000000..c440ed49
+--- /dev/null
++++ b/apps/server/api/src/services/integrations/heygen/heygen-speech.types.ts
+@@ -0,0 +1,24 @@
++export interface HeyGenSpeechInput {
++  /** Instant voices only; HeyGen rejects it for a professional clone. */
++  expressivenessBoost?: number;
++  language?: string;
++  text: string;
++  /** An ACTIVE HeyGen Voice clone in the API key's workspace. */
++  voiceId: string;
++}
++
++export interface HeyGenSpeechBody {
++  expressiveness_boost?: number;
++  language?: string;
++  model: 'heygen-voice-1';
++  text: string;
++  voice_id: string;
++}
++
++export interface HeyGenSpeechResult {
++  audioUrl: string;
++  /** The submitted characters HeyGen bills, counted as Unicode code points. */
++  characters: number;
++  /** Seconds, when HeyGen reports one. */
++  duration?: number;
++}
+diff --git a/apps/server/api/src/services/integrations/heygen/services/heygen.service.spec.ts b/apps/server/api/src/services/integrations/heygen/services/heygen.service.spec.ts
+index e759ece7..563bc00c 100644
+--- a/apps/server/api/src/services/integrations/heygen/services/heygen.service.spec.ts
++++ b/apps/server/api/src/services/integrations/heygen/services/heygen.service.spec.ts
+@@ -1,11 +1,17 @@
+ import { ApiKeyHelperService } from '@api/services/api-key/api-key-helper.service';
+ import { ByokService } from '@api/services/byok/byok.service';
++import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
+ import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
+ import { PollUntilService } from '@api/shared/services/poll-until/poll-until.service';
+ import { LoggerService } from '@libs/logger/logger.service';
+ import { HttpService } from '@nestjs/axios';
++import {
++  BadRequestException,
++  ConflictException,
++  NotFoundException,
++} from '@nestjs/common';
+ import { Test, TestingModule } from '@nestjs/testing';
+-import { of } from 'rxjs';
++import { of, throwError } from 'rxjs';
+ 
+ describe('HeyGenService', () => {
+   let service: HeyGenService;
+@@ -176,4 +182,229 @@ describe('HeyGenService', () => {
+       expect.any(Object),
+     );
+   });
++  describe('generateSpeech', () => {
++    const speechRequest = {
++      text: 'Hello from my instant voice.',
++      voiceId: 'voice_1',
++    };
++
++    function httpFailure(
++      status: number,
++      error: Record<string, string> = {},
++      headers: Record<string, string> = {},
++    ) {
++      return throwError(() =>
++        Object.assign(new Error(`status ${status}`), {
++          isAxiosError: true,
++          response: { data: { error }, headers, status },
++        }),
++      );
++    }
++
++    beforeEach(() => {
++      vi.spyOn(
++        service as unknown as { delay: (ms: number) => Promise<void> },
++        'delay',
++      ).mockResolvedValue(undefined);
++    });
++
++    it('posts heygen-voice-1 to the synchronous TTS endpoint and counts billable characters', async () => {
++      httpServiceMock.post.mockReturnValueOnce(
++        of({
++          data: {
++            data: {
++              audio_url: 'https://files.heygen.ai/generated/model-speech.wav',
++              duration: 3.42,
++            },
++          },
++          status: 200,
++        }),
++      );
++
++      await expect(
++        service.generateSpeech({
++          ...speechRequest,
++          expressivenessBoost: 0.5,
++          language: 'en',
++        }),
++      ).resolves.toEqual({
++        audioUrl: 'https://files.heygen.ai/generated/model-speech.wav',
++        characters: 28,
++        duration: 3.42,
++      });
++      expect(httpServiceMock.post).toHaveBeenCalledWith(
++        'https://api.heygen.com/v3/models/audio/tts',
++        {
++          expressiveness_boost: 0.5,
++          language: 'en',
++          model: 'heygen-voice-1',
++          text: 'Hello from my instant voice.',
++          voice_id: 'voice_1',
++        },
++        expect.objectContaining({
++          headers: expect.objectContaining({ 'X-Api-Key': 'test-api-key' }),
++        }),
++      );
++    });
++
++    it('leaves out a duration HeyGen does not report', async () => {
++      httpServiceMock.post.mockReturnValueOnce(
++        of({
++          data: { data: { audio_url: 'https://files.heygen.ai/a.wav' } },
++          status: 200,
++        }),
++      );
++
++      const result = await service.generateSpeech(speechRequest);
++
++      expect(result).not.toHaveProperty('duration');
++    });
++
++    it('refuses an audio url that is not https', async () => {
++      httpServiceMock.post.mockReturnValueOnce(
++        of({
++          data: { data: { audio_url: 'http://files.heygen.ai/a.wav' } },
++          status: 200,
++        }),
++      );
++
++      await expect(service.generateSpeech(speechRequest)).rejects.toThrow(
++        'no https audio url',
++      );
++    });
++
++    it('rejects text over 5,000 characters and empty text before calling HeyGen', async () => {
++      await expect(
++        service.generateSpeech({ ...speechRequest, text: 'a'.repeat(5001) }),
++      ).rejects.toThrow('at most 5000 characters');
++      await expect(
++        service.generateSpeech({ ...speechRequest, text: '   ' }),
++      ).rejects.toThrow('requires text');
++      expect(httpServiceMock.post).not.toHaveBeenCalled();
++    });
++
++    it('retries 503 and then succeeds', async () => {
++      httpServiceMock.post
++        .mockReturnValueOnce(httpFailure(503, { code: 'service_unavailable' }))
++        .mockReturnValueOnce(
++          of({
++            data: { data: { audio_url: 'https://files.heygen.ai/a.wav' } },
++            status: 200,
++          }),
++        );
++
++      await expect(
++        service.generateSpeech(speechRequest),
++      ).resolves.toMatchObject({ audioUrl: 'https://files.heygen.ai/a.wav' });
++      expect(httpServiceMock.post).toHaveBeenCalledTimes(2);
++    });
++
++    it('stops after three attempts on a persistent 502', async () => {
++      httpServiceMock.post.mockReturnValue(
++        httpFailure(502, { code: 'voice_provider_error' }),
++      );
++
++      await expect(service.generateSpeech(speechRequest)).rejects.toThrow(
++        'unavailable',
++      );
++      expect(httpServiceMock.post).toHaveBeenCalledTimes(3);
++    });
++
++    it('never retries a dropped connection, because the charge is ambiguous', async () => {
++      httpServiceMock.post.mockReturnValue(
++        throwError(() => Object.assign(new Error('timeout'), { code: 'ECONNABORTED' })),
++      );
++
++      await expect(service.generateSpeech(speechRequest)).rejects.toThrow(
++        'timeout',
++      );
++      expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
++    });
++
++    it.each([
++      [402, 'insufficient_credit', HeyGenSubmissionRejectedError],
++      [404, 'voice_not_found', NotFoundException],
++      [409, 'voice_not_ready', ConflictException],
++      [400, 'invalid_parameter', BadRequestException],
++    ])('maps a %i %s response without retrying', async (status, code, type) => {
++      httpServiceMock.post.mockReturnValue(httpFailure(status, { code }));
++
++      await expect(service.generateSpeech(speechRequest)).rejects.toBeInstanceOf(
++        type,
++      );
++      expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
++    });
++
++    it('tells the caller how long to wait on a 429', async () => {
++      httpServiceMock.post.mockReturnValue(
++        httpFailure(429, { code: 'rate_limit_exceeded' }, { 'retry-after': '12' }),
++      );
++
++      await expect(service.generateSpeech(speechRequest)).rejects.toThrow(
++        'Retry after 12 seconds',
++      );
++      expect(httpServiceMock.post).toHaveBeenCalledTimes(1);
++    });
++  });
++
++  describe('generateNativeAvatarVideo engine', () => {
++    const digitalTwin = {
++      avatarType: 'digital_twin',
++      supportedEngines: ['avatar_iii', 'avatar_iv', 'avatar_v'],
++    };
++    const photoAvatar = {
++      avatarType: 'photo_avatar',
++      supportedEngines: ['avatar_iv'],
++    };
++    const speech = { inputText: 'Hello', voiceId: 'voice_1' };
++
++    beforeEach(() => {
++      httpServiceMock.post.mockReturnValue(
++        of({ data: { data: { status: 'waiting', video_id: 'vid_9' } }, status: 200 }),
++      );
++    });
++
++    it('sends no engine when none is chosen, leaving HeyGen on Avatar IV', async () => {
++      await service.generateNativeAvatarVideo('meta', 'look_1', speech, 'key');
++
++      expect(httpServiceMock.post.mock.calls[0]?.[1]).not.toHaveProperty(
++        'engine',
++      );
++    });
++
++    it('sends engine avatar_v for an eligible digital twin look', async () => {
++      await expect(
++        service.generateNativeAvatarVideo('meta', 'look_1', speech, 'key', '9:16', {
++          avatar: digitalTwin,
++          engine: 'avatar_v',
++        }),
++      ).resolves.toBe('vid_9');
++
++      expect(httpServiceMock.post.mock.calls[0]?.[1]).toMatchObject({
++        avatar_id: 'look_1',
++        engine: { type: 'avatar_v' },
++        type: 'avatar',
++      });
++    });
++
++    it('refuses Avatar V for a photo avatar before any paid submission', async () => {
++      await expect(
++        service.generateNativeAvatarVideo('meta', 'look_1', speech, 'key', '9:16', {
++          avatar: photoAvatar,
++          engine: 'avatar_v',
++        }),
++      ).rejects.toBeInstanceOf(BadRequestException);
++      expect(httpServiceMock.post).not.toHaveBeenCalled();
++    });
++
++    it('refuses Avatar V for a digital twin that does not list it', async () => {
++      await expect(
++        service.generateNativeAvatarVideo('meta', 'look_1', speech, 'key', '9:16', {
++          avatar: { ...digitalTwin, supportedEngines: ['avatar_iv'] },
++          engine: 'avatar_v',
++        }),
++      ).rejects.toBeInstanceOf(BadRequestException);
++      expect(httpServiceMock.post).not.toHaveBeenCalled();
++    });
++  });
+ });
+diff --git a/apps/server/api/src/services/integrations/heygen/services/heygen.service.ts b/apps/server/api/src/services/integrations/heygen/services/heygen.service.ts
+index 3d36897b..080919a7 100644
+--- a/apps/server/api/src/services/integrations/heygen/services/heygen.service.ts
++++ b/apps/server/api/src/services/integrations/heygen/services/heygen.service.ts
+@@ -3,6 +3,22 @@ import type { AvatarVideoAspectRatio } from '@api/collections/videos/dto/create-
+ import { ApiKeyHelperService } from '@api/services/api-key/api-key-helper.service';
+ import { ByokService } from '@api/services/byok/byok.service';
+ import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
++import {
++  buildHeyGenEngineConfig,
++  heyGenAvatarEngineIneligibility,
++} from '@api/services/integrations/heygen/helpers/heygen-avatar-engine';
++import {
++  buildHeyGenSpeechBody,
++  countHeyGenSpeechCharacters,
++  HEYGEN_SPEECH_MAX_ATTEMPTS,
++  HEYGEN_SPEECH_RETRY_BASE_DELAY_MS,
++  HEYGEN_SPEECH_RETRYABLE_STATUSES,
++  HEYGEN_SPEECH_TIMEOUT_MS,
++  HEYGEN_SPEECH_URL,
++  readHeyGenErrorEnvelope,
++  readHeyGenRetryAfter,
++  readHeyGenSpeech,
++} from '@api/services/integrations/heygen/helpers/heygen-speech';
+ import {
+   buildHeyGenVideoCreateBody,
+   HEYGEN_API_ORIGIN,
+@@ -15,11 +31,16 @@ import {
+   readHeyGenVideoId,
+   readHeyGenVideoStatus,
+ } from '@api/services/integrations/heygen/helpers/heygen-video';
++import type { HeyGenAvatarEngineSelection } from '@api/services/integrations/heygen/heygen-avatar-engine.types';
+ import { heyGenAvatarCandidateSchema } from '@api/services/integrations/heygen/heygen-identity.schema';
+ import type {
+   HeyGenAvatarCandidate,
+   ResolvedHeyGenConnection,
+ } from '@api/services/integrations/heygen/heygen-identity.types';
++import type {
++  HeyGenSpeechInput as HeyGenSpeechRequest,
++  HeyGenSpeechResult,
++} from '@api/services/integrations/heygen/heygen-speech.types';
+ import { PollTimeoutException } from '@api/shared/services/poll-until/poll-until.exception';
+ import { PollUntilService } from '@api/shared/services/poll-until/poll-until.service';
+ import { ApiKeyCategory, ByokProvider } from '@genfeedai/contracts';
+@@ -33,7 +54,16 @@ import type {
+ import { LoggerService } from '@libs/logger/logger.service';
+ import { CallerUtil } from '@libs/utils/caller/caller.util';
+ import { HttpService } from '@nestjs/axios';
+-import { BadRequestException, Injectable } from '@nestjs/common';
++import {
++  BadRequestException,
++  ConflictException,
++  ForbiddenException,
++  HttpException,
++  HttpStatus,
++  Injectable,
++  NotFoundException,
++  ServiceUnavailableException,
++} from '@nestjs/common';
+ import { isAxiosError } from 'axios';
+ import { firstValueFrom } from 'rxjs';
+ import { z } from 'zod';
+@@ -192,9 +222,17 @@ export class HeyGenService {
+     voiceInput: HeyGenSpeechInput,
+     apiKey: string,
+     aspectRatio: AvatarVideoAspectRatio = '9:16',
++    engineSelection?: HeyGenAvatarEngineSelection,
+   ): Promise<string> {
+     const speech =
+       typeof voiceInput === 'string' ? { audioUrl: voiceInput } : voiceInput;
++    if (engineSelection) {
++      const reason = heyGenAvatarEngineIneligibility(
++        engineSelection.engine,
++        engineSelection.avatar,
++      );
++      if (reason) throw new BadRequestException(reason);
++    }
+     if (
+       !avatarId.trim() ||
+       !apiKey ||
+@@ -214,6 +252,11 @@ export class HeyGenService {
+       aspect_ratio: aspectRatio,
+       resolution: aspectRatio === '1:1' ? '1080p' : '720p',
+       callback_id: metadataId,
++      // Without a selection HeyGen's default (Avatar IV) applies. The image
++      // variant below has no engine field, so only looks can pick one.
++      ...(engineSelection
++        ? { engine: buildHeyGenEngineConfig(engineSelection.engine) }
++        : {}),
+     });
+   }
+ 
+@@ -283,6 +326,124 @@ export class HeyGenService {
+     }
+   }
+ 
++  /**
++   * HeyGen Voice (`heygen-voice-1`) on the synchronous
++   * `POST /v3/models/audio/tts`: one request, one WAV url back, no polling.
++   * Billed per submitted character, so the result carries the characters
++   * counted. Only 502/503/504 are retried, because HeyGen documents those as
++   * "did not complete and is safe to retry"; a timeout or dropped connection
++   * is ambiguous and is never replayed.
++   */
++  public async generateSpeech(
++    params: HeyGenSpeechRequest & {
++      apiKeyOverride?: string;
++      organizationId?: string;
++    },
++  ): Promise<HeyGenSpeechResult> {
++    let body: ReturnType<typeof buildHeyGenSpeechBody>;
++    try {
++      body = buildHeyGenSpeechBody(params);
++    } catch (error: unknown) {
++      throw new BadRequestException(
++        error instanceof Error ? error.message : 'Invalid HeyGen Voice request.',
++      );
++    }
++    const apiKey = await this.resolveApiKey(
++      params.apiKeyOverride,
++      params.organizationId,
++    );
++    const characters = countHeyGenSpeechCharacters(body.text);
++    const caller = `${this.constructorName} ${CallerUtil.getCallerName()}`;
++    for (let attempt = 1; ; attempt += 1) {
++      let status: number;
++      let data: unknown;
++      let retryAfter: number | undefined;
++      try {
++        const response = await firstValueFrom(
++          this.httpService.post<unknown>(HEYGEN_SPEECH_URL, body, {
++            headers: this.getHeaders(apiKey),
++            timeout: HEYGEN_SPEECH_TIMEOUT_MS,
++          }),
++        );
++        if (response.status >= 200 && response.status < 300)
++          return readHeyGenSpeech(response.data, characters);
++        status = response.status;
++        data = response.data;
++        retryAfter = readHeyGenRetryAfter(response.headers);
++      } catch (error: unknown) {
++        if (!isAxiosError(error) || !error.response) {
++          this.loggerService.error(`${caller} error`, {
++            errorType: error instanceof Error ? error.name : 'Unknown',
++          });
++          throw error;
++        }
++        status = error.response.status;
++        data = error.response.data;
++        retryAfter = readHeyGenRetryAfter(error.response.headers);
++      }
++      if (
++        HEYGEN_SPEECH_RETRYABLE_STATUSES.has(status) &&
++        attempt < HEYGEN_SPEECH_MAX_ATTEMPTS
++      ) {
++        await this.delay(HEYGEN_SPEECH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
++        continue;
++      }
++      const { code, param } = readHeyGenErrorEnvelope(data);
++      this.loggerService.error(`${caller} error`, {
++        code: code ?? null,
++        status,
++      });
++      throw this.speechFailure(status, code, param, retryAfter);
++    }
++  }
++
++  private speechFailure(
++    status: number,
++    code: string | undefined,
++    param: string | undefined,
++    retryAfter: number | undefined,
++  ): Error {
++    switch (status) {
++      case 400:
++        return new BadRequestException(
++          `HeyGen rejected the speech request (${code ?? 'invalid_parameter'}${
++            param ? `: ${param}` : ''
++          }).`,
++        );
++      case 402:
++        return new HeyGenSubmissionRejectedError();
++      case 403:
++        return new ForbiddenException(
++          'This HeyGen account cannot use that voice.',
++        );
++      case 404:
++        return new NotFoundException(
++          'The HeyGen voice was not found in this workspace.',
++        );
++      case 409:
++        return new ConflictException(
++          code === 'voice_training_failed'
++            ? 'The HeyGen voice failed training.'
++            : 'The HeyGen voice is still processing. Try again shortly.',
++        );
++      case 429:
++        return new HttpException(
++          retryAfter === undefined
++            ? 'HeyGen Voice is rate limited.'
++            : `HeyGen Voice is rate limited. Retry after ${retryAfter} seconds.`,
++          HttpStatus.TOO_MANY_REQUESTS,
++        );
++      default:
++        return status >= 500
++          ? new ServiceUnavailableException('HeyGen Voice is unavailable.')
++          : new Error(`HeyGen Voice returned status ${status}.`);
++    }
++  }
++
++  private delay(milliseconds: number): Promise<void> {
++    return new Promise((resolve) => setTimeout(resolve, milliseconds));
++  }
++
+   public async getVoices(
+     organizationId?: string,
+     _userId?: string,
+diff --git a/apps/server/api/src/services/prompt-builder/prompt-builder.service.ts b/apps/server/api/src/services/prompt-builder/prompt-builder.service.ts
+index 7a4326d4..420c82df 100644
+--- a/apps/server/api/src/services/prompt-builder/prompt-builder.service.ts
++++ b/apps/server/api/src/services/prompt-builder/prompt-builder.service.ts
+@@ -45,6 +45,7 @@ export class PromptBuilderService {
+       [ModelCategory.IMAGE_UPSCALE]: '',
+       [ModelCategory.VIDEO_UPSCALE]: '',
+       [ModelCategory.VOICE]: '',
++      [ModelCategory.AVATAR]: '',
+       [ModelCategory.EMBEDDING]: '',
+     };
+ 
+diff --git a/apps/server/api/src/services/router/router.service.ts b/apps/server/api/src/services/router/router.service.ts
+index dcf47242..e589df9f 100644
+--- a/apps/server/api/src/services/router/router.service.ts
++++ b/apps/server/api/src/services/router/router.service.ts
+@@ -66,9 +66,11 @@ export class RouterService {
+   /** Categories whose dispatch is admitted through the authoritative quote. */
+   private static readonly QUOTE_ADMITTED_CATEGORIES: ReadonlySet<ModelCategory> =
+     new Set([
++      ModelCategory.AVATAR,
+       ModelCategory.IMAGE,
+       ModelCategory.IMAGE_EDIT,
+       ModelCategory.VIDEO,
++      ModelCategory.VOICE,
+     ]);
+ 
+   /** Cheaper wins the tiebreak between two models of equal quality. */
+diff --git a/apps/website/scripts/generate-llms-txt.ts b/apps/website/scripts/generate-llms-txt.ts
+index 92c65c7e..95a505a8 100644
+--- a/apps/website/scripts/generate-llms-txt.ts
++++ b/apps/website/scripts/generate-llms-txt.ts
+@@ -114,6 +114,7 @@ function isPublicModel(value: string): boolean {
+ }
+ 
+ const CATEGORY_LABELS: Record<string, string> = {
++  [ModelCategory.AVATAR]: 'Avatar Video',
+   [ModelCategory.EMBEDDING]: 'Embedding',
+   [ModelCategory.IMAGE]: 'Image Generation',
+   [ModelCategory.IMAGE_EDIT]: 'Image Editing',
+@@ -131,6 +132,7 @@ const CATEGORY_ORDER = [
+   ModelCategory.VIDEO,
+   ModelCategory.MUSIC,
+   ModelCategory.VOICE,
++  ModelCategory.AVATAR,
+   ModelCategory.TEXT,
+   ModelCategory.IMAGE_EDIT,
+   ModelCategory.IMAGE_UPSCALE,
+diff --git a/packages/contracts/__tests__/enums/model.enum.test.ts b/packages/contracts/__tests__/enums/model.enum.test.ts
+index 56a9ffa9..d5fbad27 100644
+--- a/packages/contracts/__tests__/enums/model.enum.test.ts
++++ b/packages/contracts/__tests__/enums/model.enum.test.ts
+@@ -296,6 +296,9 @@ describe('model.enum', () => {
+         'higgsfield/genjutsu/motion-transfer/v1.0',
+       );
+       expect(MODEL_KEYS.HEYGEN_VIDEO).toBe('heygen/heygen-video-1');
++      expect(MODEL_KEYS.HEYGEN_VOICE).toBe('heygen/heygen-voice-1');
++      expect(MODEL_KEYS.HEYGEN_AVATAR_IV).toBe('heygen/avatar-iv');
++      expect(MODEL_KEYS.HEYGEN_AVATAR_V).toBe('heygen/avatar-v');
+     });
+   });
+ 
+@@ -337,6 +340,7 @@ describe('model.enum', () => {
+       expect(ModelCategory.VIDEO_UPSCALE).toBe('video-upscale');
+       expect(ModelCategory.MUSIC).toBe('music');
+       expect(ModelCategory.VOICE).toBe('voice');
++      expect(ModelCategory.AVATAR).toBe('avatar');
+     });
+   });
+ 
+diff --git a/packages/contracts/src/constants/model-capabilities.constant.ts b/packages/contracts/src/constants/model-capabilities.constant.ts
+index f27fcf5d..f6378fe2 100644
+--- a/packages/contracts/src/constants/model-capabilities.constant.ts
++++ b/packages/contracts/src/constants/model-capabilities.constant.ts
+@@ -13,7 +13,8 @@ export type ModelCapabilityCategory =
+   | ModelCategory.VIDEO_EDIT
+   | ModelCategory.VIDEO_UPSCALE
+   | ModelCategory.MUSIC
+-  | ModelCategory.VOICE;
++  | ModelCategory.VOICE
++  | ModelCategory.AVATAR;
+ 
+ export interface BaseModelCapability {
+   category: ModelCapabilityCategory;
+@@ -110,6 +111,15 @@ export interface VoiceModelCapability extends BaseModelCapability {
+   defaultDuration?: number;
+ }
+ 
++/** A talking-head engine: an avatar look speaks a script or an audio file. */
++export interface AvatarModelCapability extends BaseModelCapability {
++  category: ModelCategory.AVATAR;
++  aspectRatios?: readonly string[];
++  defaultAspectRatio?: string;
++  /** Seconds the catalog quotes a clip at; real length follows the speech. */
++  defaultDuration?: number;
++}
++
+ export type ModelOutputCapability =
+   | ImageModelCapability
+   | ImageEditModelCapability
+@@ -120,7 +130,8 @@ export type ModelOutputCapability =
+   | TextModelCapability
+   | EmbeddingModelCapability
+   | MusicModelCapability
+-  | VoiceModelCapability;
++  | VoiceModelCapability
++  | AvatarModelCapability;
+ 
+ /** OpenAPI `quality` enum for GPT Image 1.5 / 2. Highest billed band is `high`. */
+ export const GPT_IMAGE_QUALITY_OPTIONS = [
+@@ -1018,6 +1029,40 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
+       maxOutputs: 1,
+       maxReferences: 1,
+     },
++    /**
++     * HeyGen Voice (`heygen-voice-1`) on the synchronous
++     * `POST /v3/models/audio/tts`. It speaks only with a HeyGen Voice clone
++     * (`voice_id`) that the API key's workspace owns; text is 1–5,000 characters.
++     */
++    [MODEL_KEYS.HEYGEN_VOICE]: {
++      category: ModelCategory.VOICE,
++      isBatchSupported: false,
++      maxOutputs: 1,
++      maxReferences: 0,
++    },
++    /**
++     * Avatar IV and Avatar V are engines on `POST /v3/videos`, not separate
++     * endpoints. Avatar IV is HeyGen's default engine and takes studio,
++     * digital-twin and photo looks. Avatar V takes digital-twin looks only.
++     */
++    [MODEL_KEYS.HEYGEN_AVATAR_IV]: {
++      aspectRatios: ASPECT_RATIOS.HEYGEN,
++      category: ModelCategory.AVATAR,
++      defaultAspectRatio: '9:16',
++      defaultDuration: 5,
++      isBatchSupported: false,
++      maxOutputs: 1,
++      maxReferences: 1,
++    },
++    [MODEL_KEYS.HEYGEN_AVATAR_V]: {
++      aspectRatios: ASPECT_RATIOS.HEYGEN,
++      category: ModelCategory.AVATAR,
++      defaultAspectRatio: '9:16',
++      defaultDuration: 5,
++      isBatchSupported: false,
++      maxOutputs: 1,
++      maxReferences: 0,
++    },
+     /**
+      * HeyGen Video (`heygen-video-1`) on the HeyGen v3 models API.
+      * Duration is 5–15s. Image-to-video uses one still; extra stills or
+diff --git a/packages/contracts/src/constants/model-keys.constant.ts b/packages/contracts/src/constants/model-keys.constant.ts
+index 21a29989..836d5dd8 100644
+--- a/packages/contracts/src/constants/model-keys.constant.ts
++++ b/packages/contracts/src/constants/model-keys.constant.ts
+@@ -91,6 +91,9 @@ export const MODEL_KEYS = {
+   ARGIL_ATOM: 'argil/atom',
+   HEYGEN_AVATAR: 'heygen/avatar',
+   HEYGEN_VIDEO: 'heygen/heygen-video-1',
++  HEYGEN_VOICE: 'heygen/heygen-voice-1',
++  HEYGEN_AVATAR_IV: 'heygen/avatar-iv',
++  HEYGEN_AVATAR_V: 'heygen/avatar-v',
+   REPLICATE_DEEPSEEK_AI_DEEPSEEK_R1: 'deepseek-ai/deepseek-r1',
+   REPLICATE_ANTHROPIC_CLAUDE_4_5_SONNET: 'anthropic/claude-4.5-sonnet',
+   REPLICATE_GOOGLE_GEMINI_2_5_FLASH: 'google/gemini-2.5-flash',
+diff --git a/packages/contracts/src/constants/self-hosted-models.constant.ts b/packages/contracts/src/constants/self-hosted-models.constant.ts
+index 7da86971..d42d7a04 100644
+--- a/packages/contracts/src/constants/self-hosted-models.constant.ts
++++ b/packages/contracts/src/constants/self-hosted-models.constant.ts
+@@ -441,6 +441,87 @@ export const SELF_HOSTED_MODELS = [
+     providerConfig: { name: 'video-upscaler', owner: 'bytedance' },
+     providerCostUsd: 0.05,
+   },
++  /**
++   * HeyGen Voice (`heygen-voice-1`) on the synchronous
++   * `POST /v3/models/audio/tts`. Unlike every other row, `providerCostUsd` is
++   * USD per **1,000 characters** ($30 per 1M at HeyGen's list price), so
++   * `cost` is the price of a 1,000-character request. Bill time counts the
++   * submitted characters through the reviewed `character` rate, and dispatch
++   * refuses to run without it, because a flat reading would undercharge long
++   * text. HeyGen sells it at half price until 2026-10-31; we quote the list
++   * price, so the promotion widens our margin and never lowers the price.
++   */
++  {
++    category: ModelCategory.VOICE,
++    cost: 10,
++    costTier: CostTier.LOW,
++    qualityTier: QualityTier.HIGH,
++    speedTier: SpeedTier.FAST,
++    description:
++      'HeyGen Voice — speaks text of up to 5,000 characters in a HeyGen Voice clone your workspace owns. 10 credits per 1,000 characters.',
++    isDefault: false,
++    isHighlighted: false,
++    key: MODEL_KEYS.HEYGEN_VOICE,
++    label: 'HeyGen Voice',
++    lifecycle: ModelLifecycle.RECOMMENDED,
++    pricingType: PricingType.FLAT,
++    provider: ModelProvider.HEYGEN,
++    providerConfig: { name: 'heygen-voice-1', owner: 'heygen' },
++    providerCostUsd: 0.03,
++  },
++  /**
++   * HeyGen Avatar IV, the default engine on `POST /v3/videos`. List price per
++   * output second is $0.0385 for a photo avatar and $0.0805 for a custom video
++   * (digital twin) or studio avatar. The row seeds the higher rate, so a
++   * fallback to this column can only overcharge; the reviewed rate picks the
++   * exact band from the avatar type. A 5-second clip is 65 credits for a photo
++   * avatar and 135 for the others.
++   */
++  {
++    category: ModelCategory.AVATAR,
++    cost: 135,
++    costPerUnit: 27,
++    costTier: CostTier.MEDIUM,
++    qualityTier: QualityTier.STANDARD,
++    speedTier: SpeedTier.SLOW,
++    description:
++      'HeyGen Avatar IV — talking-head video from a studio, digital-twin or photo avatar, with motion prompts and expressiveness control.',
++    isDefault: true,
++    isHighlighted: false,
++    key: MODEL_KEYS.HEYGEN_AVATAR_IV,
++    label: 'HeyGen Avatar IV',
++    lifecycle: ModelLifecycle.RECOMMENDED,
++    minCost: 65,
++    pricingType: PricingType.PER_SECOND,
++    provider: ModelProvider.HEYGEN,
++    providerConfig: { name: 'avatar-iv', owner: 'heygen' },
++    providerCostUsd: 0.0805,
++  },
++  /**
++   * HeyGen Avatar V, opt-in per look through `engine.type = avatar_v`. It
++   * takes custom video (digital twin) avatars only, never photo avatars.
++   * $0.12 per output second, so a 5-second clip is 200 credits.
++   */
++  {
++    category: ModelCategory.AVATAR,
++    cost: 200,
++    costPerUnit: 40,
++    costTier: CostTier.HIGH,
++    qualityTier: QualityTier.HIGH,
++    speedTier: SpeedTier.SLOW,
++    description:
++      'HeyGen Avatar V — the highest-fidelity motion and lip-sync HeyGen offers, for custom video (digital twin) avatars only.',
++    isDefault: false,
++    isHighlighted: false,
++    key: MODEL_KEYS.HEYGEN_AVATAR_V,
++    label: 'HeyGen Avatar V',
++    lifecycle: ModelLifecycle.RECOMMENDED,
++    minCost: 200,
++    pricingType: PricingType.PER_SECOND,
++    provider: ModelProvider.HEYGEN,
++    providerConfig: { name: 'avatar-v', owner: 'heygen' },
++    providerCostUsd: 0.12,
++  },
+   /**
+    * The only curated, active default until Eleven Music, Lyria 3 Pro, and
+    * Mureka V9 (below) are verified and switched on by an operator. Curated
+diff --git a/packages/contracts/src/enums/model.enum.ts b/packages/contracts/src/enums/model.enum.ts
+index e760f9a3..24a18bf1 100644
+--- a/packages/contracts/src/enums/model.enum.ts
++++ b/packages/contracts/src/enums/model.enum.ts
+@@ -6,7 +6,7 @@ export enum ModelProvider {
+   GENFEED_AI = 'genfeed-ai',
+   /** Direct integration (no fal/Replicate intermediary) — e.g. Mureka V9. */
+   MUREKA = 'mureka',
+-  /** Direct integration — HeyGen photo-avatar video (`heygen/avatar`). */
++  /** Direct integration — HeyGen avatar video, Voice, and Video. */
+   HEYGEN = 'heygen',
+   /** Direct integration — Higgsfield Soul, DoP, and Genjutsu. */
+   HIGGSFIELD = 'higgsfield',
+@@ -39,6 +39,8 @@ export enum ModelCategory {
+   VIDEO_UPSCALE = 'video-upscale',
+   MUSIC = 'music',
+   VOICE = 'voice',
++  /** Talking-head avatar engines that need an avatar, a script and a voice. */
++  AVATAR = 'avatar',
+ }
+ 
+ export enum QualityTier {
+diff --git a/packages/helpers/src/model-capability.helper.ts b/packages/helpers/src/model-capability.helper.ts
+index 15703c07..f5f81e7b 100644
+--- a/packages/helpers/src/model-capability.helper.ts
++++ b/packages/helpers/src/model-capability.helper.ts
+@@ -1,5 +1,6 @@
+ import { ModelCategory } from '@genfeedai/contracts';
+ import {
++  type AvatarModelCapability,
+   type EmbeddingModelCapability,
+   type ImageEditModelCapability,
+   type ImageModelCapability,
+@@ -189,6 +190,20 @@ function buildVoiceCapability(model: IModel): VoiceModelCapability {
+   };
+ }
+ 
++function buildAvatarCapability(model: IModel): AvatarModelCapability {
++  return {
++    ...buildBaseFields(model),
++    category: ModelCategory.AVATAR,
++    ...(model.aspectRatios != null && { aspectRatios: model.aspectRatios }),
++    ...(model.defaultAspectRatio != null && {
++      defaultAspectRatio: model.defaultAspectRatio,
++    }),
++    ...(model.defaultDuration != null && {
++      defaultDuration: model.defaultDuration,
++    }),
++  };
++}
++
+ function buildTextCapability(model: IModel): TextModelCapability {
+   return {
+     ...buildBaseFields(model),
+@@ -231,6 +246,7 @@ const CATEGORY_BUILDERS: Record<
+   [ModelCategory.VIDEO_EDIT]: buildVideoEditCapability,
+   [ModelCategory.MUSIC]: buildMusicCapability,
+   [ModelCategory.VOICE]: buildVoiceCapability,
++  [ModelCategory.AVATAR]: buildAvatarCapability,
+   [ModelCategory.TEXT]: buildTextCapability,
+   [ModelCategory.EMBEDDING]: buildEmbeddingCapability,
+   [ModelCategory.IMAGE_UPSCALE]: buildImageUpscaleCapability,
+diff --git a/packages/helpers/src/ui/icons/model-category-icon.ts b/packages/helpers/src/ui/icons/model-category-icon.ts
+index ed89358f..0f3295f3 100644
+--- a/packages/helpers/src/ui/icons/model-category-icon.ts
++++ b/packages/helpers/src/ui/icons/model-category-icon.ts
+@@ -17,6 +17,7 @@ import {
+ } from 'lucide-react';
+ 
+ const MODEL_CATEGORY_ICONS: Record<ModelCategory, IconType> = {
++  [ModelCategory.AVATAR]: SquareUser,
+   [ModelCategory.EMBEDDING]: Braces,
+   [ModelCategory.IMAGE]: Image,
+   [ModelCategory.IMAGE_EDIT]: ImagePlus,
+@@ -30,6 +31,7 @@ const MODEL_CATEGORY_ICONS: Record<ModelCategory, IconType> = {
+ };
+ 
+ const MODEL_CATEGORY_LABELS: Record<ModelCategory, string> = {
++  [ModelCategory.AVATAR]: 'Avatar',
+   [ModelCategory.EMBEDDING]: 'Embedding',
+   [ModelCategory.IMAGE]: 'Image',
+   [ModelCategory.IMAGE_EDIT]: 'Image editing',
+diff --git a/packages/helpers/src/ui/model-badge.helper.ts b/packages/helpers/src/ui/model-badge.helper.ts
+index de60e761..2431ca9b 100644
+--- a/packages/helpers/src/ui/model-badge.helper.ts
++++ b/packages/helpers/src/ui/model-badge.helper.ts
+@@ -1,6 +1,7 @@
+ import { ModelCategory, ModelProvider } from '@genfeedai/contracts';
+ 
+ const MODEL_CATEGORY_BADGE_CLASSES: Record<ModelCategory, string> = {
++  [ModelCategory.AVATAR]: 'bg-secondary/50 text-secondary-foreground border-border',
+   [ModelCategory.EMBEDDING]: 'bg-muted text-muted-foreground border-border',
+   [ModelCategory.IMAGE]: 'bg-info/15 text-info border-info/30',
+   [ModelCategory.IMAGE_EDIT]:
+diff --git a/packages/pricing/src/reviewed-rates/reviewed-rate-sheet.data.ts b/packages/pricing/src/reviewed-rates/reviewed-rate-sheet.data.ts
+index 159edd86..b378f27b 100644
+--- a/packages/pricing/src/reviewed-rates/reviewed-rate-sheet.data.ts
++++ b/packages/pricing/src/reviewed-rates/reviewed-rate-sheet.data.ts
+@@ -723,6 +723,70 @@ export const REVIEWED_RATE_SHEET_ENTRIES: readonly ReviewedRateSheetEntry[] = [
+     sourceUrl: 'https://replicate.com/google/veo-3.1-fast',
+     verifiedAt: '2026-10-06T09:45:34.961Z',
+   },
++  {
++    endpoint: 'heygen/avatar-iv',
++    provider: 'heygen',
++    rates: [
++      {
++        component: 'output',
++        unit: 'second',
++        unitPriceUsd: 0.0385,
++        when: {
++          avatar_type: 'photo_avatar',
++        },
++        isPerOutput: true,
++      },
++      {
++        component: 'output',
++        unit: 'second',
++        unitPriceUsd: 0.0805,
++        when: {
++          avatar_type: 'digital_twin',
++        },
++        isPerOutput: true,
++      },
++      {
++        component: 'output',
++        unit: 'second',
++        unitPriceUsd: 0.0805,
++        when: {
++          avatar_type: 'studio_avatar',
++        },
++        isPerOutput: true,
++      },
++    ],
++    sourceUrl: 'https://app.heygen.com/developers/api?modal=pricing',
++    verifiedAt: '2026-10-10T07:18:30.000Z',
++  },
++  {
++    endpoint: 'heygen/avatar-v',
++    provider: 'heygen',
++    rates: [
++      {
++        component: 'output',
++        unit: 'second',
++        unitPriceUsd: 0.12,
++        when: {},
++        isPerOutput: true,
++      },
++    ],
++    sourceUrl: 'https://app.heygen.com/developers/api?modal=pricing',
++    verifiedAt: '2026-10-10T07:18:30.000Z',
++  },
++  {
++    endpoint: 'heygen/heygen-voice-1',
++    provider: 'heygen',
++    rates: [
++      {
++        component: 'output',
++        unit: 'character',
++        unitPriceUsd: 0.00003,
++        when: {},
++      },
++    ],
++    sourceUrl: 'https://app.heygen.com/developers/api?modal=pricing',
++    verifiedAt: '2026-10-10T07:18:30.000Z',
++  },
+   {
+     endpoint: 'ideogram-ai/ideogram-4-5',
+     provider: 'replicate',
