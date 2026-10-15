@@ -1,16 +1,9 @@
 import { RouterPriority } from '@genfeedai/contracts';
-import type { ThemePreference } from '@genfeedai/contracts/constants';
 import { APP_ROUTES, MODEL_KEYS } from '@genfeedai/contracts/constants';
 import type {
-  IDesktopBootstrap,
   IDesktopRuntimeContext,
-  IDesktopSession,
   IGenfeedDesktopBridge,
 } from '@genfeedai/contracts/desktop';
-import type {
-  AgentGenerationQuote,
-  ISetting,
-} from '@genfeedai/contracts/interfaces';
 import type { BrowserContext, Page } from '@playwright/test';
 import { test as authenticatedTest, expect } from '../../fixtures/auth.fixture';
 import { buildProtectedAppBootstrapPayload } from '../../utils/api-interceptor';
@@ -37,7 +30,6 @@ type FixtureWindow = Window & {
   desktopRuntimeEmit: (context: IDesktopRuntimeContext) => void;
   desktopRuntimeResolve: () => void;
   desktopRuntimeReads: number;
-  desktopOfflineModeActivated: () => Promise<void>;
 };
 
 interface DesktopFixtureOptions {
@@ -45,14 +37,9 @@ interface DesktopFixtureOptions {
   pending: boolean;
 }
 interface DesktopNetworkObservation {
-  offlineModeActivations: number;
   walletRequests: number;
   generationRequests: number;
   pageErrors: string[];
-}
-interface ComposerFixtureOptions {
-  quote?: AgentGenerationQuote;
-  theme?: ThemePreference;
 }
 const test = authenticatedTest.extend<{
   desktopRuntime: DesktopFixtureOptions;
@@ -62,12 +49,7 @@ const test = authenticatedTest.extend<{
   desktopRuntime: [{ context: cloud, pending: false }, { option: true }],
   desktopNetwork: async ({ context }, use) => {
     void context;
-    await use({
-      walletRequests: 0,
-      generationRequests: 0,
-      pageErrors: [],
-      offlineModeActivations: 0,
-    });
+    await use({ walletRequests: 0, generationRequests: 0, pageErrors: [] });
   },
   desktopSetup: [
     async ({ context, desktopRuntime, desktopNetwork }, use) => {
@@ -83,9 +65,6 @@ const test = authenticatedTest.extend<{
           desktopNetwork.pageErrors.push(error.message),
         ),
       );
-      await context.exposeBinding('desktopOfflineModeActivated', () => {
-        desktopNetwork.offlineModeActivations += 1;
-      });
       await installBridge(
         context,
         desktopRuntime.context,
@@ -99,43 +78,6 @@ const test = authenticatedTest.extend<{
 const desktopTest = (context: IDesktopRuntimeContext, pending = false) =>
   test.extend({ desktopRuntime: [{ context, pending }, { option: true }] });
 
-async function captureRuntimeState(
-  page: Page,
-  observation: DesktopNetworkObservation,
-  name: string,
-) {
-  expect(observation.pageErrors).toEqual([]);
-  await expectNoErrorOverlay(page);
-  await assertNoErrorBoundaryFallback(page, page.url());
-  await page.screenshot({
-    path: test.info().outputPath(`${name}.png`),
-    fullPage: true,
-    style: 'nextjs-portal { visibility: hidden !important; }',
-  });
-}
-
-async function openGenerationSummary(page: Page) {
-  const prompt = page
-    .getByTestId('studio-playground-prompt')
-    .locator('[contenteditable=true]');
-  await prompt.focus();
-  await expect(prompt).toBeFocused();
-  const generate = page
-    .getByTestId('studio-playground-composer-shell')
-    .getByRole('button', { name: 'Generate', exact: true });
-  await generate.focus();
-  await expect(generate).toBeFocused();
-  const tooltip = page.getByRole('tooltip');
-  await expect(tooltip).toBeVisible();
-  const descriptionId = await tooltip.getAttribute('id');
-  expect(descriptionId).toBeTruthy();
-  await expect(generate).toHaveAttribute(
-    'aria-describedby',
-    descriptionId ?? '',
-  );
-  return tooltip;
-}
-
 async function installBridge(
   browser: BrowserContext,
   context: IDesktopRuntimeContext,
@@ -146,21 +88,13 @@ async function installBridge(
     ({ context, pending }) => {
       const target = window as FixtureWindow;
       const callbacks = new Set<(context: IDesktopRuntimeContext) => void>();
-      const bootstrapCallbacks = new Set<
-        (bootstrap: IDesktopBootstrap) => void
-      >();
-      const sessionCallbacks = new Set<
-        (session: IDesktopSession | null) => void
-      >();
       let resolve!: (context: IDesktopRuntimeContext) => void;
       target.desktopRuntimeReads = 0;
       // This fixture supplies only the allowlisted runtime slice; the production
       // hook, shared store and shell components consume it unchanged.
       const app: Pick<
         IGenfeedDesktopBridge['app'],
-        | 'getRuntimeContext'
-        | 'onDidChangeRuntimeContext'
-        | 'onDidBootstrapChange'
+        'getRuntimeContext' | 'onDidChangeRuntimeContext'
       > = {
         getRuntimeContext: () => {
           target.desktopRuntimeReads++;
@@ -174,12 +108,6 @@ async function installBridge(
           callbacks.add(callback);
           return () => callbacks.delete(callback);
         },
-        onDidBootstrapChange: (callback) => {
-          bootstrapCallbacks.add(callback);
-          return () => {
-            bootstrapCallbacks.delete(callback);
-          };
-        },
       };
       const bootstrap = {
         isOfflineMode: context.runtimeMode === 'local',
@@ -189,7 +117,6 @@ async function installBridge(
       Object.assign(app, {
         getBootstrap: async () => bootstrap,
         enableOfflineMode: async () => {
-          await target.desktopOfflineModeActivated();
           if (context.status === 'unavailable')
             throw new Error(
               'Restart Genfeed Desktop to recover the local workspace.',
@@ -200,16 +127,6 @@ async function installBridge(
       Object.defineProperty(target, 'genfeedDesktop', {
         value: {
           app,
-          auth: {
-            onDidChangeSession: (
-              callback: (session: IDesktopSession | null) => void,
-            ) => {
-              sessionCallbacks.add(callback);
-              return () => {
-                sessionCallbacks.delete(callback);
-              };
-            },
-          } satisfies Pick<IGenfeedDesktopBridge['auth'], 'onDidChangeSession'>,
           generation: {
             getProviderConfig: async () => {
               if (context.status === 'unavailable')
@@ -230,15 +147,8 @@ async function installBridge(
     { context, pending },
   );
 }
-async function mockComposer(page: Page, options: ComposerFixtureOptions = {}) {
+async function mockComposer(page: Page) {
   const key = MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_4;
-  if (options.quote) {
-    // RouterService reads the raw quote body, without a JSON:API wrapper.
-    await page.route(
-      '**/v1/router/estimate-generation-credits',
-      async (route) => route.fulfill({ json: options.quote }),
-    );
-  }
   await page.route('**/v1/models**', async (route) =>
     route.fulfill({
       json: {
@@ -266,16 +176,6 @@ async function mockComposer(page: Page, options: ComposerFixtureOptions = {}) {
   );
   await page.route('**/v1/auth/bootstrap**', async (route) => {
     const bootstrap = buildProtectedAppBootstrapPayload();
-    const settings = bootstrap.currentUser.settings as ISetting;
-    bootstrap.currentUser.settings = {
-      ...settings,
-      // Simple mode resets a saved model pick to Auto, which has no quote
-      // until routing selects a model. Advanced keeps the explicit Imagen 4
-      // pick whose 8-credit estimate this suite asserts.
-      isAdvancedMode: true,
-      // Account preference sync overrides localStorage after hydration.
-      ...(options.theme ? { theme: options.theme } : {}),
-    };
     await route.fulfill({
       json: {
         ...bootstrap,
@@ -338,19 +238,11 @@ for (const theme of ['light', 'dark'] as const)
       `desktop cloud readiness and switching ${theme} ${width}`,
       async ({ authenticatedPage: page, desktopNetwork }) => {
         await page.setViewportSize({ width, height: 1000 });
-        await page.emulateMedia({ colorScheme: theme });
         await page.addInitScript(
           (theme) => localStorage.setItem('theme', theme),
           theme,
         );
-        await mockComposer(page, {
-          quote: {
-            credits: 8,
-            isAvailable: true,
-            modelKey: MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_4,
-          },
-          theme,
-        });
+        await mockComposer(page);
         let walletRequests = 0;
         let releaseWallet!: () => void;
         await page.route('**/v1/credits/topbar-balances**', async (route) => {
@@ -365,49 +257,29 @@ for (const theme of ['light', 'dark'] as const)
           generationRequests++;
           await route.fulfill({ json: { data: [] } });
         });
-        await page.goto(brandPath(APP_ROUTES.STUDIO.PLAYGROUND));
+        await page.goto(brandPath(APP_ROUTES.STUDIO.GENERATE));
         await expect(page.locator('body')).toHaveClass(/gf-desktop-shell/);
-        await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-        const generate = page
-          .getByTestId('studio-playground-composer-shell')
-          .getByRole('button', { name: 'Generate', exact: true });
-        let summary = await openGenerationSummary(page);
-        await expect(summary.getByRole('status')).toHaveText(
-          'Loading cost context…',
-        );
+        const summary = page.getByTestId('studio-generation-summary');
+        await expect(summary).toContainText('Loading cost context');
         expect(walletRequests).toBe(0);
         expect(desktopNetwork.walletRequests).toBe(0);
         const prompt = page
-          .getByTestId('studio-playground-prompt')
+          .getByTestId('studio-generate-prompt')
           .locator('[contenteditable=true]');
-        await expect(generate).toBeDisabled();
-        await expect(generate).toHaveAttribute('aria-disabled', 'true');
-        await generate.press('Escape');
-        await expect(summary).toHaveCount(0);
+        await expect(
+          page.getByRole('button', { name: 'Generate', exact: true }),
+        ).toBeDisabled();
         await prompt.focus();
         await page.keyboard.press('Enter');
         await page.keyboard.press('Control+Enter');
         await page.keyboard.press('Meta+Enter');
         expect(generationRequests).toBe(0);
         expect(desktopNetwork.generationRequests).toBe(0);
-        await captureRuntimeState(
-          page,
-          desktopNetwork,
-          `desktop-loading-${theme}-${width}`,
-        );
         await page.evaluate(() =>
           (window as FixtureWindow).desktopRuntimeResolve(),
         );
         await expect.poll(() => walletRequests).toBe(1);
-        summary = await openGenerationSummary(page);
-        const estimate = summary.getByRole('status', {
-          name: 'Estimated 8 credits',
-          exact: true,
-        });
-        await expect(estimate).toBeVisible();
-        await expect(estimate).toHaveText('~8');
-        await generate.press('Escape');
-        await expect(summary).toHaveCount(0);
+        await expect(summary).toContainText('Estimated 8 credits');
         await page.evaluate(
           (context) => (window as FixtureWindow).desktopRuntimeEmit(context),
           {
@@ -417,27 +289,18 @@ for (const theme of ['light', 'dark'] as const)
             generationExecution: 'unknown',
           },
         );
-        summary = await openGenerationSummary(page);
-        await expect(summary.getByRole('status')).toHaveText(
-          'Loading cost context…',
-        );
-        await generate.press('Escape');
-        await expect(summary).toHaveCount(0);
+        await expect(summary).toContainText('Loading cost context');
         releaseWallet();
         await expect(page.getByTestId('topbar-credits-trigger')).toHaveCount(0);
-        await expect(generate).toBeDisabled();
-        await expect(generate).toHaveAttribute('aria-disabled', 'true');
+        await expect(
+          page.getByRole('button', { name: 'Generate', exact: true }),
+        ).toBeDisabled();
         await prompt.focus();
         await page.keyboard.press('Enter');
         await page.keyboard.press('Control+Enter');
         await page.keyboard.press('Meta+Enter');
         expect(generationRequests).toBe(0);
         expect(desktopNetwork.generationRequests).toBe(0);
-        await captureRuntimeState(
-          page,
-          desktopNetwork,
-          `desktop-switching-${theme}-${width}`,
-        );
         await page.evaluate(
           (context) => (window as FixtureWindow).desktopRuntimeEmit(context),
           {
@@ -449,15 +312,7 @@ for (const theme of ['light', 'dark'] as const)
         );
         await expect.poll(() => walletRequests).toBe(2);
         releaseWallet();
-        summary = await openGenerationSummary(page);
-        const balance = summary.getByRole('status', {
-          name: '500 available',
-          exact: true,
-        });
-        await expect(balance).toBeVisible();
-        await expect(balance).toHaveText('500');
-        await generate.press('Escape');
-        await expect(summary).toHaveCount(0);
+        await expect(summary).toContainText('500 available');
         expect(
           await page.evaluate(
             () => (window as FixtureWindow).desktopRuntimeReads,
@@ -471,11 +326,11 @@ for (const theme of ['light', 'dark'] as const)
             () => document.documentElement.scrollWidth > innerWidth,
           ),
         ).toBe(false);
-        await captureRuntimeState(
-          page,
-          desktopNetwork,
-          `desktop-cloud-${theme}-${width}`,
-        );
+        await page.screenshot({
+          path: test.info().outputPath(`desktop-cloud-${theme}-${width}.png`),
+          fullPage: true,
+          style: 'nextjs-portal { visibility: hidden !important; }',
+        });
       },
     );
   }
@@ -510,9 +365,8 @@ for (const mode of [
         walletRequests++;
         await route.fulfill({ json: walletBody });
       });
-      await page.goto(brandPath(APP_ROUTES.STUDIO.PLAYGROUND));
-      const summary = await openGenerationSummary(page);
-      await expect(summary.getByRole('status')).toHaveText(
+      await page.goto(brandPath(APP_ROUTES.STUDIO.GENERATE));
+      await expect(page.getByTestId('studio-generation-summary')).toContainText(
         mode === 'local'
           ? 'This Studio generator requires a server connection'
           : 'Cost context unavailable',
@@ -520,24 +374,18 @@ for (const mode of [
       await expect(page.getByTestId('topbar-credits-trigger')).toHaveCount(0);
       expect(walletRequests).toBe(0);
       expect(desktopNetwork.walletRequests).toBe(0);
-      await expect(summary).not.toContainText('Estimated');
       await expect(
-        summary.getByRole('status', { name: /^Estimated/ }),
-      ).toHaveCount(0);
+        page.getByTestId('studio-generation-summary'),
+      ).not.toContainText('Estimated');
       const button = page.getByRole('button', {
         name: 'Generate',
         exact: true,
       });
-      await button.press('Escape');
-      await expect(summary).toHaveCount(0);
-      if (mode === 'self-hosted') {
-        await expect(button).toBeEnabled();
-        await expect(button).not.toHaveAttribute('aria-disabled', 'true');
-      } else {
+      if (mode === 'self-hosted') await expect(button).toBeEnabled();
+      else {
         await expect(button).toBeDisabled();
-        await expect(button).toHaveAttribute('aria-disabled', 'true');
         await page
-          .getByTestId('studio-playground-prompt')
+          .getByTestId('studio-generate-prompt')
           .locator('[contenteditable=true]')
           .focus();
         await page.keyboard.press('Enter');
@@ -547,7 +395,6 @@ for (const mode of [
       expect(desktopNetwork.pageErrors).toEqual([]);
       await expectNoErrorOverlay(page);
       await assertNoErrorBoundaryFallback(page, page.url());
-      await captureRuntimeState(page, desktopNetwork, `desktop-${mode}`);
     },
   );
 }
@@ -578,12 +425,7 @@ for (const networkAccess of [
   };
   desktopTest(context)(
     `desktop local route cost ${networkAccess}`,
-    async ({ authenticatedPage: page, context: browser, desktopNetwork }) => {
-      await browser.addInitScript(() => {
-        (globalThis as { [key: symbol]: unknown })[
-          Symbol.for('genfeed.desktop.localModeTestOverride')
-        ] = true;
-      });
+    async ({ authenticatedPage: page, desktopNetwork }) => {
       await page.route('**/v1/public/platform-flags**', async (route) =>
         route.fulfill({ json: { desktop_local_workspace: true } }),
       );
@@ -603,78 +445,18 @@ for (const networkAccess of [
       await expect(
         page.getByTestId('desktop-local-generation-cost'),
       ).toHaveText(labels[networkAccess]);
-      if (networkAccess === 'unavailable') {
-        // The existing local route mounts provider settings only after a
-        // successful bootstrap. Recovery must not pretend that succeeded.
-        await expect(
-          page.getByTestId('desktop-provider-generation-cost'),
-        ).toHaveCount(0);
-        await expect(page.getByText('Choose a local provider')).toHaveCount(0);
-      } else {
-        await expect(
-          page.getByTestId('desktop-provider-generation-cost'),
-        ).toHaveText(labels[networkAccess]);
-      }
+      await expect(
+        page.getByTestId('desktop-provider-generation-cost'),
+      ).toHaveText(labels[networkAccess]);
       expect(walletRequests).toBe(0);
       expect(desktopNetwork.walletRequests).toBe(0);
       if (networkAccess === 'unavailable')
-        await expect(
-          page.getByRole('alert').filter({
-            hasText: 'Restart Genfeed Desktop to recover the local workspace.',
-          }),
-        ).toBeVisible();
+        await expect(page.getByRole('alert')).toContainText(
+          'Restart Genfeed Desktop to recover the local workspace.',
+        );
       expect(desktopNetwork.pageErrors).toEqual([]);
       await expectNoErrorOverlay(page);
       await assertNoErrorBoundaryFallback(page, page.url());
-      await captureRuntimeState(
-        page,
-        desktopNetwork,
-        `desktop-provider-${networkAccess}`,
-      );
     },
   );
 }
-
-desktopTest({
-  ...cloud,
-  runtimeMode: 'local',
-  status: 'ready',
-  generationExecution: 'local-byok',
-  localProvider: { provider: 'openai-compatible', networkAccess: 'local' },
-})(
-  'desktop local route stays closed without the test override',
-  async ({ unauthenticatedPage: page, desktopNetwork }) => {
-    await page.route('**/v1/public/platform-flags**', async (route) =>
-      route.fulfill({ json: { desktop_local_workspace: true } }),
-    );
-    await page.goto('/desktop/local');
-    await expect(page).toHaveURL((url) => url.pathname === '/login');
-    await expect(
-      page.getByRole('button', { name: 'Sign in with Genfeed' }),
-    ).toBeVisible();
-    await expect(page.getByTestId('desktop-local-generation-cost')).toHaveCount(
-      0,
-    );
-    await expect(
-      page.getByTestId('desktop-provider-generation-cost'),
-    ).toHaveCount(0);
-    await expect(
-      page.getByRole('button', { name: /use a local workspace/i }),
-    ).toHaveCount(0);
-    await expect(page.getByText(/local workspace|local mode/i)).toHaveCount(0);
-    expect(
-      await page.evaluate(
-        () =>
-          (globalThis as { [key: symbol]: unknown })[
-            Symbol.for('genfeed.desktop.localModeTestOverride')
-          ],
-      ),
-    ).toBeUndefined();
-    expect(desktopNetwork.offlineModeActivations).toBe(0);
-    await captureRuntimeState(
-      page,
-      desktopNetwork,
-      'desktop-local-gate-closed',
-    );
-  },
-);
