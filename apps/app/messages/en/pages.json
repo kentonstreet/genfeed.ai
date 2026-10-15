@@ -1807,11 +1807,6 @@
     "viewGrid": "Grid",
     "viewList": "List",
     "makeClips": "Make clips",
-    "brandEnhancement": {
-      "failed": "Brand enhancement failed. Nothing was generated and no credits were used.",
-      "generateWithoutBrand": "Generate without brand",
-      "generateWithoutBrandAria": "Generate this {type} without brand, using the prompt exactly as typed"
-    },
     "crun": {
       "outputFormat": "Output format",
       "quoteLoading": "Checking image price…",
@@ -3360,10 +3355,6 @@
       "remainingCredits": "{count} journey credits still available",
       "review": "Review",
       "title": "Activation Journey"
-    },
-    "providers": {
-      "keyValidationNotice": "Use real keys only. Organization → API Keys checks each key with the provider before saving, so placeholder values are rejected; keys in your .env file are read when the container starts.",
-      "openRouterDescription": "Required for text generation and the agent. Set OPENROUTER_API_KEY in your .env."
     }
   },
   "credentialPostingTimes": {
@@ -3959,7 +3950,7 @@
     "deleteConfirmation": "Are you sure you want to delete \"{label}\"? This action cannot be undone.",
     "searchModels": "Search models",
     "moreOptions": "More options for {label}",
-    "editModel": "Edit model",
+    "pricingDetails": "Pricing details",
     "noModelsFound": "No models found",
     "emptySearchHint": "No models match your search. Clear it to see the catalog.",
     "emptyFilterHint": "No models are available for this filter. Change the filters or refresh the list.",
