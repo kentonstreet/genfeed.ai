@@ -18,20 +18,10 @@ import type {
   ExecuteBrandRemixScenes,
   QuoteBrandRemixScenes,
 } from '@genfeedai/contracts/api-types/contracts/brand-remix-scene.contract';
-import {
-  type ReplaceStoryboardCharacter,
-  type StoryboardCharacterOperationReceipt,
-  type StoryboardCharacterReplacement,
-  type StoryboardCharacterReplacements,
-  storyboardCharacterOperationReceiptSchema,
-  storyboardCharacterReplacementSchema,
-  storyboardCharacterReplacementsSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-character-replace.contract';
 import type { UpdateStoryboardPlan } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
 import type {
   ControlStoryboardRun,
   CreateStoryboardRun,
-  DraftStoryboardPlan,
   StoryboardRun,
   UpdateStoryboardSource,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
@@ -40,24 +30,10 @@ import {
   storyboardRunCapabilitiesSchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run-capabilities.contract';
 import {
-  type CancelStoryboardRun,
-  type CreateStoryboardRunQuote,
-  type ExecuteStoryboardRun,
-  type ResumeStoryboardRun,
-  type StoryboardRunQuote,
-  storyboardRunQuoteSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-run-quote.contract';
-import {
   type ListStoryboardRuns,
   type StoryboardRunSummary,
   storyboardRunSummarySchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run-summary.contract';
-import {
-  type GenerateStoryboardStills,
-  type QuoteStoryboardStills,
-  type StoryboardStillQuote,
-  storyboardStillQuoteSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-still.contract';
 import type { ContentRunBrief } from '@genfeedai/contracts/interfaces';
 import type {
   ContentRunAnalyticsSummary,
@@ -65,12 +41,10 @@ import type {
   ContentRunRecommendation,
   ContentRunVariant,
 } from '@genfeedai/contracts/interfaces/content/content-run.interface';
-import type { IHttpRequestOptions } from '@genfeedai/contracts/interfaces/utils/http-request-options.interface';
 import {
   deserializeLegacyStoryboardRunDocument,
   deserializeStoryboardRunDocument,
 } from '@services/content/content-run-document';
-import { isExpectedStoryboardSaveConflict } from '@services/content/storyboard-save-conflict';
 import { EnvironmentService } from '@services/core/environment.service';
 import { HTTPBaseService } from '@services/core/interceptor.service';
 import {
@@ -78,7 +52,6 @@ import {
   deserializeResource,
   type JsonApiResponseDocument,
 } from '@services/core/json-api';
-import type { AxiosRequestConfig } from 'axios';
 
 export interface CreateResearchBriefRunInput {
   angle?: string;
@@ -153,94 +126,6 @@ export class ContentRunsService extends HTTPBaseService {
     return storyboardRunCapabilitiesSchema.parse(response.data);
   }
 
-  async listStoryboardCharacterReplacements(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterReplacements> {
-    const response = await this.instance.get<StoryboardCharacterReplacements>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacements`,
-      { signal },
-    );
-    return storyboardCharacterReplacementsSchema.parse(response.data);
-  }
-
-  async getStoryboardCharacterReplacementStatus(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    operationId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterOperationReceipt> {
-    const response =
-      await this.instance.get<StoryboardCharacterOperationReceipt>(
-        `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacements/${encodeURIComponent(operationId)}`,
-        { signal },
-      );
-    return storyboardCharacterOperationReceiptSchema.parse(response.data);
-  }
-
-  async replaceStoryboardCharacter(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    input: ReplaceStoryboardCharacter,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterReplacement> {
-    const response = await this.instance.post<StoryboardCharacterReplacement>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacement`,
-      input,
-      { signal },
-    );
-    return storyboardCharacterReplacementSchema.parse(response.data);
-  }
-
-  async quoteStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: CreateStoryboardRunQuote,
-  ): Promise<StoryboardRunQuote> {
-    const response = await this.instance.post<StoryboardRunQuote>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/quotes`,
-      input,
-    );
-    return storyboardRunQuoteSchema.parse(response.data);
-  }
-  async executeStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: ExecuteStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/execute`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-  async cancelStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: CancelStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/cancel`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-  async resumeStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: ResumeStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/resume`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
   async createStoryboardRun(
     brandId: string,
     input: CreateStoryboardRun,
@@ -257,14 +142,9 @@ export class ContentRunsService extends HTTPBaseService {
     runId: string,
     input: UpdateStoryboardPlan,
   ): Promise<StoryboardRun> {
-    const config: AxiosRequestConfig & IHttpRequestOptions = {
-      handlesErrorResponse: (response) =>
-        isExpectedStoryboardSaveConflict(response, input.expectedRevision),
-    };
     const response = await this.instance.patch<JsonApiResponseDocument>(
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan`,
       input,
-      config,
     );
     return deserializeStoryboardRunDocument(response.data);
   }
@@ -293,68 +173,14 @@ export class ContentRunsService extends HTTPBaseService {
     return deserializeStoryboardRunDocument(response.data);
   }
 
-  async draftStoryboardPlan(
-    brandId: string,
-    runId: string,
-    input: DraftStoryboardPlan,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan/draft`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
-  async quoteStoryboardStills(
-    brandId: string,
-    runId: string,
-    input: QuoteStoryboardStills,
-  ): Promise<StoryboardStillQuote> {
-    const response = await this.instance.post<StoryboardStillQuote>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills/quote`,
-      input,
-    );
-    return storyboardStillQuoteSchema.parse(response.data);
-  }
-
-  async generateStoryboardStills(
-    brandId: string,
-    runId: string,
-    input: GenerateStoryboardStills,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
-  async reconcileStoryboardStills(
-    brandId: string,
-    runId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills/reconcile`,
-      {},
-      { signal },
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
   async updateStoryboardSource(
     brandId: string,
     runId: string,
     input: UpdateStoryboardSource,
   ): Promise<StoryboardRun> {
-    const config: AxiosRequestConfig & IHttpRequestOptions = {
-      handlesErrorResponse: (response) =>
-        isExpectedStoryboardSaveConflict(response, input.expectedRevision),
-    };
     const response = await this.instance.patch<JsonApiResponseDocument>(
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/source`,
       input,
-      config,
     );
     return deserializeStoryboardRunDocument(response.data);
   }
