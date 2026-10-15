@@ -341,8 +341,6 @@ export function AppRail({
       <nav
         aria-label={t('apps')}
         className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto p-2 [scrollbar-width:none]! [&::-webkit-scrollbar]:hidden"
-        // Page menu: the one surface exempt from the product motion policy.
-        data-motion="allow"
         data-testid="app-rail"
       >
         {header ? (
