@@ -836,7 +836,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   postPublishFinalizations      PostPublishFinalization[]
   postProviderPublishReceipts   PostProviderPublishReceipt[]
   postIngredientLinks           PostIngredient[]
-  personaReferences             PersonaReference[]
   postGroups                    PostGroup[]
   postingCadences               PostingCadence[]
   slotReservations              SlotReservation[]
@@ -2403,7 +2402,6 @@ model Ingredient {
   bookmarkGenerated         Bookmark[]                 @relation("bookmark_generated")
   trainingSources           Training[]                 @relation("training_sources")
   personaAvatars            Persona[]                  @relation("persona_avatar")
-  personaReferences         PersonaReference[]         @relation("ingredient_persona_references")
   personaVoices             Persona[]                  @relation("persona_voice")
   captions                  Caption[]
   editorProjectVideos       EditorProject[]            @relation("editor_project_video")
@@ -2432,10 +2430,6 @@ model Ingredient {
   @@index([organizationId, updatedAt, id], map: "ingredients_org_updated_at_id_idx")
   @@index([organizationId, origin, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_origin_created_at_idx")
   @@index([organizationId, personaId, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_persona_created_at_idx")
-  // Brand Library list (offset and keyset pages) + its count. `id` desc matches
-  // the (createdAt, id) keyset order; trailing status/category keep the count
-  // index-only (no heap visit per row).
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc), id(sort: Desc), status, category], map: "ingredients_org_brand_library_idx")
   @@map("ingredients")
 }
 
@@ -2898,11 +2892,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   promptUsed                     String?
   // Knowledge source versions whose passages shaped this post's generation.
   knowledgeReceipts              Json               @default("[]")
-  // Branded generation receipt that produced this post's text and the state it
-  // reached when the dispatch finished (#5786). Plain ids: the receipt itself
-  // stays the authority and is never a foreign key of the post.
-  brandedReceiptId               String?
-  brandedReceiptState            String?
   reviewTurboRunId                  String?
   reviewItemId                   String?
   reviewDecision                 ReviewDecision?
@@ -4436,7 +4425,6 @@ model Persona {
 
   availabilityAudits PersonaAvailabilityAudit[]
   grants             PersonaGrant[]
-  references         PersonaReference[]
   tags            Tag[]        @relation("persona_tags")
   credentials     Credential[] @relation("persona_credentials")
   assignedMembers User[]       @relation("persona_assigned_members")
@@ -4456,30 +4444,6 @@ model Persona {
   // Partial unique (organizationId, brandId, handle) WHERE handle IS NOT NULL
   // AND isDeleted = false lives in 20260824120000_persona_handle_brand_unique.
   @@map("personas")
-}
-
-/// Ordered reference images of a character. Position 0 is the primary
-/// reference and is mirrored to `Persona.avatarIngredientId` for readers that
-/// need a single image (remix identity, avatar video, thumbnails). @mentions
-/// send the references in position order, capped by the model's reference
-/// limit. Rows are hard-deleted on removal (like `PostIngredient`); a
-/// soft-deleted ingredient is skipped by every reader and returns on restore.
-model PersonaReference {
-  id             String       @id @default(cuid())
-  personaId      String
-  persona        Persona      @relation(fields: [personaId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ingredientId   String
-  ingredient     Ingredient   @relation("ingredient_persona_references", fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  position       Int
-  createdAt      DateTime     @default(now())
-
-  @@unique([personaId, ingredientId], map: "persona_references_persona_ingredient_key")
-  @@index([personaId, position], map: "persona_references_persona_position_idx")
-  @@index([ingredientId], map: "persona_references_ingredient_idx")
-  @@index([organizationId], map: "persona_references_organization_idx")
-  @@map("persona_references")
 }
 
 /// Use-only grant of a character to another organization (#6037). Only one
@@ -6215,8 +6179,6 @@ model Evaluation {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, isDeleted, updatedAt(sort: Desc)])
-  // Latest evaluation per content row, attached to every content list page.
-  @@index([organizationId, contentType, contentId, isDeleted, updatedAt(sort: Desc)], map: "evaluations_org_content_target_idx")
   @@map("evaluations")
 }
 

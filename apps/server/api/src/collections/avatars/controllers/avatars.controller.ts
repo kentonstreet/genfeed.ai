@@ -65,6 +65,7 @@ export class AvatarsController {
     private readonly avatarsService: AvatarsService,
   ) {}
 
+  // Get HeyGen voices
   @Get('heygen/voices')
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async getHeygenVoices(
