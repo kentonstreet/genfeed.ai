@@ -244,12 +244,7 @@ describe('TrendsController', () => {
     );
 
     it('preserves missing organization without calling preferences', async () => {
-      const user: User = {
-        id: actor.id,
-        userId: actor.userId,
-        organizationId: '',
-        brandId: '',
-      };
+      const user: User = { id: actor.id, userId: actor.userId };
       await expect(readPreferences({}, user).result).resolves.toEqual({
         preferences: null,
       });
@@ -369,7 +364,6 @@ describe('TrendsController', () => {
         mockUser.organizationId,
         mockUser.brandId,
         'twitter',
-        undefined,
       );
       expect(result).toEqual({
         summary: {
