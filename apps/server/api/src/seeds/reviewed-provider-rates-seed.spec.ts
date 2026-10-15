@@ -202,77 +202,6 @@ describe('reviewed provider rates seed', () => {
     ).toHaveProperty('properties.resolution');
   });
 
-  it('promotes MiniMax H3 from its shipped schema although Replicate publishes no OpenAPI', async () => {
-    const h3 = REVIEWED_RATE_SHEET_ENTRIES.find(
-      (entry) => entry.endpoint === 'minimax/h3',
-    );
-    if (!h3) throw new Error('missing minimax/h3 entry');
-    const row = modelRow({
-      endpoint: 'minimax/h3',
-      hasResolutionOptions: true,
-      key: 'minimax/h3',
-      providerInputSchema: null,
-    });
-    // The only observed Replicate contract has no schemas at all.
-    const prisma = harness(row, undefined, [
-      { inputSchema: {}, openapi: {}, outputSchema: {} },
-    ]);
-
-    expect(await seedReviewedProviderRates(prisma as never, [h3])).toBe(1);
-
-    const create =
-      prisma.modelProviderContract.upsert.mock.calls[0]?.[0].create;
-    expect(create.outputSchema).toEqual({
-      format: 'uri',
-      title: 'Output',
-      type: 'string',
-    });
-    const data = prisma.model.updateMany.mock.calls[0]?.[0].data;
-    const profile = projectModelBillablePricingProfile(
-      {
-        ...row,
-        cost: 217,
-        costPerUnit: 44,
-        isActive: true,
-        isDeleted: false,
-        minCost: null,
-        pendingProviderContractVersion: null,
-        pricingType: 'per-second',
-        providerCostUsd: 0.13,
-        providerInputSchema: data.providerInputSchema,
-        reviewedProviderContractVersion: data.reviewedProviderContractVersion,
-      } as never,
-      [
-        {
-          ...create,
-          discoveredAt: new Date(create.discoveredAt),
-          lastSeenAt: new Date(create.lastSeenAt),
-        },
-      ],
-    );
-    expect(profile.requiredSelectorKeys).toEqual(['resolution']);
-    for (const [resolution, usd] of [
-      ['768P', 0.4],
-      ['2K', 0.65],
-    ] as const)
-      expect(
-        quoteModelBillablePricing(
-          profile,
-          {
-            duration: 5,
-            modelKey: 'minimax/h3',
-            provider: 'replicate',
-            selectors: { resolution },
-          },
-          3.33,
-          '2026-12-31T00:00:00Z',
-        ),
-      ).toMatchObject({
-        snapshot: { providerCostUsd: usd },
-        status: 'priced',
-      });
-  });
-
   it('does not overwrite an operator approval that lands during seeding (compare-and-set)', async () => {
     const prisma = harness(modelRow());
     prisma.model.updateMany.mockResolvedValue({ count: 0 });
@@ -603,27 +532,6 @@ describe('direct-provider (HeyGen, ElevenLabs) rate sheet entries', () => {
       const { profile } = await seededProfile('heygen/avatar-iv');
       expect(quote(profile, 'heygen/avatar-iv', 5)).toMatchObject({
         status: 'unresolved',
-      });
-    });
-
-    it('seeds photo animation and prices it per second with no selector', async () => {
-      const { create, profile } = await seededProfile('heygen/avatar');
-      expect(create).toMatchObject({
-        endpoint: 'heygen/avatar',
-        provider: 'heygen',
-        reviewStatus: 'approved',
-        schemaFamily: 'heygen-image-v3',
-      });
-      expect(profile.requiredSelectorKeys).toEqual([]);
-
-      // $0.0385/s at 3.33x: 5 s is 65 credits, 12 s is 154.
-      expect(quote(profile, 'heygen/avatar', 5)).toMatchObject({
-        snapshot: { costSource: 'reviewed-provider', credits: 65 },
-        status: 'priced',
-      });
-      expect(quote(profile, 'heygen/avatar', 12)).toMatchObject({
-        snapshot: { credits: 154 },
-        status: 'priced',
       });
     });
   });

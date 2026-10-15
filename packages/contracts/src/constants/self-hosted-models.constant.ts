@@ -166,29 +166,6 @@ export const SELF_HOSTED_MODELS = [
     providerCostUsd: 0.003,
   },
   /**
-   * Draft model for storyboard sketch stills (#6738). Replicate bills $0.001
-   * per output megapixel plus $0.001 per input megapixel, and dispatch does
-   * not report input megapixels, so the flat row covers a 1 MP output with up
-   * to five references totalling about 9 MP.
-   */
-  {
-    category: ModelCategory.IMAGE,
-    cost: 4,
-    costTier: CostTier.LOW,
-    qualityTier: QualityTier.BASIC,
-    speedTier: SpeedTier.FAST,
-    description:
-      'FLUX.2 klein 4B — sub-second draft generation and reference editing with up to five images. Storyboard uses it for black-and-white sketch stills.',
-    isDefault: false,
-    isHighlighted: false,
-    key: MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_KLEIN_4B,
-    label: 'FLUX.2 klein 4B',
-    pricingType: PricingType.FLAT,
-    provider: ModelProvider.REPLICATE,
-    providerConfig: { name: 'flux-2-klein-4b', owner: 'black-forest-labs' },
-    providerCostUsd: 0.01,
-  },
-  /**
    * Cloud default. H3 costs $0.08/s at 768P and $0.13/s at 2K. Seed the
    * conservative 2K rate; the shared resolution quote/reservation discounts
    * the published 768P draft band when selected.
@@ -463,37 +440,6 @@ export const SELF_HOSTED_MODELS = [
     provider: ModelProvider.REPLICATE,
     providerConfig: { name: 'video-upscaler', owner: 'bytedance' },
     providerCostUsd: 0.05,
-  },
-  /**
-   * HeyGen photo animation: `POST /v3/videos` with `type: image`, which
-   * Avatar IV renders from an arbitrary image. HeyGen's API price table has no
-   * separate image row, so it bills at the Avatar IV photo-avatar rate of
-   * $2.31 per minute, $0.0385 per output second, with no resolution band
-   * (help.heygen.com/en/articles/10060327-heygen-api-pricing-explained,
-   * updated 2026-09-16, read 2026-10-14). The reviewed rate sheet carries the
-   * same single rate with no selector, so the configured `providerCostUsd`
-   * and the reviewed rate price a render identically: held at the estimated
-   * clip length, settled at the duration HeyGen returns. Available, not the
-   * avatar default — Avatar IV stays the recommended engine.
-   */
-  {
-    category: ModelCategory.AVATAR,
-    cost: 65,
-    costPerUnit: 13,
-    costTier: CostTier.LOW,
-    qualityTier: QualityTier.HIGH,
-    speedTier: SpeedTier.MEDIUM,
-    description:
-      'HeyGen Photo Avatar — animates a single photo into a talking video with Avatar IV. 13 credits per second, 65 for a 5 s clip.',
-    isDefault: false,
-    isHighlighted: false,
-    key: MODEL_KEYS.HEYGEN_AVATAR,
-    label: 'HeyGen Photo Avatar',
-    lifecycle: ModelLifecycle.AVAILABLE,
-    pricingType: PricingType.PER_SECOND,
-    provider: ModelProvider.HEYGEN,
-    providerConfig: { name: 'avatar', owner: 'heygen' },
-    providerCostUsd: 0.0385,
   },
   /**
    * HeyGen Avatar IV, the default avatar engine. HeyGen bills per output

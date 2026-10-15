@@ -593,21 +593,14 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       translate,
     ],
   );
-  const {
-    cancelJob,
-    generateWithoutBrand,
-    isGenerating,
-    jobs,
-    rehydratePending,
-    removeJob,
-    submit,
-  } = useStudioGeneration({
-    brandId,
-    models,
-    onGenerated: refresh,
-    settings,
-    type,
-  });
+  const { cancelJob, isGenerating, jobs, rehydratePending, removeJob, submit } =
+    useStudioGeneration({
+      brandId,
+      models,
+      onGenerated: refresh,
+      settings,
+      type,
+    });
   // #4670 Open in Studio: a resolved Agent handoff pre-fills the composer.
   // Precedence over remembered local settings comes for free from
   // `applyTypeSettings` — it marks every patched field `'user'`-owned in the
@@ -984,12 +977,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
         (run) => run.id === runId,
       )?.jobs ?? [selectedJob]
     );
-  }, [selectedJob, visibleJobs]);
-  const selectedParentJob = useMemo(() => {
-    const parentId = selectedJob?.parentId;
-    return parentId
-      ? visibleJobs.find((job) => job.ingredientId === parentId)
-      : undefined;
   }, [selectedJob, visibleJobs]);
 
   useEffect(() => {
@@ -2469,14 +2456,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                     onRemix={handleRemixJob}
                     onEdit={handleEditJob}
                     onPreviewRecovered={recoverPreview}
-                    isUseAsReferenceEnabled={canUseGeneratedReference(
-                      selectedJob,
-                    )}
                     onSelect={handleSelectJob}
-                    onUseAsReference={handleUseGeneratedReference}
                     onUseInPost={assetActions.onPublishIngredient}
                     onVary={handleVaryRecipe}
-                    parentJob={selectedParentJob}
                     runJobs={selectedRunJobs}
                   />
                 </StudioPlaygroundFocusedPreview>
@@ -2535,7 +2517,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                       assetActions={{
                         ...assetActions,
                         onCancelGeneration: cancelJob,
-                        onGenerateWithoutBrand: generateWithoutBrand,
                       }}
                       isLoading={isLoadingGallery}
                       jobs={recoveredJobs}
@@ -2693,12 +2674,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
             onPreviewRecovered={recoverPreview}
             onRemix={handleRemixJob}
             onEdit={handleEditJob}
-            isUseAsReferenceEnabled={canUseGeneratedReference(selectedJob)}
             onSelect={handleSelectJob}
-            onUseAsReference={handleUseGeneratedReference}
             onUseInPost={assetActions.onPublishIngredient}
             onVary={handleVaryRecipe}
-            parentJob={selectedParentJob}
             runJobs={selectedRunJobs}
           />
         ) : null}

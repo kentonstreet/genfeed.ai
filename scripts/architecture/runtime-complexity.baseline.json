@@ -24,7 +24,7 @@
     "symbol": "BillingAccountMigrationService.run"
   },
   {
-    "actual": 166,
+    "actual": 180,
     "file": "apps/server/api/src/collections/clip-projects/services/clip-generation-dispatch.service.ts",
     "metric": "method-lines",
     "symbol": "ClipGenerationDispatchService.retryFailedClips"
@@ -54,7 +54,7 @@
     "symbol": "LearningRunService.execute"
   },
   {
-    "actual": 1101,
+    "actual": 1110,
     "file": "apps/server/api/src/collections/content-runs/services/brand-remix-run-execution.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/collections/content-runs/services/brand-remix-run-execution.service.ts"
@@ -162,7 +162,7 @@
     "symbol": "AgentToolExecutorService.constructor"
   },
   {
-    "actual": 1254,
+    "actual": 1262,
     "file": "apps/server/api/src/services/content-optimization/content-optimization.service.ts",
     "metric": "file-lines",
     "symbol": "apps/server/api/src/services/content-optimization/content-optimization.service.ts"
@@ -240,7 +240,7 @@
     "symbol": "CronIngredientsService.refreshMissingMetadataDimensions"
   },
   {
-    "actual": 34,
+    "actual": 33,
     "file": "apps/server/workers/src/scheduling/platform-schedules.processor.ts",
     "metric": "constructor-dependencies",
     "symbol": "PlatformSchedulesProcessor.constructor"

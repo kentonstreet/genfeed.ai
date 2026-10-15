@@ -369,6 +369,7 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
       maxReferences: 1,
     },
 
+    // xAI Grok Image
     [MODEL_KEYS.REPLICATE_XAI_GROK_IMAGINE_IMAGE]: {
       aspectRatios: ASPECT_RATIOS.GROK_IMAGE,
       category: ModelCategory.IMAGE,
@@ -394,14 +395,6 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
       isBatchSupported: false,
       maxOutputs: 4,
       maxReferences: 4,
-    },
-    [MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_KLEIN_4B]: {
-      aspectRatios: ASPECT_RATIOS.FLUX_2_KLEIN,
-      category: ModelCategory.IMAGE,
-      defaultAspectRatio: '1:1',
-      isBatchSupported: false,
-      maxOutputs: 1,
-      maxReferences: 5,
     },
     [MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_FLEX]: {
       aspectRatios: ASPECT_RATIOS.FLUX_V2,
@@ -679,22 +672,6 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
       isBatchSupported: false,
       maxOutputs: 1,
       maxReferences: 1,
-    },
-    // Backup Topaz route on fal, seeded inactive: the upscale services still
-    // dispatch to Replicate, and fal's watcher keeps these contracts current.
-    [MODEL_KEYS.FAL_TOPAZ_IMAGE_UPSCALE]: {
-      category: ModelCategory.IMAGE_UPSCALE,
-      isBatchSupported: false,
-      maxOutputs: 1,
-      maxReferences: 1,
-      maxUpscaleFactor: 6,
-    },
-    [MODEL_KEYS.FAL_TOPAZ_VIDEO_UPSCALE]: {
-      category: ModelCategory.VIDEO_UPSCALE,
-      isBatchSupported: false,
-      maxOutputs: 1,
-      maxReferences: 1,
-      maxUpscaleFactor: 4,
     },
 
     [MODEL_KEYS.REPLICATE_PRUNAAI_P_VIDEO]: {
@@ -1042,8 +1019,8 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
     },
 
     /**
-     * Photo animation (`POST /v3/videos` with `type: image`), rendered by
-     * Avatar IV and billed per output second at its photo-avatar rate.
+     * Photo animation (`POST /v3/videos` with `type: image`). It has no
+     * verified per-second engine price, so it keeps the flat quote.
      */
     [MODEL_KEYS.HEYGEN_AVATAR]: {
       aspectRatios: ASPECT_RATIOS.HEYGEN,
@@ -1287,18 +1264,10 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
       maxOutputs: 1,
       maxReferences: 0,
     },
-    // OpenRouter lists no endpoint for it since 2026-10; the registry row is
-    // RETIRED onto Grok 4.3 so stored bindings keep resolving.
+    // Live, and deliberately not in the agent chat picker. Wired as
+    // `LLM_DEFAULTS.grokFast` for TwitterPipelineService.draft. Do not retire
+    // it onto the frontier Grok row (that is how grok-4-fast became a 10x bill).
     [MODEL_KEYS.OPENROUTER_XAI_GROK_4_1_FAST]: {
-      category: ModelCategory.TEXT,
-      isBatchSupported: false,
-      maxOutputs: 1,
-      maxReferences: 0,
-    },
-    // Not in the agent chat picker. Wired as `LLM_DEFAULTS.grokFast` for
-    // TwitterPipelineService.draft. Do not move it onto the frontier Grok row
-    // (that is how grok-4-fast became a 10x bill).
-    [MODEL_KEYS.OPENROUTER_XAI_GROK_4_3]: {
       category: ModelCategory.TEXT,
       isBatchSupported: false,
       maxOutputs: 1,
@@ -1545,6 +1514,10 @@ export const MODEL_OUTPUT_CAPABILITIES: Record<string, ModelOutputCapability> =
       maxReferences: 1,
       maxUpscaleFactor: 4,
     },
+
+    // =========================================================================
+    // GENFEED AI SELF-HOSTED MODELS (ComfyUI on gpu.genfeed.ai)
+    // =========================================================================
 
     [MODEL_KEYS.GENFEED_AI_FLUX_DEV]: {
       aspectRatios: ASPECT_RATIOS.FLUX_STANDARD,

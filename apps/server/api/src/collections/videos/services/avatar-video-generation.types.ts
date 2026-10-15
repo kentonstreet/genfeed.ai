@@ -66,23 +66,18 @@ export interface AvatarGenerationPrice {
   credits: number;
   /** The catalog row the render is priced and recorded as. */
   modelKey: string;
-  /**
-   * The frozen per-second admission quote. A caller that holds the credits
-   * itself stores it on its hold so settlement re-prices the real clip.
-   */
-  durationQuote?: AvatarDurationQuote;
 }
 
 /** The engine model chosen for a render and the look evidence that prices it. */
 export interface AvatarModelSelection {
   modelKey: string;
-  /** Set for an engine row; photo animation is priced on `heygen/avatar`. */
+  /** Set for an engine row; photo animation keeps the flat `heygen/avatar` quote. */
   engine?: HeyGenAvatarEngine;
   avatarType?: string;
 }
 
 /**
- * The admission estimate for a per-second avatar render. The frozen quote is
+ * The admission estimate for a per-second engine. The frozen quote is
  * re-priced at the clip duration HeyGen returns, so the hold settles to the
  * real length (refund or top-up).
  */
@@ -97,16 +92,10 @@ export interface AvatarRenderQuote {
 }
 
 export interface AvatarGenerationFunding extends AvatarGenerationPrice {
+  durationQuote?: AvatarDurationQuote;
   engine?: HeyGenAvatarEngine;
   heygenApiKey?: string;
   elevenLabsApiKey?: string;
-  /**
-   * Set when the organization's own HeyGen key renders and only the platform
-   * speech is charged: the speech catalog row the hold is priced on and the
-   * provider model id the speech must be generated with.
-   */
-  speechModelKey?: string;
-  speechModelId?: string;
 }
 
 export interface ResolvedIdentity {

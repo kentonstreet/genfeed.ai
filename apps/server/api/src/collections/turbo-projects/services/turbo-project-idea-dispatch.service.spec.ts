@@ -2,7 +2,6 @@ import { TurboProjectCreditsService } from '@api/collections/turbo-projects/serv
 import { TurboProjectIdeaDispatchService } from '@api/collections/turbo-projects/services/turbo-project-idea-dispatch.service';
 import type { AvatarGenerationPrice } from '@api/collections/videos/services/avatar-video-generation.service';
 import type { SystemWorkflowTerminalFailureHandler } from '@api/collections/workflows/system-workflow-runner.service';
-import { photoAnimationSnapshot } from '@api/helpers/utils/credits/avatar-duration-quote.fixture';
 import {
   CreditReservationStatus,
   IngredientCategory,
@@ -19,11 +18,6 @@ type CreditsConfig = {
 };
 type GenerationRequest = { creditsConfig?: CreditsConfig };
 type PlaceholderScope = { isByokBypass?: boolean };
-
-const AVATAR_DURATION_QUOTE = {
-  estimatedSeconds: 2,
-  snapshot: photoAnimationSnapshot(2),
-};
 
 const job = {
   itemId: 'item-1',
@@ -315,7 +309,6 @@ describe('TurboProjectIdeaDispatchService', () => {
         await onCreditsPrepared({
           billingMode: 'platform',
           credits: 8,
-          durationQuote: AVATAR_DURATION_QUOTE,
           modelKey: MODEL_KEYS.HEYGEN_AVATAR_IV,
         });
         providerCalls.push('heygen');
@@ -337,8 +330,6 @@ describe('TurboProjectIdeaDispatchService', () => {
       expect.objectContaining({
         amount: 8,
         idempotencyKey: job.key,
-        // Settlement re-prices this frozen quote at the clip length.
-        metadata: { avatarDurationQuote: AVATAR_DURATION_QUOTE },
         organizationId: 'org-1',
       }),
     );
