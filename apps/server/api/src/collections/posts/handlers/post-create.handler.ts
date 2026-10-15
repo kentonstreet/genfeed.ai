@@ -1,4 +1,6 @@
 import type { AuthenticatedUser } from '@api/auth/interfaces/authenticated-user.interface';
+import { ActivityEntity } from '@api/collections/activities/entities/activity.entity';
+import type { ActivitiesService } from '@api/collections/activities/services/activities.service';
 import type { AccountHealthService } from '@api/collections/credentials/services/account-health.service';
 import type { CredentialsService } from '@api/collections/credentials/services/credentials.service';
 import type { IngredientDocument } from '@api/collections/ingredients/schemas/ingredient.schema';
@@ -7,7 +9,6 @@ import type { CreatePostDto } from '@api/collections/posts/dto/create-post.dto';
 import type { PostDocument } from '@api/collections/posts/post.schema';
 import { assertPostBrandAccess } from '@api/collections/posts/services/post-draft-scope.util';
 import type { PostsService } from '@api/collections/posts/services/posts.service';
-import type { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
 import type { QuotaService } from '@api/services/quota/quota.service';
 import {
   ActivityEntityModel,
@@ -28,7 +29,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 
 type PostCreateDependencies = {
   accountHealthService: AccountHealthService;
-  activityRecorder: ActivityRecorderService;
+  activitiesService: ActivitiesService;
   credentialsService: CredentialsService;
   ingredientsService: IngredientsService;
   loggerService: LoggerService;
@@ -47,13 +48,7 @@ function extractLabelFromText(text: string, maxLength: number = 50): string {
     return '';
   }
 
-  const trimmed = text
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!trimmed) {
-    return '';
-  }
+  const trimmed = text.trim();
   if (trimmed.length <= maxLength) {
     return trimmed;
   }
@@ -144,6 +139,15 @@ export async function createPost({
       HttpStatus.BAD_REQUEST,
     );
   }
+  const textOnlyPlatforms = new Set([
+    CredentialPlatform.THREADS,
+    CredentialPlatform.TWITTER,
+    CredentialPlatform.LINKEDIN,
+  ]);
+  const isTextOnlyPlatform = domainPlatform
+    ? textOnlyPlatforms.has(domainPlatform)
+    : false;
+
   if (
     !domainPlatform ||
     !getSupportedPostVisibilities(domainPlatform).includes(requestedVisibility)
@@ -157,12 +161,33 @@ export async function createPost({
     );
   }
 
-  // Media-kind and text-only-platform rules used to be a hardcoded platform
-  // set here (THREADS/TWITTER/LINKEDIN only — wrong for e.g. an image on
-  // YouTube, and drifted from the near-identical set in the thread-reply
-  // controller). `postsService.create()` now runs the same channel contract
-  // check every path that schedules a Post shares (#5193), so this only
-  // needs to resolve ingredients before calling it.
+  if (
+    requestedExecutionState === TargetExecutionState.SCHEDULED &&
+    createPostDto.category === PostCategory.TEXT &&
+    !isTextOnlyPlatform
+  ) {
+    throw new HttpException(
+      {
+        detail: `${domainPlatform} requires media when scheduling. Please add at least one image or video.`,
+        title: 'Text-only posts not supported',
+      },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  if (
+    requestedExecutionState === TargetExecutionState.SCHEDULED &&
+    !isTextOnlyPlatform &&
+    (!createPostDto.ingredients || createPostDto.ingredients.length === 0)
+  ) {
+    throw new HttpException(
+      {
+        detail: `${domainPlatform} requires at least one image or video when scheduling.`,
+        title: 'Media required when scheduling',
+      },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
 
   let firstIngredient: IngredientDocument | null = null;
   let ingredientIds: string[] = [];
@@ -274,18 +299,21 @@ export async function createPost({
     visibility: requestedVisibility,
   });
 
-  await dependencies.activityRecorder.record({
-    brandId: firstIngredient?.brandId ?? identity.brandId,
-    entityId: data.id,
-    entityModel: ActivityEntityModel.POST,
-    key: warmupHoldReason
-      ? ActivityKey.POST_CREATED
-      : ActivityKey.VIDEO_SCHEDULED,
-    organizationId: firstIngredient?.organizationId ?? identity.organizationId,
-    source: ActivitySource.SCRIPT,
-    userId: identity.userId,
-    value: (data.id as string).toString(),
-  });
+  await dependencies.activitiesService.create(
+    new ActivityEntity({
+      brandId: firstIngredient?.brandId ?? identity.brandId,
+      entityId: data.id,
+      entityModel: ActivityEntityModel.POST,
+      key: warmupHoldReason
+        ? ActivityKey.POST_CREATED
+        : ActivityKey.VIDEO_SCHEDULED,
+      organizationId:
+        firstIngredient?.organizationId ?? identity.organizationId,
+      source: ActivitySource.SCRIPT,
+      userId: identity.userId,
+      value: (data.id as string).toString(),
+    }),
+  );
 
   if (
     effectiveExecutionState !== TargetExecutionState.DRAFT &&

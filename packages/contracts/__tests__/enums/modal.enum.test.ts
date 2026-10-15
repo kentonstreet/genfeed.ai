@@ -3,13 +3,12 @@ import { ModalEnum } from '../../src/enums/modal.enum';
 
 describe('modal.enum', () => {
   describe('ModalEnum', () => {
-    it('should have 62 members', () => {
-      expect(Object.values(ModalEnum)).toHaveLength(62);
+    it('should have 63 members', () => {
+      expect(Object.values(ModalEnum)).toHaveLength(63);
     });
 
     it('should have correct values', () => {
       expect(ModalEnum.ARTICLE).toBe('modal-article');
-      expect(ModalEnum.NEWSLETTER).toBe('modal-newsletter');
       expect(ModalEnum.ARTICLE_GENERATE).toBe('modal-generate-article');
       expect(ModalEnum.AVATAR).toBe('modal-avatar');
       expect(ModalEnum.BLACKLIST).toBe('modal-blacklist');
@@ -23,7 +22,6 @@ describe('modal.enum', () => {
       expect(ModalEnum.CAPTION_DETAIL).toBe('modal-caption-detail');
       expect(ModalEnum.CLIP).toBe('modal-clip');
       expect(ModalEnum.CONFIRM).toBe('modal-confirm');
-      expect(ModalEnum.CREDITS_REQUIRED).toBe('modal-credits-required');
       expect(ModalEnum.CREDENTIAL).toBe('modal-credential');
       expect(ModalEnum.ERROR_DEBUG).toBe('modal-error-debug');
       expect(ModalEnum.EXPORT).toBe('modal-export');
@@ -47,7 +45,9 @@ describe('modal.enum', () => {
       expect(ModalEnum.MOOD).toBe('modal-mood');
       expect(ModalEnum.MUSIC).toBe('modal-music');
       expect(ModalEnum.ONBOARDING).toBe('modal-onboarding');
-      expect(ModalEnum.POST_COMPOSE).toBe('modal-post-compose');
+      expect(ModalEnum.POST).toBe('modal-post');
+      expect(ModalEnum.POST_CREATE).toBe('modal-post-create');
+      expect(ModalEnum.POST_LONG_FORM).toBe('modal-post-long-form');
       expect(ModalEnum.POST_BATCH).toBe('modal-post-batch');
       expect(ModalEnum.POST_METADATA).toBe('modal-post-metadata');
       expect(ModalEnum.POST_REMIX).toBe('modal-post-remix');
@@ -62,6 +62,7 @@ describe('modal.enum', () => {
       expect(ModalEnum.SUBSCRIPTION).toBe('modal-subscription');
       expect(ModalEnum.TAG).toBe('modal-tag');
       expect(ModalEnum.TEXT_OVERLAY).toBe('modal-text-overlay');
+      expect(ModalEnum.THREAD_CREATE).toBe('modal-thread-create');
       expect(ModalEnum.TRAINING).toBe('modal-training');
       expect(ModalEnum.TRAINING_EDIT).toBe('modal-training-edit');
       expect(ModalEnum.TRAINING_UPLOAD).toBe('modal-training-new');
