@@ -5,7 +5,7 @@ import type {
   GenerationSetup,
   GenerationSetupValues,
 } from '@genfeedai/contracts/interfaces/studio/generation-setup.interface';
-import type { StudioPlaygroundCapabilities } from '@genfeedai/contracts/interfaces/studio/studio-playground.interface';
+import type { StudioGenerateCapabilities } from '@genfeedai/contracts/interfaces/studio/studio-generate.interface';
 import type { GenerationSetupOptionPickerProps } from '@genfeedai/props/ui/generation-setup/generation-setup.props';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -39,7 +39,7 @@ vi.mock('@ui/dropdowns/generation-setup/GenerationSetupOptionPicker', () => ({
   ),
 }));
 
-const MUSIC_CAPABILITIES: StudioPlaygroundCapabilities = {
+const MUSIC_CAPABILITIES: StudioGenerateCapabilities = {
   hasAspectRatio: false,
   hasBrandEnrichment: false,
   hasDuration: true,
@@ -78,7 +78,7 @@ function buildSetup(
 
 function renderSection(
   overrides: {
-    capabilities?: Partial<StudioPlaygroundCapabilities>;
+    capabilities?: Partial<StudioGenerateCapabilities>;
     onResetField?: (key: string) => void;
     onSetField?: (key: string, value: unknown) => void;
     setup?: GenerationSetup;

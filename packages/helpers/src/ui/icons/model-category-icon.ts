@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 
 const MODEL_CATEGORY_ICONS: Record<ModelCategory, IconType> = {
-  [ModelCategory.AVATAR]: SquareUser,
   [ModelCategory.EMBEDDING]: Braces,
   [ModelCategory.IMAGE]: Image,
   [ModelCategory.IMAGE_EDIT]: ImagePlus,
@@ -31,7 +30,6 @@ const MODEL_CATEGORY_ICONS: Record<ModelCategory, IconType> = {
 };
 
 const MODEL_CATEGORY_LABELS: Record<ModelCategory, string> = {
-  [ModelCategory.AVATAR]: 'Avatar',
   [ModelCategory.EMBEDDING]: 'Embedding',
   [ModelCategory.IMAGE]: 'Image',
   [ModelCategory.IMAGE_EDIT]: 'Image editing',
@@ -70,7 +68,7 @@ export function getModelCategoryIcon(
   category?: string,
   context?: ModelCategoryIconContext,
 ): IconType {
-  if (isAvatarModelContext(context)) {
+  if (category === 'avatar' || isAvatarModelContext(context)) {
     return SquareUser;
   }
 
@@ -81,7 +79,7 @@ export function getModelCategoryLabel(
   category?: string,
   context?: ModelCategoryIconContext,
 ): string {
-  if (isAvatarModelContext(context)) {
+  if (category === 'avatar' || isAvatarModelContext(context)) {
     return 'Avatar';
   }
 

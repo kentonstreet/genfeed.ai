@@ -6,11 +6,11 @@ import {
 import type {
   IModel,
   IStudioLook,
-  StudioPlaygroundCapabilities,
+  StudioGenerateCapabilities,
 } from '@genfeedai/contracts/interfaces';
 import type { GenerationSetup } from '@genfeedai/contracts/interfaces/studio/generation-setup.interface';
 import type { GenerationSetupTypeOption } from '@genfeedai/props/ui/generation-setup/generation-setup.props';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import GenerationSetupPopover from '@ui/dropdowns/generation-setup/GenerationSetupPopover';
 import { describe, expect, it, vi } from 'vitest';
@@ -310,7 +310,7 @@ function createPreset(
   } as IStudioLook;
 }
 
-const capabilities: StudioPlaygroundCapabilities = {
+const capabilities: StudioGenerateCapabilities = {
   hasAspectRatio: true,
   hasBrandEnrichment: true,
   hasDuration: false,
@@ -382,73 +382,6 @@ async function openPopover(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('GenerationSetupPopover', () => {
-  it('uses mutually exclusive Auto and Advanced buttons and keeps presets outside Studio setup', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const view = renderPopover({
-      showPresets: false,
-      advancedMode: { isEnabled: false, onChange },
-    });
-    await openPopover(user);
-    const group = within(screen.getByRole('group', { name: 'Advanced' }));
-    expect(group.getByRole('button', { name: 'Auto' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    expect(group.getByRole('button', { name: 'Advanced' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    );
-    expect(screen.queryByRole('switch', { name: 'Advanced' })).toBeNull();
-    expect(
-      screen.queryByRole('button', { name: 'Configure Presets' }),
-    ).toBeNull();
-    await user.click(group.getByRole('button', { name: 'Advanced' }));
-    expect(onChange).toHaveBeenLastCalledWith(true);
-    view.rerender(
-      <GenerationSetupPopover
-        {...popoverProps({
-          showPresets: false,
-          advancedMode: { isEnabled: true, onChange },
-        })}
-      />,
-    );
-    expect(group.getByRole('button', { name: 'Advanced' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    await user.click(group.getByRole('button', { name: 'Auto' }));
-    expect(onChange).toHaveBeenLastCalledWith(false);
-  });
-
-  it('offers an explicit editing switch inside the same setup picker', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const view = renderPopover({
-      isIconOnly: true,
-      imageEditing: { isEnabled: false, label: 'Edit image', onChange },
-    });
-    await openPopover(user);
-    const toggle = screen.getByRole('switch', { name: 'Edit image' });
-    expect(toggle).not.toBeChecked();
-    await user.click(toggle);
-    expect(onChange).toHaveBeenCalledWith(true);
-    view.rerender(
-      <GenerationSetupPopover
-        {...popoverProps({
-          isIconOnly: true,
-          imageEditing: { isEnabled: true, label: 'Edit image', onChange },
-        })}
-      />,
-    );
-    expect(screen.getByRole('switch', { name: 'Edit image' })).toBeChecked();
-    expect(
-      screen.getByRole('button', { name: 'Configure Model' }),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole('switch', { name: 'Edit image' }));
-    expect(onChange).toHaveBeenLastCalledWith(false);
-  });
-
   it('opens enhancement preferences inside the same picker and preserves organization and brand writes', async () => {
     const user = userEvent.setup();
     harnessMocks.reads.mockClear();
@@ -532,75 +465,6 @@ describe('GenerationSetupPopover', () => {
     expect(
       screen.getByRole('button', { name: 'Configure Type' }),
     ).toBeInTheDocument();
-  });
-
-  it('shows only the output types in Auto', async () => {
-    const user = userEvent.setup();
-    const onEditChange = vi.fn();
-    renderPopover({
-      advancedMode: { isEnabled: false, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: onEditChange,
-      },
-    });
-    await openPopover(user);
-    const types = within(screen.getByRole('group', { name: 'Type' }));
-    expect(types.getByRole('button', { name: 'Image' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
-    for (const name of ['Model', 'Output', 'Look', 'Brand'])
-      expect(
-        screen.queryByRole('button', { name: `Configure ${name}` }),
-      ).toBeNull();
-    expect(screen.queryByRole('switch', { name: 'Edit image' })).toBeNull();
-    await user.click(types.getByRole('button', { name: 'Edit image' }));
-    expect(onEditChange).toHaveBeenCalledWith(true);
-  });
-
-  it('marks exactly one output type active in Auto', async () => {
-    const user = userEvent.setup();
-    const onTypeChange = vi.fn();
-    renderPopover({
-      advancedMode: { isEnabled: false, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: vi.fn(),
-      },
-      onTypeChange,
-      setup: createSetup({
-        values: { ...createSetup().values, type: 'video' },
-      }),
-      typeOptions: [...typeOptions, { label: 'Video', value: 'video' }],
-    });
-    await openPopover(user);
-    const types = within(screen.getByRole('group', { name: 'Type' }));
-    const pressed = types
-      .getAllByRole('button')
-      .filter((button) => button.getAttribute('aria-pressed') === 'true');
-    expect(pressed.map((button) => button.textContent)).toEqual(['Video']);
-    await user.click(types.getByRole('button', { name: 'Image' }));
-    expect(onTypeChange).toHaveBeenCalledWith('image');
-  });
-
-  it('hides the editing switch in Advanced for non-image types', async () => {
-    const user = userEvent.setup();
-    renderPopover({
-      advancedMode: { isEnabled: true, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: vi.fn(),
-      },
-      setup: createSetup({
-        values: { ...createSetup().values, type: 'video' },
-      }),
-    });
-    await openPopover(user);
-    expect(screen.queryByRole('switch', { name: 'Edit image' })).toBeNull();
   });
 
   it('keeps model search and Auto priorities isolated from output, brand, and presets', async () => {

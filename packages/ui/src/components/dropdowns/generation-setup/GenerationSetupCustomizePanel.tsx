@@ -34,7 +34,6 @@ export default function GenerationSetupCustomizePanel({
   onResetField,
   onSavePreset,
   onSetField,
-  outputControls,
   reasons,
   setup,
 }: GenerationSetupCustomizePanelProps) {
@@ -155,7 +154,6 @@ export default function GenerationSetupCustomizePanel({
 
         {resolvedSection === 'output' ? (
           <GenerationSetupOutputSection
-            controls={outputControls}
             inputControls={inputControls}
             referenceCount={referenceCount}
             capabilities={capabilities}

@@ -1,9 +1,8 @@
-import type { StudioSystemPreset } from '@genfeedai/contracts/constants/studio-system-presets.constant';
 import type {
   FormDropdownOption,
   IModel,
   IStudioLook,
-  StudioPlaygroundCapabilities,
+  StudioGenerateCapabilities,
 } from '@genfeedai/contracts/interfaces';
 import type { CrunInputControls } from '@genfeedai/contracts/interfaces/content/crun-contract.interface';
 import type {
@@ -46,18 +45,7 @@ export type GenerationSetupFieldSetter = <K extends GenerationSetupFieldKey>(
   value: GenerationSetupValues[K],
 ) => void;
 
-export interface GenerationSetupImageEditingMode {
-  isEnabled: boolean;
-  label: string;
-  onChange: (next: boolean) => void;
-}
-
 export interface GenerationSetupPopoverProps {
-  showPresets?: boolean;
-  /** One compact entry point for Studio's type and settings. */
-  isIconOnly?: boolean;
-  /** Studio's explicit image editing override; other surfaces omit it. */
-  imageEditing?: GenerationSetupImageEditingMode;
   showEnhancementSettings?: boolean;
   align?: 'start' | 'center' | 'end';
   inputControls?: CrunInputControls;
@@ -65,7 +53,7 @@ export interface GenerationSetupPopoverProps {
   scopeKey: string;
   setup: GenerationSetup;
   reasons: Partial<Record<GenerationSetupFieldKey, string>>;
-  capabilities: StudioPlaygroundCapabilities;
+  capabilities: StudioGenerateCapabilities;
   /** Omitted (or a single entry) on surfaces that lock the type, e.g. agent image-only. */
   typeOptions: readonly GenerationSetupTypeOption[];
   models: readonly IModel[];
@@ -91,22 +79,9 @@ export interface GenerationSetupPopoverProps {
   isDisabled?: boolean;
   className?: string;
   buttonRef?: RefObject<HTMLButtonElement | null>;
-  /**
-   * The user's saved Advanced Mode. When provided, the popover shows the
-   * Auto/Advanced button group; the surface decides what Advanced reveals.
-   */
-  advancedMode?: GenerationSetupAdvancedMode;
-  /** Surface-owned model controls rendered at the end of the Output section. */
-  outputControls?: ReactNode;
-}
-
-export interface GenerationSetupAdvancedMode {
-  isEnabled: boolean;
-  onChange: (next: boolean) => void;
 }
 
 export interface GenerationSetupTriggerProps {
-  isIconOnly?: boolean;
   setup: GenerationSetup;
   typeOptions: readonly GenerationSetupTypeOption[];
   models: readonly IModel[];
@@ -142,12 +117,8 @@ export interface GenerationSetupFieldRowProps {
 }
 
 export interface GenerationSetupFrontDoorProps {
-  activeSection?: GenerationSetupCustomizeSectionId;
-  onCloseSection?: () => void;
-  renderSection?: (section: GenerationSetupCustomizeSectionId) => ReactNode;
-  showPresets?: boolean;
   showEnhancementSettings?: boolean;
-  capabilities: StudioPlaygroundCapabilities;
+  capabilities: StudioGenerateCapabilities;
   inputControls?: CrunInputControls;
   isDisabled?: boolean;
   lookOptions: GenerationSetupLookOptions;
@@ -171,31 +142,13 @@ export interface GenerationSetupPresetsSectionProps {
   setup: GenerationSetup;
 }
 
-export interface GenerationSetupPresetsPopoverProps
-  extends GenerationSetupPresetsSectionProps {
-  onClearPreset: () => void;
-  systemPresets?: readonly StudioSystemPreset[];
-  onApplySystemPreset?: (preset: StudioSystemPreset) => void;
-}
-
-export interface GenerationSetupPresetPreviewProps {
-  preset: StudioSystemPreset;
-  isAnimated?: boolean;
-  isCompact?: boolean;
-}
-
 export interface GenerationSetupOptionPickerProps {
-  isOpen?: boolean;
-  onOpenChange?: (isOpen: boolean) => void;
-  previewKind?: 'style' | 'mood';
   label: string;
   value: string;
   options: readonly {
     value: string;
     label: string;
     isPlatformDefault?: boolean;
-    description?: string;
-    thumbnailUrl?: string;
   }[];
   onValueChange: (value: string) => void;
 }
@@ -214,7 +167,7 @@ export interface GenerationSetupCustomizePanelProps {
   onTypeChange?: (type: GenerationSetupType) => void;
   inputControls?: CrunInputControls;
   referenceCount?: number;
-  capabilities: StudioPlaygroundCapabilities;
+  capabilities: StudioGenerateCapabilities;
   creditsAvailable?: number | null;
   favoriteModelKeys: string[];
   initialSection: GenerationSetupCustomizeSectionId;
@@ -230,13 +183,12 @@ export interface GenerationSetupCustomizePanelProps {
   onResetField: (key: GenerationSetupFieldKey) => void;
   onSavePreset: (label: string) => void;
   onSetField: GenerationSetupFieldSetter;
-  outputControls?: ReactNode;
   reasons: Partial<Record<GenerationSetupFieldKey, string>>;
   setup: GenerationSetup;
 }
 
 export interface GenerationSetupModelSectionProps {
-  capabilities: StudioPlaygroundCapabilities;
+  capabilities: StudioGenerateCapabilities;
   creditsAvailable?: number | null;
   favoriteModelKeys: string[];
   isDisabled?: boolean;
@@ -255,11 +207,9 @@ export interface GenerationSetupLookSectionProps {
 }
 
 export interface GenerationSetupOutputSectionProps {
-  /** Surface-owned model controls rendered after the shared output fields. */
-  controls?: ReactNode;
   inputControls?: CrunInputControls;
   referenceCount?: number;
-  capabilities: StudioPlaygroundCapabilities;
+  capabilities: StudioGenerateCapabilities;
   onResetField: (key: GenerationSetupFieldKey) => void;
   onSetField: GenerationSetupFieldSetter;
   reasons: Partial<Record<GenerationSetupFieldKey, string>>;
@@ -276,12 +226,4 @@ export interface GenerationSetupBrandSectionProps {
 export interface GenerationSetupSavePresetRowProps {
   isDisabled?: boolean;
   onSavePreset: (label: string) => void;
-}
-
-export interface GenerationSetupAutoTypePickerProps {
-  imageEditing?: GenerationSetupImageEditingMode;
-  isDisabled?: boolean;
-  onTypeChange?: (type: GenerationSetupType) => void;
-  setup: GenerationSetup;
-  typeOptions: readonly GenerationSetupTypeOption[];
 }

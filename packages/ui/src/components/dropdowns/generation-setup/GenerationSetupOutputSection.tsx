@@ -18,7 +18,6 @@ import { useTranslations } from 'next-intl';
 /** Output settings: aspect ratio, duration, output count, and (music only) style/instrumental/lyrics. */
 export default function GenerationSetupOutputSection({
   capabilities,
-  controls,
   inputControls,
   referenceCount = 0,
   onResetField,
@@ -171,8 +170,6 @@ export default function GenerationSetupOutputSection({
           />
         </GenerationSetupFieldRow>
       ) : null}
-
-      {controls ? <div className="flex flex-col gap-2">{controls}</div> : null}
     </div>
   );
 }

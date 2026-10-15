@@ -1,5 +1,4 @@
 import type {
-  GenerationBrandMode,
   GenerationHarnessReceipt,
   GenerationHarnessSettings,
   UpdateGenerationHarnessSettings,
@@ -27,10 +26,4 @@ export interface GenerationHarnessSettingsPopoverProps {
 
 export interface GenerationHarnessReceiptProps {
   receipt: GenerationHarnessReceipt;
-}
-
-export interface BrandModeBadgeProps {
-  /** Receipts written before brand modes existed carry none; nothing renders. */
-  brandMode?: GenerationBrandMode;
-  className?: string;
 }

@@ -10,11 +10,6 @@ export interface PromptBarVoiceControlProps {
   className?: string;
   density?: 'compact' | 'default';
   isDisabled?: boolean;
-  /**
-   * Primary when the mic owns the send slot (empty composer); a plain icon
-   * beside Send once there is something to submit.
-   */
-  isPrimary?: boolean;
   isListening: boolean;
   isTranscribing: boolean;
   onStartListening: () => void;
@@ -26,7 +21,6 @@ export default function PromptBarVoiceControl({
   className,
   density = 'default',
   isDisabled = false,
-  isPrimary = true,
   isListening,
   isTranscribing,
   onStartListening,
@@ -86,7 +80,7 @@ export default function PromptBarVoiceControl({
       onClick={onStartListening}
       size={ButtonSize.ICON}
       tooltip="Voice input"
-      variant={isPrimary ? ButtonVariant.DEFAULT : ButtonVariant.GHOST}
+      variant={ButtonVariant.DEFAULT}
       withWrapper={false}
     />
   );

@@ -1,10 +1,4 @@
 {
-  "nextSteps": {
-    "start": "Start"
-  },
-  "timeline": {
-    "steps": "Steps"
-  },
   "markdownCodeBlock": {
     "copied": "Copied",
     "copy": "Copy code",
@@ -185,11 +179,6 @@
     "videoReferenceRoleAria": "Video reference role"
   },
   "generationSetup": {
-    "lookPreviewAria": "{field} preview",
-    "lookPreviewImageAlt": "{label} example",
-    "lookPreviewExample": "Illustrative example",
-    "lookPreviewHint": "Highlight an option to preview it.",
-    "lookPreviewUnavailable": "No example image saved for this option.",
     "agentPick": "Agent pick",
     "applyPreset": "Apply preset {label}",
     "aspectRatio": "Aspect ratio",
@@ -207,49 +196,7 @@
     "editField": "Edit {field}",
     "enhancement": "Prompt enhancement",
     "generationControls": "Generation controls",
-    "advancedMode": "Advanced",
-    "advancedModeDescription": "Choose the model yourself instead of Auto.",
-    "identityRetryAria": "Retry HeyGen identities",
-    "identitySearchAvatars": "Search avatars",
-    "identitySearchVoices": "Search voices",
-    "identityMoreAvatars": "More avatars",
-    "identityMoreVoices": "More voices",
-    "identityNoMatches": "No matching identities",
-    "identityAvatarGallery": "Avatars",
-    "identityVoiceGallery": "Voices",
-    "identityLoading": "Loading identities…",
-    "identityNoAvatars": "No avatar previews available. Add an avatar photo to your Library or connect HeyGen.",
-    "identityNoVoices": "No voices available. Add a voice to your Library or connect HeyGen.",
-    "identityVoicePreview": "Preview {label}",
-    "identityNoSample": "No audio sample available",
-    "identityVoicePause": "Pause {label}",
-    "identityVoiceProgress": "Preview progress for {label}",
-    "identityPreviewFailed": "Preview failed",
-    "identityUse": "Use",
-    "identityUsing": "Using",
-    "identityUseVoice": "Use {label}",
-    "identityVoiceSelected": "{label} selected",
-    "identityGenderMale": "Male",
-    "identityGenderFemale": "Female",
-    "identityVoiceGenderFilter": "Only voices that match {avatar} are shown",
-    "identityTabsAria": "Avatar and voice",
-    "identityTabAvatar": "Avatar",
-    "identityTabVoice": "Voice",
-    "identityNotChosen": "Not chosen",
-    "identityRequired": "Required",
-    "identityPairing": "Your pairing",
-    "identityPickBoth": "Pick an avatar and a voice",
-    "identityPickAvatar": "Pick an avatar",
-    "identityPickVoice": "Pick a voice",
-    "identityPairSummary": "{avatar} speaking as {voice}",
-    "identityDone": "Done",
-    "presetPreviewAria": "{label} illustrative template preview",
-    "presetPreviewIllustrative": "Illustrative preview",
-    "presetPreviewThumbnail": "WOW!",
-    "presetPreviewMemeSetup": "WHEN IT FINALLY WORKS",
-    "presetPreviewMemeReaction": "THE REACTION",
     "generationType": "Generation type",
-    "generationTypeTrigger": "Generation type: {type}",
     "instrumental": "Instrumental",
     "loadingPresets": "Loading presets\u2026",
     "look": "Look",
@@ -277,7 +224,6 @@
     "searchField": "Search {field}",
     "searchFieldPlaceholder": "Search {field}\u2026",
     "searchFields": "Search fields\u2026",
-    "autoHint": "Genfeed picks the best model and settings",
     "searchModels": "Search models",
     "searchModelsPlaceholder": "Search models\u2026",
     "searchPresets": "Search presets",
@@ -311,26 +257,11 @@
     "useSet": "Use set"
   },
   "postSidebarSchedule": {
-    "chooseDateTime": "Choose a date and time",
-    "finishTikTokSettings": "Finish TikTok settings",
-    "localTimezone": "Local timezone",
-    "moreTikTokOptions": "More TikTok publishing options",
     "musicConfirmation": "Music Usage Confirmation",
     "musicConfirmationPrefix": "By publishing, you agree to TikTok\u2019s",
-    "now": "Now",
-    "publishNow": "Publish now",
-    "publishTiming": "Publish timing",
-    "publishToTikTok": "Publish to TikTok",
     "publishViaTikTokApp": "Publish via TikTok App",
     "publishViaTikTokAppDescription": "Add TikTok-licensed music or make final edits before publishing.",
-    "published": "Published",
-    "publishing": "Publishing\u2026",
-    "ready": "Ready",
-    "saving": "Saving\u2026",
-    "schedule": "Schedule",
-    "scheduledTime": "Scheduled time",
-    "viewOn": "View on {platform}",
-    "when": "When"
+    "scheduledTime": "Scheduled time"
   },
   "publishPostCard": {
     "awaitingResult": "Still publishing. This card updates when it finishes.",
@@ -420,10 +351,7 @@
     "generationFailed": "{kind} generation failed",
     "noPreview": "No preview is available for this asset.",
     "unlockCredits": "Unlock more with credits",
-    "creditAmount": "{count} credits",
-    "receiptReady": "Written with your approved brand kit.",
-    "receiptNeedsReview": "Written in a provisional style until you approve your own brand kit.",
-    "viewReceipt": "View receipt"
+    "creditAmount": "{count} credits"
   },
   "mutationApproval": {
     "approve": "Approve",
@@ -432,17 +360,7 @@
     "declined": "Declined",
     "error": "Your response could not be saved. Try again.",
     "unavailable": "This approval is unavailable. Ask for a new preview.",
-    "failed": "Approved, but the action could not be completed. Ask for a new preview to try again.",
-    "expiredTitle": "Approval expired",
-    "expiredDescription": "This preview is over an hour old. Prepare it again, then review and approve the fresh preview.",
-    "prepareAgain": "Prepare again",
-    "prepareFailed": "The fresh preview could not be prepared. Try again.",
-    "failedTitle": "Action failed",
-    "failedDescription": "The action could not be completed. Review the result before trying again.",
-    "responseFailedTitle": "Response failed",
-    "reviewChanges": "Review changes",
-    "reviewRequested": "Review requested",
-    "technicalDetails": "Technical details"
+    "failed": "Approved, but the action could not be completed. Ask for a new preview to try again."
   },
   "workObjects": {
     "openLibrary": "Open in Library",
@@ -480,7 +398,7 @@
     "submit": "Submit answers",
     "failed": "Your answer was not saved. Try again."
   },
-  "turboRunResultCard": {
+  "batchGenerationResultCard": {
     "noDraftPreview": "No preview available for this draft.",
     "openDraft": "Open draft",
     "openDraftAria": "Open {platform} draft in review",
@@ -498,25 +416,5 @@
     "switchToHosted": "Switch this thread to hosted",
     "title": "This thread runs on {runtime}",
     "webBlocked": "This thread runs on {runtime}, which only runs in Genfeed Desktop. Your draft is kept. Switch this thread to hosted (uses Genfeed credits) or open it in Genfeed Desktop."
-  },
-  "runFailureCard": {
-    "getCredits": "Get credits"
-  },
-  "stalledTurn": {
-    "title": "This is taking longer than expected.",
-    "description": "The agent has not responded for a while. You can keep waiting, or stop this turn and send it again.",
-    "keepWaiting": "Keep waiting",
-    "stopAndRetry": "Stop and retry"
-  },
-  "onboardingChecklist": {
-    "brandContext": "Brand context",
-    "creditsEarned": "Credits earned",
-    "footer": "Every answer is saved to your brand and used in every post, image and video.",
-    "hintEmpty": "Starts with your website",
-    "hintPartial": "Each answer makes outputs more specific",
-    "hintStrong": "Strong: outputs will sound like you",
-    "rewardEarned": "+{credits} earned",
-    "rewardPending": "+{credits}",
-    "rowSkipped": "{label} (skipped)"
   }
 }

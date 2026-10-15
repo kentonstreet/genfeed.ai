@@ -9,7 +9,9 @@ import {
   SHELL_ICON_CLASS,
 } from '@ui/constants/shell-chrome.constant';
 import { isAutoGenerationModelKey } from '@ui/dropdowns/model-selector/model-selector.constants';
+import ModelAvatar from '@ui/models/ModelAvatar';
 import { Button } from '@ui/primitives/button';
+import { buttonVariants } from '@ui/primitives/button.variants';
 import { ChevronsUpDown, Sparkles } from 'lucide-react';
 import { type ButtonHTMLAttributes, memo, type Ref } from 'react';
 
@@ -23,7 +25,6 @@ const GenerationSetupTrigger = memo(function GenerationSetupTrigger({
   className,
   hasAspectRatio = true,
   isDisabled,
-  isIconOnly = false,
   isOpen: _isOpen,
   isTypeCommitted = false,
   models,
@@ -71,23 +72,27 @@ const GenerationSetupTrigger = memo(function GenerationSetupTrigger({
         triggerLabel ? `Generation setup: ${triggerLabel}` : 'Generation setup'
       }
       className={cn(
+        buttonVariants({ size: ButtonSize.SM, variant: ButtonVariant.GHOST }),
         SHELL_CONTROL_HEIGHT_CLASS,
         'min-w-0 max-w-full flex-nowrap gap-1.5 overflow-hidden px-2.5 font-medium text-foreground',
         isFullyAgentOwned && 'border-primary/30 bg-primary/5 text-primary',
-        isIconOnly &&
-          'size-8 shrink-0 min-h-0 min-w-0 justify-center overflow-visible p-0',
         className,
       )}
       isDisabled={isDisabled}
       ref={ref}
-      size={isIconOnly ? ButtonSize.ICON : ButtonSize.SM}
       textTransform="none"
       title={triggerLabel ?? summaryParts.join(' · ')}
-      variant={ButtonVariant.GHOST}
+      variant={ButtonVariant.UNSTYLED}
       withWrapper={false}
       {...buttonProps}
     >
-      {isTypeAgentOwned ? (
+      {!isTypeAgentOwned && selectedModel ? (
+        <span aria-hidden="true" className="inline-flex shrink-0">
+          <ModelAvatar model={selectedModel} />
+        </span>
+      ) : !isTypeAgentOwned ? (
+        <CategoryIcon aria-hidden="true" className={SHELL_ICON_CLASS} />
+      ) : (
         <Sparkles
           aria-hidden="true"
           className={cn(
@@ -95,19 +100,13 @@ const GenerationSetupTrigger = memo(function GenerationSetupTrigger({
             isFullyAgentOwned ? 'text-primary' : 'text-muted-foreground',
           )}
         />
-      ) : selectedModel && !isIconOnly ? null : (
-        <CategoryIcon aria-hidden="true" className={SHELL_ICON_CLASS} />
       )}
-      {!isIconOnly ? (
-        <>
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
-            {triggerLabel ?? summaryParts.join(' · ')}
-          </span>
-          <ChevronsUpDown
-            className={cn(SHELL_ICON_CLASS, 'text-muted-foreground')}
-          />
-        </>
-      ) : null}
+      <span className="min-w-0 flex-1 truncate text-xs font-medium">
+        {triggerLabel ?? summaryParts.join(' · ')}
+      </span>
+      <ChevronsUpDown
+        className={cn(SHELL_ICON_CLASS, 'text-muted-foreground')}
+      />
     </Button>
   );
 });
