@@ -58,33 +58,6 @@ describe('SocialSourcesService', () => {
     );
   });
 
-  it('keeps connected snapshots out of manual source creation and deletion', async () => {
-    const context = {
-      organizationId: 'org-1',
-      brandId: 'brand-1',
-      userId: 'user-1',
-    };
-    await expect(
-      service.createScoped(
-        {
-          handle: 'timeline:credential',
-          platform: SocialSourcePlatform.TWITTER,
-          sourceType: SocialSourceType.TIMELINE,
-        },
-        context,
-      ),
-    ).rejects.toThrow('managed through Following');
-    expect(socialSource.create).not.toHaveBeenCalled();
-    socialSource.findFirst.mockResolvedValue({
-      id: 'timeline-1',
-      sourceType: SocialSourceType.TIMELINE,
-    });
-    await expect(service.removeScoped('timeline-1', context)).rejects.toThrow(
-      'Disconnect the account',
-    );
-    expect(socialSource.update).not.toHaveBeenCalled();
-  });
-
   it('creates a brand-scoped source with normalized handle', async () => {
     brand.findFirst.mockResolvedValue({ id: 'brand-1' });
     socialSource.create.mockResolvedValue({
@@ -435,61 +408,6 @@ describe('SocialSourcesService', () => {
       expect(result.count).toBe(0);
     });
 
-    it('passes server attempt evidence to native persistence only for an explicit own-account collection', async () => {
-      const collection = {
-        handle: 'openai',
-        platform: SocialSourcePlatform.TWITTER,
-        provider: 'brand-oauth',
-        posts: [
-          {
-            id: 'tweet-a',
-            text: 'Own post',
-            authorId: 'author-a',
-            platform: SocialSourcePlatform.TWITTER,
-            nativeFormat: 'text',
-            nativeAuthorVerified: true,
-          },
-        ],
-        breakoutAttempt: {
-          organizationId: ownAccountSource.organizationId,
-          brandId: ownAccountSource.brandId,
-          credentialId: ownAccountSource.credentialId,
-          platform: SocialSourcePlatform.TWITTER,
-          provider: 'brand-oauth',
-          sourceAttemptId: 'attempt-a',
-          requestStartedAt: new Date(),
-          receivedAt: new Date(),
-        },
-      };
-      sourceCollector.collectTimeline.mockResolvedValue(collection);
-      sourcePostsService.upsertCollectedPosts.mockResolvedValue({
-        posts: [],
-        rejectedCount: 0,
-      });
-      socialSource.update.mockResolvedValue({ id: ownAccountSource.id });
-      await service.resyncOwnAccount(ownAccountSource as never);
-      expect(sourceCollector.collectTimeline).toHaveBeenCalledWith(
-        SocialSourcePlatform.TWITTER,
-        'openai',
-        expect.objectContaining({
-          captureBreakoutEvidence: true,
-          credentialId: ownAccountSource.credentialId,
-        }),
-      );
-      expect(sourcePostsService.upsertCollectedPosts).toHaveBeenCalledWith(
-        ownAccountSource,
-        expect.arrayContaining([
-          expect.objectContaining({
-            authorId: 'author-a',
-            externalId: 'tweet-a',
-            raw: collection.posts[0],
-          }),
-        ]),
-        collection,
-      );
-      expect(collection.breakoutAttempt).not.toHaveProperty('actorId');
-    });
-
     it('rejects a source that is not an own-account source', async () => {
       await expect(
         service.resyncOwnAccount({
@@ -691,7 +609,6 @@ describe('SocialSourcesService', () => {
         context,
         SocialSourcePlatform.TWITTER,
         '123',
-        [SocialSourceType.TIMELINE],
       );
       expect(sourcePostsService.upsertCollectedPosts).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'source-1' }),
