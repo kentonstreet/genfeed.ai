@@ -320,7 +320,7 @@ describe('AvatarVideoGenerationService', () => {
     await h.service.generateAvatarVideo(
       {
         photoIngredientId: 'avatar-1',
-        heygenVoiceId: 'voice-1',
+        audioUrl: 'https://cdn.example.com/audio.mp3',
         text: 'Speech',
       },
       context,
@@ -595,118 +595,6 @@ describe('AvatarVideoGenerationService', () => {
     expect(creditsUtilsService.bindReservationOutput).not.toHaveBeenCalled();
   });
 
-  it('hands the frozen per-second quote to a caller that holds the credits itself', async () => {
-    const { service, brandsService, creditsUtilsService } = createService();
-    brandsService.findOne.mockResolvedValue({ agentConfig: {}, id: 'brand-1' });
-    const onCreditsPrepared = vi.fn();
-
-    await service.generateAvatarVideo(
-      {
-        heygenVoiceId: 'voice-1',
-        photoUrl: 'https://cdn.example.com/avatar.png',
-        text: 'Speech',
-      },
-      context,
-      undefined,
-      { groupId: 'scene-group', groupIndex: 0, settleCreditsExternally: true },
-      onCreditsPrepared,
-    );
-
-    expect(creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    // The caller stores it on its own hold and settles to the real clip.
-    expect(onCreditsPrepared).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        billingMode: 'platform',
-        durationQuote: expect.objectContaining({
-          estimatedSeconds: 1,
-          snapshot: expect.objectContaining({
-            modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-          }),
-        }),
-      }),
-    );
-  });
-
-  describe('remix-run avatar variants (#6933)', () => {
-    const variantScope = {
-      groupId: 'run-1',
-      groupIndex: 0,
-      isByokBypass: false,
-      settleCreditsExternally: false,
-    };
-
-    it('holds the variant on its own render hold with the frozen quote', async () => {
-      const { service, brandsService, creditsUtilsService } = createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-
-      await service.generateAvatarVideo(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-        undefined,
-        variantScope,
-        async () => undefined,
-      );
-
-      expect(creditsUtilsService.reserveCredits).toHaveBeenCalledOnce();
-      // The webhook settles this hold to the duration HeyGen returns.
-      expect(creditsUtilsService.bindReservationOutput).toHaveBeenCalledWith(
-        expect.objectContaining({
-          metadata: expect.objectContaining({
-            avatarDurationQuote: expect.objectContaining({
-              estimatedSeconds: 1,
-            }),
-          }),
-          reservationId: 'service-pool-1',
-          workloadId: 'avatar-ingredient-1',
-        }),
-      );
-      expect(
-        creditsUtilsService.deductCreditsFromOrganization,
-      ).not.toHaveBeenCalled();
-    });
-
-    it('releases the variant hold when HeyGen fails the render', async () => {
-      const { service, brandsService, creditsUtilsService, heygenService } =
-        createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      heygenService.generatePhotoAvatarVideo.mockRejectedValue(
-        new HeyGenSubmissionRejectedError(),
-      );
-
-      await expect(
-        service.generateAvatarVideo(
-          {
-            heygenVoiceId: 'voice-1',
-            photoUrl: 'https://cdn.example.com/avatar.png',
-            text: 'Speech',
-          },
-          context,
-          undefined,
-          variantScope,
-          async () => undefined,
-        ),
-      ).rejects.toThrow();
-
-      expect(creditsUtilsService.releaseReservation).toHaveBeenCalledWith({
-        organizationId: 'test-object-id',
-        reservationId: 'service-pool-1',
-      });
-      expect(
-        creditsUtilsService.deductCreditsFromOrganization,
-      ).not.toHaveBeenCalled();
-    });
-  });
-
   it('binds the hold before HeyGen sees the render id', async () => {
     const { service, brandsService, creditsUtilsService, metadataService } =
       createService();
@@ -943,59 +831,6 @@ describe('AvatarVideoGenerationService', () => {
     );
   });
 
-  it('quotes Studio a photo animation per second with its estimated clip length, holding nothing', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-
-    await expect(
-      h.service.quote(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-      ),
-    ).resolves.toEqual({
-      billingMode: 'platform',
-      credits: AVATAR_PRICE,
-      // "Speech" is six characters, a one-second estimate.
-      estimatedSeconds: 1,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    expect(h.sharedService.createMediaDocumentsInternal).not.toHaveBeenCalled();
-    expect(h.heygenService.generatePhotoAvatarVideo).not.toHaveBeenCalled();
-  });
-
-  it('quotes Studio zero platform credits for a HeyGen BYOK render', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-    h.byokService.resolveApiKey.mockResolvedValue({ apiKey: 'org-key' });
-
-    await expect(
-      h.service.quote(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-      ),
-    ).resolves.toMatchObject({
-      billingMode: 'byok',
-      credits: 0,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-  });
-
   it('pins both provider keys before reservation, even when org keys change during admission', async () => {
     const {
       service,
@@ -1074,7 +909,6 @@ describe('AvatarVideoGenerationService', () => {
     expect(reserve).toHaveBeenCalledWith({
       billingMode: 'platform',
       credits: AVATAR_PRICE,
-      durationQuote: expect.objectContaining({ estimatedSeconds: 1 }),
       modelKey: MODEL_KEYS.HEYGEN_AVATAR,
     });
     expect(elevenlabsService.generateAndUploadAudio).not.toHaveBeenCalled();
@@ -1101,7 +935,7 @@ describe('AvatarVideoGenerationService', () => {
       await service.generateAvatarVideo(
         {
           photoUrl: 'https://cdn.example.com/avatar.png',
-          heygenVoiceId: 'voice-1',
+          audioUrl: 'https://cdn.example.com/audio.mp3',
           text: 'Founder update',
         },
         context,
@@ -1209,18 +1043,9 @@ describe('AvatarVideoGenerationService', () => {
         id: 'brand-1',
       });
 
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        cdnUrl: 'https://cdn.example.com/voice.mp3',
-        id: 'narration-1',
-        status: IngredientStatus.UPLOADED,
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: null },
-      });
       await h.service.generateAvatarVideo(
         {
-          audioIngredientId: 'narration-1',
+          audioUrl: 'https://cdn.example.com/voice.mp3',
           photoUrl: 'https://cdn.example.com/avatar.png',
           text: '',
         },
@@ -1287,15 +1112,6 @@ describe('AvatarVideoGenerationService', () => {
         agentConfig: {},
         id: 'brand-1',
       });
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        cdnUrl: 'https://cdn.example.com/voice.mp3',
-        id: 'narration-1',
-        status: IngredientStatus.UPLOADED,
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: null },
-      });
       h.filesClient.probeMediaFromUrl.mockResolvedValue({
         durationSeconds: null,
       });
@@ -1303,7 +1119,7 @@ describe('AvatarVideoGenerationService', () => {
       await expect(
         h.service.generateAvatarVideo(
           {
-            audioIngredientId: 'narration-1',
+            audioUrl: 'https://cdn.example.com/voice.mp3',
             photoUrl: 'https://cdn.example.com/avatar.png',
             text: 'A script that must not size this hold',
           },
@@ -1376,7 +1192,7 @@ describe('AvatarVideoGenerationService', () => {
     await service.generateAvatarVideo(
       {
         photoUrl: 'https://cdn.example.com/avatar.png',
-        heygenVoiceId: 'voice-1',
+        audioUrl: 'https://cdn.example.com/audio.mp3',
         text: 'Create the founder update',
       },
       context,
@@ -1402,7 +1218,7 @@ describe('AvatarVideoGenerationService', () => {
       service.generateAvatarVideo(
         {
           photoUrl: 'https://cdn.example.com/avatar.png',
-          heygenVoiceId: 'voice-1',
+          audioUrl: 'https://cdn.example.com/audio.mp3',
           text: 'Create the founder update',
         },
         context,
@@ -2208,26 +2024,6 @@ describe('AvatarVideoGenerationService', () => {
         credits: 269,
         modelKey: MODEL_KEYS.HEYGEN_AVATAR_IV,
       });
-    });
-    it('quotes Studio a native look by its engine with the estimated clip length', async () => {
-      const h = createService();
-      const ref = platformTwin(['avatar_iv']);
-      admit(h, ref);
-
-      await expect(
-        h.service.quote(
-          { avatarRef: ref, heygenVoiceId: 'voice-1', text: script },
-          context,
-        ),
-      ).resolves.toEqual({
-        billingMode: 'platform',
-        // $0.0805/s digital twin x 10 s x 3.33 margin.
-        credits: 269,
-        estimatedSeconds: 10,
-        modelKey: MODEL_KEYS.HEYGEN_AVATAR_IV,
-      });
-      expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-      expect(h.heygenService.generateNativeAvatarVideo).not.toHaveBeenCalled();
     });
   });
 

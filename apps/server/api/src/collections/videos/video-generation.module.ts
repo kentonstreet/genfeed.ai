@@ -45,11 +45,7 @@ import { Module } from '@nestjs/common';
 
 @Module({
   controllers: [AvatarVideoController, BatchInterpolationController],
-  exports: [
-    AvatarVideoBillingService,
-    AvatarVideoGenerationService,
-    AvatarVideoModelService,
-  ],
+  exports: [AvatarVideoGenerationService],
   imports: [
     PersonasCoreModule,
     MediaUrlsModule,

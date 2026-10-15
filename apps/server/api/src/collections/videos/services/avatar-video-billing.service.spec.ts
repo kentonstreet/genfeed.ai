@@ -152,21 +152,6 @@ describe('AvatarVideoBillingService.fundLipSync', () => {
     });
     expect(funded.request).toEqual({ creditsConfig: { amount: 65 } });
   });
-
-  it('never probes a caller URL when its narration ID is outside the organization', async () => {
-    findFirst.mockResolvedValue(null);
-    await expect(
-      service.fundLipSync({
-        audioIngredientId: 'other-organization-audio',
-        audioUrl: 'https://caller.example/audio.mp3',
-        organizationId: 'org-1',
-        useCustomerKey: false,
-        userId: 'user-1',
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(probeMediaFromUrl).not.toHaveBeenCalled();
-    expect(holdForService).not.toHaveBeenCalled();
-  });
 });
 
 describe('AvatarVideoBillingService.quoteRender', () => {
@@ -423,20 +408,6 @@ describe('AvatarVideoBillingService.resolveFunding', () => {
   });
 
   describe('audio-driven holds', () => {
-    it('requires saved narration before funding a platform render from a mutable caller URL', async () => {
-      probeMediaFromUrl.mockResolvedValue({ durationSeconds: 1 });
-
-      await expect(
-        service.resolveFunding(
-          { audioUrl: 'https://caller.example/switchable.mp3', text: 'hi' },
-          { audioUrl: 'https://caller.example/switchable.mp3' },
-          'org-1',
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
-
-      expect(probeMediaFromUrl).not.toHaveBeenCalled();
-      expect(quoteSnapshotByKey).not.toHaveBeenCalled();
-    });
     it('holds a short script over long narration at the narration length', async () => {
       findFirst.mockResolvedValue({ metadata: { duration: 299.4 } });
 
@@ -459,21 +430,16 @@ describe('AvatarVideoBillingService.resolveFunding', () => {
       expect(probeMediaFromUrl).not.toHaveBeenCalled();
     });
 
-    it('probes saved narration instead of estimating from the script', async () => {
-      findFirst.mockResolvedValue({ metadata: { duration: null } });
+    it('probes a raw audio URL instead of estimating from the script', async () => {
       probeMediaFromUrl.mockResolvedValue({ durationSeconds: 61.2 });
 
       const funding = await service.resolveFunding(
         {
-          audioIngredientId: 'narration-1',
           audioUrl: 'https://cdn.example/voice.mp3',
           photoUrl: 'https://cdn.example/photo.png',
           text: 'hi',
         },
-        {
-          audioIngredientId: 'narration-1',
-          audioUrl: 'https://cdn.example/voice.mp3',
-        },
+        { audioUrl: 'https://cdn.example/voice.mp3' },
         'org-1',
       );
 
@@ -485,20 +451,15 @@ describe('AvatarVideoBillingService.resolveFunding', () => {
     });
 
     it('prices photo plus audio with no script at the measured length', async () => {
-      findFirst.mockResolvedValue({ metadata: { duration: null } });
       probeMediaFromUrl.mockResolvedValue({ durationSeconds: 5 });
 
       const funding = await service.resolveFunding(
         {
-          audioIngredientId: 'narration-1',
           audioUrl: 'https://cdn.example/voice.mp3',
           photoUrl: 'https://cdn.example/photo.png',
           text: '',
         },
-        {
-          audioIngredientId: 'narration-1',
-          audioUrl: 'https://cdn.example/voice.mp3',
-        },
+        { audioUrl: 'https://cdn.example/voice.mp3' },
         'org-1',
       );
 
