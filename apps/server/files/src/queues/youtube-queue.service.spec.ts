@@ -80,11 +80,13 @@ describe('YoutubeQueueService', () => {
         mockJobData,
         {
           attempts: 3,
-          jobId: expect.any(String),
           backoff: {
             delay: 2000,
             type: 'exponential',
           },
+          jobId: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+          ),
           priority: JOB_PRIORITY.HIGH,
         },
       );
@@ -103,11 +105,13 @@ describe('YoutubeQueueService', () => {
         dataWithPriority,
         {
           attempts: 3,
-          jobId: expect.any(String),
           backoff: {
             delay: 2000,
             type: 'exponential',
           },
+          jobId: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+          ),
           priority: JOB_PRIORITY.LOW,
         },
       );
@@ -136,7 +140,6 @@ describe('YoutubeQueueService', () => {
         expect.any(Object),
         expect.objectContaining({
           attempts: 3,
-          jobId: expect.any(String),
         }),
       );
     });
@@ -159,11 +162,13 @@ describe('YoutubeQueueService', () => {
         mockJobData,
         {
           attempts: 3,
-          jobId: expect.any(String),
           backoff: {
             delay: 2000,
             type: 'exponential',
           },
+          jobId: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+          ),
           priority: JOB_PRIORITY.HIGH,
         },
       );
@@ -194,7 +199,6 @@ describe('YoutubeQueueService', () => {
         expect.any(Object),
         expect.objectContaining({
           attempts: 3,
-          jobId: expect.any(String),
           backoff: {
             delay: 2000,
             type: 'exponential',

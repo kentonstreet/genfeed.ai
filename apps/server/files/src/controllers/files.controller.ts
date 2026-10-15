@@ -383,7 +383,8 @@ export class FilesController {
   @Get('job/:jobId')
   async getJobStatus(@Param('jobId') jobId: string) {
     try {
-      // Try to find the job in all queues (in parallel for better performance)
+      // BullMQ ids are local to each queue. A numeric id can exist on more
+      // than one of them; returning the first hit reports the wrong job.
       const [videoJob, imageJob, fileJob, youtubeJob] = await Promise.all([
         this.videoQueueService.getJob(jobId),
         this.imageQueueService.getJob(jobId),
@@ -392,7 +393,7 @@ export class FilesController {
       ]);
 
       const jobs = [videoJob, imageJob, fileJob, youtubeJob].filter(
-        (job) => job != null,
+        (candidate) => candidate != null,
       );
       if (jobs.length > 1) {
         throw new HttpException(

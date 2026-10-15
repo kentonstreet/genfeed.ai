@@ -79,11 +79,15 @@ describe('BaseQueueService', () => {
       await service.addDownload({ fileId: 'file-1' });
       await service.addDownload({ fileId: 'file-1' });
 
-      const calls = vi.mocked(mockQueue.add).mock.calls;
+      const calls = (mockQueue.add as ReturnType<typeof vi.fn>).mock.calls;
       const firstId = calls[0]?.[2]?.jobId;
       const secondId = calls[1]?.[2]?.jobId;
-      expect(firstId).toMatch(/^[0-9a-f-]{36}$/);
-      expect(secondId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(firstId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      expect(secondId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
       expect(secondId).not.toBe(firstId);
     });
 
@@ -95,6 +99,7 @@ describe('BaseQueueService', () => {
         expect.objectContaining({ jobId: 'video-stitch-output-1' }),
       );
     });
+
     it('should call queue.add with job type and data', async () => {
       await service.addDownload({ fileId: 'file-1' });
 
@@ -152,10 +157,13 @@ describe('BaseQueueService', () => {
   describe('addJobWithDelay', () => {
     it('assigns an opaque ID to delayed jobs too', async () => {
       await service.addDelayedDownload({ fileId: 'file-1' }, 1000);
-      expect(vi.mocked(mockQueue.add).mock.calls[0]?.[2]?.jobId).toMatch(
-        /^[0-9a-f-]{36}$/,
+      expect(
+        (mockQueue.add as ReturnType<typeof vi.fn>).mock.calls[0]?.[2]?.jobId,
+      ).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
+
     it('should pass delay to queue.add options', async () => {
       await service.addDelayedDownload({ fileId: 'delayed-1' }, 5000);
 

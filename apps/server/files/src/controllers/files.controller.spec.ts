@@ -29,11 +29,6 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import type { Response } from 'express';
 import { of, throwError } from 'rxjs';
 
-const { guardedFetch } = vi.hoisted(() => ({ guardedFetch: vi.fn() }));
-vi.mock('@libs/security/destination-guard', () => ({
-  safeFetch: guardedFetch,
-}));
-
 // Mock fs module
 const fsMock = vi.hoisted(() => ({
   existsSync: vi.fn().mockReturnValue(true),
@@ -152,7 +147,7 @@ describe('FilesController', () => {
   };
 
   const mockConfigService = {
-    get: vi.fn((key: string): string | null => {
+    get: vi.fn((key: string) => {
       if (key === 'WEBSOCKET_URL') {
         return 'ws://localhost:3000';
       }
@@ -236,14 +231,6 @@ describe('FilesController', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    guardedFetch.mockReset();
-    mockConfigService.get.mockImplementation((key: string) =>
-      key === 'GENFEEDAI_API_KEY'
-        ? 'internal-key'
-        : key === 'WEBSOCKET_URL'
-          ? 'ws://localhost:3000'
-          : null,
-    );
 
     const fs = nodeFs as unknown as Record<string, ReturnType<typeof vi.fn>>;
     fs.existsSync.mockReturnValue(true);
@@ -415,10 +402,8 @@ describe('FilesController', () => {
       downloadFile: storageController.downloadFile.bind(storageController),
       generateThumbnail:
         processingController.generateThumbnail.bind(processingController),
-      getFileMetadata: (
-        body: Parameters<FilesMetadataController['getFileMetadata']>[0],
-        key = 'internal-key',
-      ) => metadataController.getFileMetadata(body, key),
+      getFileMetadata:
+        metadataController.getFileMetadata.bind(metadataController),
       getJobStatus: jobsController.getJobStatus.bind(jobsController),
       getPresignedDownloadUrl:
         storageController.getPresignedDownloadUrl.bind(storageController),
@@ -461,14 +446,6 @@ describe('FilesController', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
-    guardedFetch.mockReset();
-    mockConfigService.get.mockImplementation((key: string) =>
-      key === 'GENFEEDAI_API_KEY'
-        ? 'internal-key'
-        : key === 'WEBSOCKET_URL'
-          ? 'ws://localhost:3000'
-          : null,
-    );
   });
 
   // ==========================================================================
@@ -1392,8 +1369,9 @@ describe('FilesController', () => {
     });
 
     it('should download and return metadata for URL', async () => {
-      guardedFetch.mockResolvedValueOnce(
-        new Response('video-data', {
+      mockHttpService.get.mockReturnValueOnce(
+        of({
+          data: Buffer.from('video-data'),
           headers: { 'content-type': 'video/mp4' },
         }),
       );
@@ -1402,10 +1380,11 @@ describe('FilesController', () => {
 
       const result = await controller.getFileMetadata(body);
 
-      expect(guardedFetch).toHaveBeenCalledWith(
+      expect(httpService.get).toHaveBeenCalledWith(
         'https://example.com/video.mp4',
-        { signal: expect.any(AbortSignal) },
-        {},
+        expect.objectContaining({
+          responseType: 'arraybuffer',
+        }),
       );
       expect(result.duration).toBe(120);
     });
@@ -1422,8 +1401,11 @@ describe('FilesController', () => {
     });
 
     it('should handle 404 error when downloading URL', async () => {
-      guardedFetch.mockResolvedValueOnce(
-        new Response('Not found', { status: 404 }),
+      mockHttpService.get.mockReturnValueOnce(
+        throwError(() => ({
+          message: 'Not found',
+          response: { status: 404 },
+        })),
       );
 
       const body = { url: 'https://example.com/nonexistent.mp4' };
@@ -1434,8 +1416,11 @@ describe('FilesController', () => {
     });
 
     it('should handle 403 error when downloading URL', async () => {
-      guardedFetch.mockResolvedValueOnce(
-        new Response('Forbidden', { status: 403 }),
+      mockHttpService.get.mockReturnValueOnce(
+        throwError(() => ({
+          message: 'Forbidden',
+          response: { status: 403 },
+        })),
       );
 
       const body = { url: 'https://example.com/protected.mp4' };
@@ -1446,10 +1431,11 @@ describe('FilesController', () => {
     });
 
     it('should handle file size exceeded error', async () => {
-      guardedFetch.mockResolvedValueOnce(
-        new Response('large', {
-          headers: { 'content-length': String(101 * 1024 * 1024) },
-        }),
+      mockHttpService.get.mockReturnValueOnce(
+        throwError(() => ({
+          code: 'ERR_FR_MAX_BODY_LENGTH_EXCEEDED',
+          message: 'Size exceeded',
+        })),
       );
 
       const body = { url: 'https://example.com/large-file.mp4' };
