@@ -90,8 +90,7 @@ export default function Searchbar({
   const rootRef = useRef<HTMLDivElement>(null);
   const isPointerDownRef = useRef(false);
   const collapseAfterPointerRef = useRef<(() => void) | null>(null);
-  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isWidthHeldRef = useRef(false);
+  const collapseFrameRef = useRef<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const isDebounced = Boolean(onSearch);
 
@@ -207,78 +206,36 @@ export default function Searchbar({
     if (!isCollapsible) {
       return;
     }
-    const clearCollapseTimer = () => {
-      if (collapseTimerRef.current !== null) {
-        clearTimeout(collapseTimerRef.current);
-        collapseTimerRef.current = null;
-      }
+    const onPointerDown = () => {
+      isPointerDownRef.current = true;
     };
-    const releaseWidth = () => {
-      isWidthHeldRef.current = false;
-      if (rootRef.current) {
-        rootRef.current.style.width = '';
-      }
-    };
-    const holdWidth = () => {
-      const root = rootRef.current;
-      if (!root || isWidthHeldRef.current) {
-        return;
-      }
-      const width = root.getBoundingClientRect().width;
-      if (width <= 0) {
-        return;
-      }
-      isWidthHeldRef.current = true;
-      root.style.width = `${width}px`;
-    };
-    const finishCollapse = () => {
-      clearCollapseTimer();
+    const onPointerUp = () => {
       isPointerDownRef.current = false;
       const collapse = collapseAfterPointerRef.current;
       collapseAfterPointerRef.current = null;
-      releaseWidth();
-      collapse?.();
-    };
-    const armFallback = () => {
-      clearCollapseTimer();
-      // Click is dispatched in this same task, before timers. The fallback
-      // covers a pointerup that never produces a click.
-      collapseTimerRef.current = setTimeout(finishCollapse, 0);
-    };
-    const onDown = (event: Event) => {
-      isPointerDownRef.current = true;
-      const target = event.target;
-      if (target instanceof Node && rootRef.current?.contains(target)) {
+      if (!collapse) {
         return;
       }
-      holdWidth();
+      // The click event is dispatched after pointerup, in this same turn.
+      // Collapsing on the next frame keeps the toolbar still until that click
+      // lands. A narrow row otherwise jumps (w-64 → w-8) under the cursor.
+      collapseFrameRef.current = requestAnimationFrame(() => {
+        collapseFrameRef.current = null;
+        collapse();
+      });
     };
-    const onClick = () => {
-      clearCollapseTimer();
-      if (!collapseAfterPointerRef.current) {
-        isPointerDownRef.current = false;
-        releaseWidth();
-        return;
-      }
-      finishCollapse();
-    };
-    window.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('mousedown', onDown, true);
-    window.addEventListener('pointerup', armFallback, true);
-    window.addEventListener('mouseup', armFallback, true);
-    window.addEventListener('pointercancel', armFallback, true);
-    window.addEventListener('click', onClick);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointerup', onPointerUp, true);
+    window.addEventListener('pointercancel', onPointerUp, true);
     return () => {
-      window.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('pointerup', armFallback, true);
-      window.removeEventListener('mouseup', armFallback, true);
-      window.removeEventListener('pointercancel', armFallback, true);
-      window.removeEventListener('click', onClick);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerUp, true);
       collapseAfterPointerRef.current = null;
-      isPointerDownRef.current = false;
-      clearCollapseTimer();
-      releaseWidth();
+      if (collapseFrameRef.current !== null) {
+        cancelAnimationFrame(collapseFrameRef.current);
+        collapseFrameRef.current = null;
+      }
     };
   }, [isCollapsible]);
 
@@ -293,9 +250,12 @@ export default function Searchbar({
     if (event.currentTarget.value.trim()) {
       return;
     }
-    // Keep the open width through mouseup. Blur can land after pointerup has
-    // already cleared a down-bit, and shrinking then makes the click miss.
-    if (isPointerDownRef.current || isWidthHeldRef.current) {
+    // Blur runs during pointerdown, before click, and the input is still
+    // document.activeElement for that whole event. Collapsing here moves the
+    // control under the cursor, so the click never reaches it. A keyboard
+    // blur has no pointer and closes now. relatedTarget already proved focus
+    // left this field.
+    if (isPointerDownRef.current) {
       collapseAfterPointerRef.current = () => {
         const input = resolvedRef.current;
         if (input?.value.trim()) {
@@ -312,10 +272,6 @@ export default function Searchbar({
     setIsExpanded(false);
   };
 
-  const isCollapsed = isCollapsible && !isOpen;
-
-  // One structure in both states, no motion: the open icon sits where the
-  // trigger's glyph was (16px centre), so opening does not shift the icon.
   return (
     <div
       className={cn(
@@ -323,14 +279,13 @@ export default function Searchbar({
         isCollapsible ? (isOpen ? 'w-64' : 'w-8') : null,
         className,
       )}
-      data-state={isCollapsible ? (isOpen ? 'open' : 'closed') : undefined}
       data-testid={isCollapsible ? 'collapsible-search' : undefined}
       ref={rootRef}
     >
-      {isCollapsed ? (
+      {isCollapsible && !isOpen ? (
         <Button
           ariaLabel={ariaLabel}
-          className="absolute inset-y-0 left-0 z-20 size-8"
+          className="size-8"
           data-testid="collapsible-search-trigger"
           icon={<Search className={iconSize} />}
           onClick={() => setIsExpanded(true)}
@@ -338,54 +293,52 @@ export default function Searchbar({
           variant={ButtonVariant.GHOST}
           withWrapper={false}
         />
-      ) : null}
-
-      {showIcon && !isCollapsed && (
-        <Search
-          className={cn(
-            'absolute top-1/2 z-10 -translate-y-1/2 transform pointer-events-none text-foreground/60',
-            isCollapsible ? 'left-2' : 'left-3',
-            iconSize,
+      ) : (
+        <>
+          {showIcon && (
+            <Search
+              className={cn(
+                'absolute left-3 top-1/2 z-10 -translate-y-1/2 transform pointer-events-none text-foreground/60',
+                iconSize,
+              )}
+            />
           )}
-        />
-      )}
 
-      <input
-        aria-hidden={isCollapsed || undefined}
-        aria-label={ariaLabel}
-        name={name}
-        ref={resolvedRef}
-        tabIndex={isCollapsed ? -1 : undefined}
-        type="text"
-        value={displayedValue}
-        onBlur={collapseIfEmpty}
-        onChange={handleChange}
-        placeholder={placeholder}
-        className={cn(
-          sizeClass,
-          'w-full rounded-md border border-border bg-card px-3 text-foreground placeholder:text-foreground/40',
-          'focus-visible:border-border-strong focus-visible:outline-none focus-visible:ring-0',
-          showIcon && (isCollapsible ? 'pl-8' : 'pl-10'),
-          showClearButton && displayedValue && 'pr-8',
-          isCollapsed && 'pointer-events-none opacity-0',
-          inputClassName,
-        )}
-        disabled={isDisabled}
-        onClick={onClick}
-        onKeyDown={handleKeyDown}
-      />
+          <input
+            aria-label={ariaLabel}
+            name={name}
+            ref={resolvedRef}
+            type="text"
+            value={displayedValue}
+            onBlur={collapseIfEmpty}
+            onChange={handleChange}
+            placeholder={placeholder}
+            className={cn(
+              sizeClass,
+              'w-full rounded-md border border-border bg-card px-3 text-foreground placeholder:text-foreground/40',
+              'focus-visible:border-border-strong focus-visible:outline-none focus-visible:ring-0',
+              showIcon && 'pl-10',
+              showClearButton && displayedValue && 'pr-8',
+              inputClassName,
+            )}
+            disabled={isDisabled}
+            onClick={onClick}
+            onKeyDown={handleKeyDown}
+          />
 
-      {showClearButton && displayedValue && (
-        <Button
-          ariaLabel="Clear search"
-          withWrapper={false}
-          isDisabled={isDisabled}
-          onClick={handleClear}
-          variant={ButtonVariant.GHOST}
-          size={ButtonSize.MICRO}
-          className="absolute right-1 top-1/2 -translate-y-1/2 transform p-1"
-          icon={<X className={iconSize} />}
-        />
+          {showClearButton && displayedValue && (
+            <Button
+              ariaLabel="Clear search"
+              withWrapper={false}
+              isDisabled={isDisabled}
+              onClick={handleClear}
+              variant={ButtonVariant.GHOST}
+              size={ButtonSize.MICRO}
+              className="absolute right-1 top-1/2 -translate-y-1/2 transform p-1"
+              icon={<X className={iconSize} />}
+            />
+          )}
+        </>
       )}
     </div>
   );
