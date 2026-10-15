@@ -395,18 +395,13 @@
   },
   "settings": {
     "creditsBalance": {
-      "balance": "Balance",
       "creditsLeft": "Credits left",
       "cycleNote": "Based on this cycle's total: subscription credits plus packs bought this cycle.",
-      "loadError": "Your credit balance could not be loaded.",
-      "lowCreditsWarning": "Low credits warning: your organization is below 1,000 credits.",
       "ofTotal": "of {total}",
       "progressLabel": "Credits left this cycle",
       "referralDescription": "Share your referral link and earn on referred customers' credit purchases.",
       "referralTitle": "Earn 10% in credits",
       "resets": "Resets",
-      "retryBalance": "Retry balance",
-      "title": "Credits",
       "viewReferrals": "View referrals"
     },
     "members": {
@@ -2474,26 +2469,6 @@
     "admin": {
       "label": "Admin",
       "description": "Platform management."
-    },
-    "adminOverview": {
-      "label": "Overview",
-      "description": "Dashboard, analytics and activity."
-    },
-    "adminContent": {
-      "label": "Content",
-      "description": "Posts, templates, prompts and generations."
-    },
-    "adminAutomation": {
-      "label": "AI & Automation",
-      "description": "Models, trainings, bots and workflows."
-    },
-    "adminConfiguration": {
-      "label": "Configuration",
-      "description": "Elements, presets, fonts and tags."
-    },
-    "adminAdministration": {
-      "label": "Administration",
-      "description": "Organizations, users, billing and flags."
     }
   },
   "windowChrome": {
@@ -2504,7 +2479,7 @@
     "title": "Delivery",
     "articleIntro": "Publish this article to a blog you connected. Genfeed records the live link here.",
     "newsletterIntro": "Send this issue through a Beehiiv publication you connected. Genfeed records the live link here.",
-    "noArticleAccounts": "No Ghost, WordPress, Medium or Dev.to account is connected to this brand. Connect one, or copy the article and publish it yourself.",
+    "noArticleAccounts": "No Ghost, WordPress or Medium account is connected to this brand. Connect one, or copy the article and publish it yourself.",
     "noNewsletterAccounts": "No Beehiiv publication is connected to this brand. Connect one, or copy the issue and send it yourself.",
     "connectAccounts": "Connect an account",
     "copyHtml": "Copy HTML",

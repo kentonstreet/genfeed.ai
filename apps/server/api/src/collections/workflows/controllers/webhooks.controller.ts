@@ -131,6 +131,7 @@ export class WebhooksController {
       throw this.unauthorized();
     }
 
+    // Log the webhook trigger
     this.logger.log(`Webhook triggered: ${webhookId}`, {
       payloadKeys: Object.keys(payload),
       webhookId,

@@ -44,10 +44,6 @@ import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import { useMenuItems } from '@hooks/ui/use-menu-items';
 import type { ProtectedBootstrapData } from '@props/layout/protected-bootstrap.props';
 import {
-  ADMIN_RAIL_CATEGORIES,
-  getActiveAppId,
-} from '@ui/shell/app-rail/app-rail.registry';
-import {
   useParams,
   usePathname,
   useRouter,
@@ -185,20 +181,13 @@ export function useAppProtectedLayout(
   const { push, refresh } = useRouter();
   const openTaskComposer = useOpenTaskComposer();
   const { getToken, isLoaded: isAuthLoaded, isSignedIn } = useOptionalAuth();
-  // Refresh server components only on a real sign-in: a loaded signed-out
-  // session that becomes signed in. The server already rendered this route with
-  // the session cookie, so auth resolving on a cold load must not refetch it.
-  const prevIsSignedInRef = useRef<boolean | null>(null);
+  const prevIsSignedInRef = useRef(false);
   useEffect(() => {
-    if (!isAuthLoaded) {
-      return;
-    }
-    const signedIn = isSignedIn ?? false;
-    if (signedIn && prevIsSignedInRef.current === false) {
+    if (isSignedIn && !prevIsSignedInRef.current) {
       refresh();
     }
-    prevIsSignedInRef.current = signedIn;
-  }, [isAuthLoaded, isSignedIn, refresh]);
+    prevIsSignedInRef.current = isSignedIn ?? false;
+  }, [isSignedIn, refresh]);
 
   const taskContextSearchParams = useMemo(
     () =>
@@ -452,23 +441,16 @@ export function useAppProtectedLayout(
     [settingsScope, taskContextSearchParams],
   );
 
-  // The rail picks the admin category; the sidebar lists only its pages.
-  const adminMenuGroup = ADMIN_RAIL_CATEGORIES.find(
-    (category) =>
-      category.id === getActiveAppId(ADMIN_RAIL_CATEGORIES, pathname),
-  )?.adminMenuGroup;
   const adminMenuItems = useMemo(
     () =>
-      ADMIN_MENU_ITEMS.filter(
-        (item) => !adminMenuGroup || item.group === adminMenuGroup,
-      ).map(
+      ADMIN_MENU_ITEMS.map(
         (item): MenuItemConfig => ({
           ...item,
           hrefScope: 'global',
           href: withTaskContextHref(item.href, taskContextSearchParams),
         }),
       ),
-    [adminMenuGroup, taskContextSearchParams],
+    [taskContextSearchParams],
   );
 
   const isWorkspaceRoute = isProtectedWorkspaceRoute(pathname);

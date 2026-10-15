@@ -1151,17 +1151,13 @@
       "uploadedVideo": "Uploaded video"
     },
     "draft": {
-      "draftFailed": "Could not draft the storyboard. Try again.",
-      "draftFromBrief": "Draft from the saved brief",
-      "drafting": "Drafting the storyboard…",
-      "emptyDescription": "Write what the video should say below and send it to draft a shot list you can edit before anything is generated. Or add shots yourself.",
-      "emptyTitle": "Start with the story",
+      "brief": "Brief",
       "loading": "Loading storyboard…",
       "regenerateBeforeEditor": "Storyboard changed. Regenerate stale shots before opening Editor.",
       "saveBeforeLeave": "Your edits could not be saved. Retry saving before leaving.",
       "scopeChanged": "Storyboard scope changed.",
       "sourceNotEditable": "This source cannot be edited.",
-      "untitled": "Untitled storyboard"
+      "untitled": "Storyboard"
     },
     "plan": {
       "action": "Action",
@@ -1174,6 +1170,7 @@
       "avatarFor": "Avatar image for {name}",
       "beforeApproving": "Before approving:",
       "capabilitiesUnavailable": "Video model capabilities are unavailable.",
+      "cast": "Cast",
       "changeAvatar": "Change avatar image",
       "chooseAvatar": "Choose avatar image",
       "chooseFormat": "Choose format",
@@ -1185,6 +1182,7 @@
       "cut": "Cut",
       "deleteShot": "Delete shot",
       "dialogue": "Dialogue",
+      "duration": "Duration (seconds)",
       "durationUntilResolved": "Duration editing and adding shots become available when the supported model durations are resolved.",
       "format": "Format",
       "interpolate": "Interpolate",
@@ -1245,6 +1243,7 @@
       "runtimeBudget": "Runtime budget (seconds)",
       "secondsUnit": "s",
       "savedVoice": "Saved voice",
+      "section": "Section",
       "shortenBeforeIncrease": "Shorten another shot before increasing this duration.",
       "shot": "Shot {ordinal}",
       "shotTransition": "Shot {ordinal} transition",
@@ -1253,22 +1252,15 @@
       "speakerForShot": "Speaker for shot {ordinal}",
       "speakerOnScreen": "Speaker on screen",
       "stillAlt": "Still for shot {ordinal}",
-      "generateStill": "Generate still",
-      "regenerateStill": "Regenerate still",
-      "stillFailed": "The still could not be generated. You were not charged. Try again from the shot menu.",
-      "stillGenerating": "Sketching still…",
-      "stillQuoteByok": "{count, plural, one {# black-and-white sketch still} other {# black-and-white sketch stills}} with your Replicate key. No credits are charged.",
-      "stillQuoteChanged": "The storyboard changed after the quote. Generate again to see the current price.",
-      "stillQuoteConfirm": "Generate",
-      "stillQuoteMessage": "{count, plural, one {# black-and-white sketch still} other {# black-and-white sketch stills}} for {credits, plural, one {# credit} other {# credits}}. You are charged only for stills that render.",
-      "stillQuoteTitle": "{count, plural, one {Generate # still?} other {Generate # stills?}}",
       "stillStatus": "Still: {status}",
       "stillUnavailable": "Still preview unavailable",
       "stitch": "Stitch",
       "style": "Style",
       "styleReferences": "Style references",
       "switchModelFailed": "Could not switch video model.",
+      "title": "Plan",
       "titleField": "Title",
+      "transition": "Transition",
       "undo": "Undo",
       "updateFailed": "Could not update storyboard. Your edits are kept.",
       "videoModel": "Video model",
@@ -1276,15 +1268,7 @@
       "voiceFor": "Voice for {name}",
       "voiceUnavailable": "Saved voice unavailable — replace or clear",
       "voiceUnavailableFor": "Saved voice for {name} is unavailable. Replace or clear it.",
-      "voicesLibrary": "Voices Library",
-      "addShotAfter": "Insert shot after shot {ordinal}",
-      "brief": "Brief",
-      "briefHelp": "Read only. The brief this storyboard is drafted from.",
-      "durationUnset": "Not set",
-      "shotActions": "Shot {ordinal} actions",
-      "shotDuration": "Shot {ordinal} length in seconds",
-      "shotNameFor": "Name for shot {ordinal}",
-      "shotNamePlaceholder": "Name this shot"
+      "voicesLibrary": "Voices Library"
     },
     "frameSequence": {
       "clear": "Clear",
@@ -1476,10 +1460,14 @@
       "ariaLabel": "Storyboard runtime",
       "durationSeconds": "{seconds} seconds",
       "durationUnset": "duration not set",
+      "empty": "No shots yet",
       "overBudget": "Shorten another shot to fit the runtime budget.",
+      "seconds": "{seconds}s",
+      "shot": "Shot {ordinal}",
       "shotAria": "Shot {ordinal}, {duration}",
       "shotCount": "{count, plural, one {# shot} other {# shots}}",
       "timeline": "Shot timeline",
+      "unset": "Unset",
       "usedWithBudget": "{used}s / {budget}s",
       "usedWithoutBudget": "{used}s / Choose runtime"
     },
@@ -1540,31 +1528,6 @@
       "scenesTitle": "Scenes",
       "selectVideosTitle": "Select videos to merge",
       "title": "Storyboard"
-    },
-    "inspector": {
-      "cast": "Cast",
-      "details": "Details",
-      "durationUnset": "Not set",
-      "jumpToShot": "Go to shot {ordinal}: {name}",
-      "noShots": "Shots appear here once the brief is drafted. Click one to jump to it on the board.",
-      "references": "References",
-      "shotList": "Shot list",
-      "states": {
-        "approved": "approved",
-        "brief": "brief",
-        "draft": "draft",
-        "drafting": "drafting"
-      },
-      "generateMissingStills": "{count, plural, one {Generate # missing still} other {Generate # missing stills}}",
-      "stillGenerating": "Still is generating",
-      "stillOutOfDate": "Still is out of date",
-      "subtitle": "Storyboard · {state}",
-      "tabs": "Storyboard details"
-    },
-    "promptBar": {
-      "briefPlaceholder": "Describe the video you want to make",
-      "changesPlaceholder": "Ask for changes, e.g. make shot 3 shorter and end on a question",
-      "retry": "Try again"
     }
   },
   "studioEditorLock": {
@@ -1669,7 +1632,6 @@
     "cancelEnhancingPrompt": "Cancel enhancing prompt",
     "enhancePrompt": "Enhance prompt",
     "estimatedCredits": "Estimated {credits} credits",
-    "estimatedCreditsForSeconds": "Estimated {credits} credits for a ~{seconds} s clip",
     "summary": {
       "setup": "Generation setup summary",
       "modelLoading": "Loading model…",
@@ -1681,9 +1643,6 @@
       "estimateAfterSelection": "Estimate available after model selection",
       "estimateLoading": "Loading estimate…",
       "estimateUnavailable": "Estimate unavailable",
-      "estimatedSeconds": "~{seconds} s",
-      "byokEstimate": "Your API key · 0 credits",
-      "avatarEstimateNeedsInput": "Write a script and choose an avatar and a voice to see a price.",
       "estimateReasons": {
         "ERROR": "The price check failed. Try again.",
         "INSUFFICIENT_INPUT": "Add a prompt or choose a model to see a price.",
@@ -1807,11 +1766,6 @@
     "viewGrid": "Grid",
     "viewList": "List",
     "makeClips": "Make clips",
-    "brandEnhancement": {
-      "failed": "Brand enhancement failed. Nothing was generated and no credits were used.",
-      "generateWithoutBrand": "Generate without brand",
-      "generateWithoutBrandAria": "Generate this {type} without brand, using the prompt exactly as typed"
-    },
     "crun": {
       "outputFormat": "Output format",
       "quoteLoading": "Checking image price…",
@@ -3160,37 +3114,7 @@
       "scopeChanged": "The Library scope changed. Review the current failures and try again.",
       "reviewUnavailable": "Saved inputs could not be opened in Studio. Inspect this asset for details."
     },
-    "scrollTable": "Scroll table horizontally",
-    "accountVoices": {
-      "availability": {
-        "restricted": "Restricted",
-        "unavailable": "Unavailable"
-      },
-      "description": "Pick voices and clones from your connected ElevenLabs account. Importing saves a reference in your Library; nothing changes in ElevenLabs.",
-      "disconnected": {
-        "body": "Add your ElevenLabs API key in Integrations to browse your own voices and clones.",
-        "title": "Connect your ElevenLabs account"
-      },
-      "empty": "No voices in this ElevenLabs account match.",
-      "import": "Import",
-      "importError": "This voice could not be imported.",
-      "importSuccess": "{name} added to your Library",
-      "importVoice": "Import {name}",
-      "imported": "Imported",
-      "invalid": {
-        "body": "ElevenLabs rejected the saved API key. Update it in Integrations, then try again.",
-        "title": "Reconnect your ElevenLabs account"
-      },
-      "listLabel": "ElevenLabs account voices",
-      "loadError": "Your ElevenLabs voices could not be loaded.",
-      "loadMore": "Load more voices",
-      "loading": "Loading your ElevenLabs voices…",
-      "open": "Import from ElevenLabs",
-      "openIntegrations": "Open Integrations",
-      "retry": "Retry",
-      "searchLabel": "Search your ElevenLabs voices",
-      "title": "Import from your ElevenLabs account"
-    }
+    "scrollTable": "Scroll table horizontally"
   },
   "onboarding": {
     "brand": {
@@ -3360,10 +3284,6 @@
       "remainingCredits": "{count} journey credits still available",
       "review": "Review",
       "title": "Activation Journey"
-    },
-    "providers": {
-      "keyValidationNotice": "Use real keys only. Organization → API Keys checks each key with the provider before saving, so placeholder values are rejected; keys in your .env file are read when the container starts.",
-      "openRouterDescription": "Required for text generation and the agent. Set OPENROUTER_API_KEY in your .env."
     }
   },
   "credentialPostingTimes": {
@@ -3959,7 +3879,7 @@
     "deleteConfirmation": "Are you sure you want to delete \"{label}\"? This action cannot be undone.",
     "searchModels": "Search models",
     "moreOptions": "More options for {label}",
-    "editModel": "Edit model",
+    "pricingDetails": "Pricing details",
     "noModelsFound": "No models found",
     "emptySearchHint": "No models match your search. Clear it to see the catalog.",
     "emptyFilterHint": "No models are available for this filter. Change the filters or refresh the list.",
