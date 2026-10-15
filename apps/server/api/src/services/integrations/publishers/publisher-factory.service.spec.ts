@@ -29,6 +29,8 @@ import { CredentialPlatform } from '@genfeedai/contracts';
 import { ConfigService } from '@libs/config/config.service';
 import { Test, type TestingModule } from '@nestjs/testing';
 
+// ─── Mock factory ─────────────────────────────────────────────────────────────
+
 function mockPublisher(platform: CredentialPlatform) {
   return {
     buildPostUrl: vi.fn().mockReturnValue('https://example.com/post/123'),
@@ -163,6 +165,8 @@ describe('PublisherFactoryService', () => {
 
     await expect(module.init()).rejects.toThrow(/TwitterPublisherService/);
   });
+
+  // ─── getPublisher() ─────────────────────────────────────────────────────────
 
   describe('getPublisher()', () => {
     it('should return the twitter publisher for TWITTER platform', () => {
@@ -392,6 +396,8 @@ describe('PublisherFactoryService', () => {
     });
   });
 
+  // ─── isSupported() ──────────────────────────────────────────────────────────
+
   describe('isSupported()', () => {
     const SUPPORTED = [
       CredentialPlatform.TWITTER,
@@ -428,6 +434,8 @@ describe('PublisherFactoryService', () => {
       );
     });
   });
+
+  // ─── getSupportedPlatforms() ────────────────────────────────────────────────
 
   describe('getSupportedPlatforms()', () => {
     it('should return an array', () => {

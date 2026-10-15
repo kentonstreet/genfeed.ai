@@ -134,7 +134,6 @@
     "platformCallback": {
       "actions": {
         "back": "Go back",
-        "restart": "Restart authorization",
         "retry": "Try again",
         "signIn": "Sign in to continue"
       },
@@ -147,15 +146,7 @@
         "denied": "Authorization was denied. You can try connecting again.",
         "description": "Failed to verify your account. Please try again.",
         "failed": "The provider rejected this authorization. Please try again.",
-        "restartFailed": "Could not restart the connection. Go back and connect again.",
-        "title": "Connection Failed",
-        "youtubeAuthorizationFailed": "YouTube could not finish this connection. Restart authorization and try again.",
-        "youtubeChannelMissing": "No YouTube channel was found for the Google account you selected. Restart authorization and choose the YouTube channel or Brand Account, not only the Google identity.",
-        "youtubeChannelMissingTitle": "No YouTube channel found",
-        "youtubeMissingScopes": "YouTube did not grant the permissions this connection needs. Restart authorization and accept the requested access.",
-        "youtubeProviderFailure": "YouTube could not verify this account. Restart the connection and try again.",
-        "youtubeStateInvalid": "This YouTube connection session is no longer valid. Restart authorization to try again.",
-        "youtubeTokenExchange": "YouTube could not exchange this authorization. Restart the connection and try again."
+        "title": "Connection Failed"
       },
       "success": {
         "description": "Redirecting you back…",
@@ -395,18 +386,13 @@
   },
   "settings": {
     "creditsBalance": {
-      "balance": "Balance",
       "creditsLeft": "Credits left",
       "cycleNote": "Based on this cycle's total: subscription credits plus packs bought this cycle.",
-      "loadError": "Your credit balance could not be loaded.",
-      "lowCreditsWarning": "Low credits warning: your organization is below 1,000 credits.",
       "ofTotal": "of {total}",
       "progressLabel": "Credits left this cycle",
       "referralDescription": "Share your referral link and earn on referred customers' credit purchases.",
       "referralTitle": "Earn 10% in credits",
       "resets": "Resets",
-      "retryBalance": "Retry balance",
-      "title": "Credits",
       "viewReferrals": "View referrals"
     },
     "members": {
@@ -956,11 +942,15 @@
     },
     "organizationModules": {
       "title": "Modules",
-      "description": "Choose which apps your organization's members see.",
+      "description": "Choose which tools your organization can use.",
       "adminOnly": "Only owners and admins can change module settings.",
       "paidPlan": "Paid plan",
-      "shown": "Shown",
-      "hidden": "Hidden",
+      "notReleased": "Not released",
+      "releasePreview": {
+        "label": "Release preview",
+        "description": "Genfeed only. Lets this organization use founder-only modules before they are released."
+      },
+      "alwaysOn": "Always on",
       "loading": "Loading module settings…",
       "saving": "Saving module settings…",
       "saved": "Module settings saved.",
@@ -969,7 +959,7 @@
       "loadFailed": "Could not load module settings. Try again.",
       "unavailable": "Module settings are unavailable. Reload before making changes.",
       "retry": "Retry loading",
-      "dataHelp": "Hiding a module removes its app for everyone in your organization. Work through the API and MCP keeps running, and existing projects stay readable and exportable.",
+      "dataHelp": "Disabling a module blocks new work. Existing projects remain readable and exportable. Playground and Storyboard use credits and stay available.",
       "paidHelp": "All paid plans unlock subscription modules. Credits still cover usage.",
       "subscription": "Manage subscription",
       "modules": {
@@ -1018,8 +1008,8 @@
           "description": "Explore trends and content opportunities."
         }
       },
-      "disabledTitle": "{module} is hidden for your organization",
-      "disabledHelp": "An owner or admin can show it again in organization settings. Existing projects remain readable and exportable.",
+      "disabledTitle": "{module} is disabled",
+      "disabledHelp": "An owner or admin can enable this module in organization settings. Existing projects remain readable and exportable.",
       "manageModules": "Organization modules",
       "subscriptionTitle": "{module} requires an active paid subscription",
       "subscriptionHelp": "Existing data remains readable and exportable. A paid plan is required to start new work.",
@@ -2394,10 +2384,11 @@
     "uninstallFailed": "Couldn't uninstall {app}. Try again.",
     "loadFailed": "Couldn't load your apps. Reload the page to try again.",
     "loadingApp": "Loading app",
-    "organizationDisabled": "Hidden by your organization.",
+    "organizationDisabled": "Turned off for your organization.",
     "manageModules": "Organization settings",
     "subscriptionRequired": "Needs a paid plan.",
     "viewPlans": "View plans",
+    "founderOnly": "Not released yet.",
     "unavailable": "Unavailable right now."
   },
   "appRail": {
@@ -2474,26 +2465,6 @@
     "admin": {
       "label": "Admin",
       "description": "Platform management."
-    },
-    "adminOverview": {
-      "label": "Overview",
-      "description": "Dashboard, analytics and activity."
-    },
-    "adminContent": {
-      "label": "Content",
-      "description": "Posts, templates, prompts and generations."
-    },
-    "adminAutomation": {
-      "label": "AI & Automation",
-      "description": "Models, trainings, bots and workflows."
-    },
-    "adminConfiguration": {
-      "label": "Configuration",
-      "description": "Elements, presets, fonts and tags."
-    },
-    "adminAdministration": {
-      "label": "Administration",
-      "description": "Organizations, users, billing and flags."
     }
   },
   "windowChrome": {
