@@ -1,9 +1,5 @@
 import { ModalEnum } from '@genfeedai/contracts';
-import {
-  ORGANIZATION_CONTEXT_HEADER,
-  UNATTRIBUTED_FORWARDED_HEADER,
-  UNATTRIBUTED_FORWARDED_VALUE,
-} from '@genfeedai/contracts/constants';
+import { ORGANIZATION_CONTEXT_HEADER } from '@genfeedai/contracts/constants';
 import type { IErrorDebugInfo } from '@genfeedai/contracts/interfaces/modals/error-debug.interface';
 import type {
   IHttpCancelledError,
@@ -14,11 +10,6 @@ import type { IHttpRequestOptions } from '@genfeedai/contracts/interfaces/utils/
 import { openModal } from '@genfeedai/helpers/ui/modal/modal.helper';
 import { EnvironmentService } from '@services/core/environment.service';
 import { setErrorDebugInfo } from '@services/core/error-debug-store';
-import { getGenerationEntryHeaders } from '@services/core/generation-entry-headers';
-import {
-  getJsonApiErrorMember,
-  getPersistedVideoIngredientIds,
-} from '@services/core/json-api-error-message';
 import {
   buildInstanceKey,
   ServiceInstanceManager,
@@ -51,9 +42,6 @@ function createInterceptorError(
  * a per-request `timeout` and are not bound by this default.
  */
 export const HTTP_REQUEST_TIMEOUT_MS = 30_000;
-
-/** `InsufficientCreditsException` code: the API refused a credit-spending action. */
-const INSUFFICIENT_CREDITS_ERROR_CODE = 'INSUFFICIENT_CREDITS';
 
 const httpServiceInstances = new ServiceInstanceManager<HTTPBaseService>();
 let requestOrganizationId: string | null = null;
@@ -267,18 +255,8 @@ export abstract class HTTPBaseService {
   private handleRequest = (config: InternalAxiosRequestConfig) => {
     const organizationHeaders = this.requestOrganizationHeaders();
     config.headers.Authorization = `Bearer ${this.token}`;
-    for (const [name, value] of Object.entries({
-      ...getGenerationEntryHeaders(),
-      ...organizationHeaders,
-    })) {
+    for (const [name, value] of Object.entries(organizationHeaders)) {
       config.headers[name] = value;
-    }
-    // Server-side calls (SSR, route handlers) reach the API from this server's
-    // address, often loopback on self-host. Declare the visitor unknown so the
-    // API never grants admin power from that address.
-    if (typeof window === 'undefined') {
-      config.headers[UNATTRIBUTED_FORWARDED_HEADER] =
-        UNATTRIBUTED_FORWARDED_VALUE;
     }
 
     // Don't auto-cancel previous requests - let them complete naturally
@@ -306,7 +284,7 @@ export abstract class HTTPBaseService {
     return config;
   };
 
-  handleError = async (error: AxiosError) => {
+  private handleError = async (error: AxiosError) => {
     // Silently ignore cancelled/aborted requests - check FIRST before any logging
     if (
       error.code === 'ERR_CANCELED' ||
@@ -363,30 +341,12 @@ export abstract class HTTPBaseService {
       const isSurfaceHandledStatus =
         typeof status === 'number' &&
         requestOptions?.handledErrorStatuses?.includes(status) === true;
-      let isSurfaceHandledResponse = false;
-      if (
-        typeof status === 'number' &&
-        Number.isFinite(status) &&
-        status >= 400 &&
-        typeof requestOptions?.handlesErrorResponse === 'function'
-      ) {
-        try {
-          isSurfaceHandledResponse =
-            requestOptions.handlesErrorResponse({
-              status,
-              data: response?.data,
-            }) === true;
-        } catch {
-          // Presentation policy must not replace the original request rejection.
-        }
-      }
       const shouldShowDebugModal =
         typeof window !== 'undefined' &&
         typeof status === 'number' &&
         status >= 400 &&
         !isExpectedClientStatus &&
-        !isSurfaceHandledStatus &&
-        !isSurfaceHandledResponse;
+        !isSurfaceHandledStatus;
 
       if (shouldShowDebugModal) {
         openModal(ModalEnum.ERROR_DEBUG);
@@ -419,18 +379,6 @@ export abstract class HTTPBaseService {
         'isAuthError',
         debugInfo,
       );
-    }
-
-    // Out of credits is the paywall: pages stay readable, and every refused
-    // credit-spending action (generate, clips, batch, editor, agent tools)
-    // answers with one prompt to buy credits or pick a plan. The caller still
-    // receives the rejection below.
-    if (
-      typeof window !== 'undefined' &&
-      getJsonApiErrorMember(response.data)?.code ===
-        INSUFFICIENT_CREDITS_ERROR_CODE
-    ) {
-      openModal(ModalEnum.CREDITS_REQUIRED);
     }
 
     // In production, sanitize error data. Throw a real Error (not a plain
@@ -469,11 +417,6 @@ export abstract class HTTPBaseService {
         }
       }
 
-      const persistedVideoIngredientIds = getPersistedVideoIngredientIds(
-        response.data,
-      );
-      if (persistedVideoIngredientIds.length)
-        Object.assign(sanitizedError, { persistedVideoIngredientIds });
       throw sanitizedError;
     }
 

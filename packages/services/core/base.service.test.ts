@@ -549,8 +549,7 @@ describe('BaseService', () => {
         signal,
         handledErrorStatuses: [503],
       });
-      const config = service.getInstanceForTest().get.mock.calls[0]?.[1];
-      if (!config) throw new Error('expected request config');
+      const config = service.getInstanceForTest().get.mock.calls[0][1];
       expect(config.params).toBe(query);
       expect(config.signal).toBe(signal);
       expect(config.params).not.toHaveProperty('handledErrorStatuses');
@@ -567,24 +566,6 @@ describe('BaseService', () => {
       expect(result.items[0].id).toBe('1');
     });
 
-    it('maps keyset cursor links into the next cursor and hasNext', async () => {
-      service.getInstanceForTest().get.mockResolvedValue({
-        data: {
-          data: [{ id: '1', name: 'Test' }],
-          links: { cursor: { hasMore: true, limit: 30, nextCursor: 'abc' } },
-        },
-      });
-
-      const result = await service.findAllPage({ paging: 'cursor' });
-
-      expect(result).toMatchObject({
-        hasNext: true,
-        nextCursor: 'abc',
-        pageSize: 30,
-      });
-      expect(result.items[0]).toBeInstanceOf(TestModel);
-    });
-
     it('does not persist the allowlist for the next request on the same service', async () => {
       service
         .getInstanceForTest()
@@ -593,39 +574,6 @@ describe('BaseService', () => {
       await service.findAllPage({ page: 1 });
       expect(service.getInstanceForTest().get).toHaveBeenNthCalledWith(2, '', {
         params: { page: 1 },
-        signal: undefined,
-      });
-    });
-
-    it('explicitly forwards the response predicate without leaking arbitrary options or affecting subsequent calls', async () => {
-      service
-        .getInstanceForTest()
-        .get.mockResolvedValue({ data: { data: [] } });
-      const predicate = vi.fn(() => true);
-      const query = { page: 2 };
-      const signal = new AbortController().signal;
-      const options = {
-        handlesErrorResponse: predicate,
-        handledErrorStatuses: [503],
-        unrecognized: 'must-not-forward',
-      };
-      await service.findAllPage(query, signal, options);
-      const config = service.getInstanceForTest().get.mock.calls[0]?.[1];
-      if (!config) throw new Error('expected request config');
-      expect(config).toEqual({
-        params: query,
-        signal,
-        handlesErrorResponse: predicate,
-        handledErrorStatuses: [503],
-      });
-      expect(config.params).toBe(query);
-      expect(config.signal).toBe(signal);
-      expect(config.params).not.toHaveProperty('handlesErrorResponse');
-      expect(config).not.toHaveProperty('headers');
-      expect(predicate).not.toHaveBeenCalled();
-      await service.findAllPage({ page: 3 });
-      expect(service.getInstanceForTest().get).toHaveBeenNthCalledWith(2, '', {
-        params: { page: 3 },
         signal: undefined,
       });
     });

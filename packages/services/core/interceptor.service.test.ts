@@ -1,15 +1,3 @@
-import { GENERATION_ENTRY_HEADER } from '@genfeedai/contracts/interfaces/content/generation-entry.interface';
-import { getGenerationEntryHeaders } from '@services/core/generation-entry-headers';
-
-vi.mock('@services/core/generation-entry-headers', () => ({
-  getGenerationEntryHeaders: vi.fn(() => ({})),
-}));
-
-import {
-  ORGANIZATION_CONTEXT_HEADER,
-  UNATTRIBUTED_FORWARDED_HEADER,
-  UNATTRIBUTED_FORWARDED_VALUE,
-} from '@genfeedai/contracts/constants';
 import type { IHttpRequestOptions } from '@genfeedai/contracts/interfaces/utils/http-request-options.interface';
 import { EnvironmentService } from '@services/core/environment.service';
 import {
@@ -50,18 +38,6 @@ class TestHTTPService extends HTTPBaseService {
   }
 }
 class OtherTestHTTPService extends HTTPBaseService {}
-
-function runRequestInterceptor(
-  target: HTTPBaseService,
-  config: InternalAxiosRequestConfig,
-): InternalAxiosRequestConfig {
-  const { handleRequest } = target as unknown as {
-    handleRequest: (
-      request: InternalAxiosRequestConfig,
-    ) => InternalAxiosRequestConfig;
-  };
-  return handleRequest(config);
-}
 class MultiArgHTTPService extends HTTPBaseService {
   public readonly organizationId: string;
 
@@ -94,18 +70,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it('sends the renderer entry header alongside existing authorization', () => {
-    vi.mocked(getGenerationEntryHeaders).mockReturnValue({
-      [GENERATION_ENTRY_HEADER]: 'desktop',
-    });
-    const result = runRequestInterceptor(service, {
-      headers: {},
-    } as InternalAxiosRequestConfig);
-    expect(result.headers[GENERATION_ENTRY_HEADER]).toBe('desktop');
-    expect(result.headers.Authorization).toBe(`Bearer ${mockToken}`);
-    vi.mocked(getGenerationEntryHeaders).mockReturnValue({});
   });
 
   describe('constructor', () => {
@@ -346,33 +310,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
       expect(result.headers['x-genfeed-organization-id']).toBeUndefined();
     });
 
-    it('declares the visitor unknown on server-side requests', () => {
-      const config: InternalAxiosRequestConfig = {
-        headers: {},
-      } as InternalAxiosRequestConfig;
-
-      const result = runRequestInterceptor(service, config);
-
-      expect(result.headers[UNATTRIBUTED_FORWARDED_HEADER]).toBe(
-        UNATTRIBUTED_FORWARDED_VALUE,
-      );
-    });
-
-    it('leaves browser requests unmarked', () => {
-      vi.stubGlobal('window', {});
-      try {
-        const config: InternalAxiosRequestConfig = {
-          headers: {},
-        } as InternalAxiosRequestConfig;
-
-        const result = runRequestInterceptor(service, config);
-
-        expect(result.headers[UNATTRIBUTED_FORWARDED_HEADER]).toBeUndefined();
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    });
-
     it('creates abort controller if not exists', () => {
       const config: InternalAxiosRequestConfig = {
         headers: {},
@@ -471,38 +408,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
         isAuthError: true,
         message: 'Authentication failed. Please sign in again.',
       });
-    });
-
-    it('rejects a 502 HeyGen credentials failure with its error code and no auth flag', async () => {
-      const data = {
-        errors: [
-          {
-            code: 'HEYGEN_CREDENTIALS_INVALID',
-            detail: 'Reconnect the integration in Settings and try again.',
-            status: '502',
-          },
-        ],
-      };
-      const error: Partial<AxiosError> = {
-        config: {} as InternalAxiosRequestConfig,
-        isAxiosError: true,
-        message: 'Request failed with status code 502',
-        name: 'AxiosError',
-        response: {
-          config: {} as InternalAxiosRequestConfig,
-          data,
-          headers: {},
-          status: 502,
-          statusText: 'Bad Gateway',
-        },
-        toJSON: () => ({}),
-      };
-
-      const rejection = await service
-        .handleError(error as AxiosError)
-        .catch((caught: unknown) => caught);
-      expect(rejection).toEqual(data);
-      expect(rejection).not.toHaveProperty('isAuthError');
     });
 
     it('sanitizes errors in production', async () => {
@@ -747,99 +652,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
     });
   });
 
-  describe('out-of-credits responses in the browser', () => {
-    function creditsError(code: string): Partial<AxiosError> {
-      return {
-        code: 'ERR_BAD_REQUEST',
-        config: {
-          baseURL: mockBaseURL,
-          method: 'POST',
-          url: '/images',
-        } as InternalAxiosRequestConfig,
-        isAxiosError: true,
-        message: 'Request failed with status code 422',
-        name: 'AxiosError',
-        response: {
-          config: {} as InternalAxiosRequestConfig,
-          data: {
-            errors: [
-              {
-                code,
-                detail: 'Insufficient credits: 10 required, 0 available',
-                status: '422',
-                title: 'Business Logic Error',
-              },
-            ],
-          },
-          headers: {},
-          status: 422,
-          statusText: 'Unprocessable Entity',
-        },
-        toJSON: () => ({}),
-      };
-    }
-
-    async function withBrowserWindow(run: () => Promise<void>) {
-      const previousWindow = (globalThis as { window?: unknown }).window;
-      const productionDescriptor = Object.getOwnPropertyDescriptor(
-        EnvironmentService,
-        'isProduction',
-      );
-      (globalThis as { window?: unknown }).window = {};
-      Object.defineProperty(EnvironmentService, 'isProduction', {
-        configurable: true,
-        value: true,
-      });
-      try {
-        await run();
-      } finally {
-        if (productionDescriptor) {
-          Object.defineProperty(
-            EnvironmentService,
-            'isProduction',
-            productionDescriptor,
-          );
-        }
-        if (previousWindow === undefined) {
-          delete (globalThis as { window?: unknown }).window;
-        } else {
-          (globalThis as { window?: unknown }).window = previousWindow;
-        }
-      }
-    }
-
-    it('opens the credits prompt and still rejects for the caller', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { ModalEnum } = await import('@genfeedai/contracts');
-
-      await withBrowserWindow(async () => {
-        const error = creditsError('INSUFFICIENT_CREDITS');
-        await expect(service.handleError(error as AxiosError)).rejects.toEqual(
-          error.response?.data,
-        );
-        expect(openModal).toHaveBeenCalledWith(ModalEnum.CREDITS_REQUIRED);
-      });
-    });
-
-    it('leaves other business errors to their surface', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { ModalEnum } = await import('@genfeedai/contracts');
-
-      await withBrowserWindow(async () => {
-        await expect(
-          service.handleError(
-            creditsError('BUSINESS_LOGIC_ERROR') as AxiosError,
-          ),
-        ).rejects.toBeDefined();
-        expect(openModal).not.toHaveBeenCalledWith(ModalEnum.CREDITS_REQUIRED);
-      });
-    });
-  });
-
   describe('request-local handled HTTP statuses in the browser', () => {
     let productionDescriptor: PropertyDescriptor | undefined;
     beforeEach(() => {
@@ -902,7 +714,7 @@ describe('HTTPBaseService (InterceptorService)', () => {
           headers: {},
           url: '/test',
           handledErrorStatuses,
-        } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
+        } as InternalAxiosRequestConfig & IHttpRequestOptions;
         const data = {
           errors: [{ status: String(status), detail: 'Unavailable' }],
         };
@@ -930,273 +742,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
         else expect(openModal).not.toHaveBeenCalled();
       },
     );
-
-    it.each([true, false, undefined, 1, 'true', {}])(
-      'only literal true from a response predicate suppresses the modal (%s)',
-      async (value) => {
-        const { openModal } = await import(
-          '@genfeedai/helpers/ui/modal/modal.helper'
-        );
-        const { setErrorDebugInfo } = await import(
-          '@services/core/error-debug-store'
-        );
-        const predicate = vi.fn(() => value);
-        const config = {
-          url: '/test',
-          headers: {},
-          handlesErrorResponse: predicate,
-        } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-        const data = {
-          errors: [{ status: '409', detail: 'Conflict fixture' }],
-        };
-        const error = {
-          config,
-          message: 'Request failed',
-          response: { status: 409, data },
-        } as AxiosError;
-        await expect(service.handleError(error)).rejects.toBe(data);
-        expect(predicate).toHaveBeenCalledOnce();
-        expect(predicate).toHaveBeenCalledWith({ status: 409, data });
-        expect(setErrorDebugInfo).toHaveBeenCalledWith(
-          expect.objectContaining({ response: { data }, status: 409 }),
-        );
-        expect(openModal).toHaveBeenCalledTimes(value === true ? 0 : 1);
-      },
-    );
-    it.each([undefined, null, 'malformed', 42, {}])(
-      'fails closed for a missing/nonfunction response policy (%s)',
-      async (policy) => {
-        const { openModal } = await import(
-          '@genfeedai/helpers/ui/modal/modal.helper'
-        );
-        const data = { errors: [{ detail: 'Conflict fixture' }] };
-        const config = {
-          headers: {},
-          handlesErrorResponse: policy,
-        } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-        const error = {
-          config,
-          message: 'Request failed',
-          response: { status: 409, data },
-        } as AxiosError;
-        await expect(service.handleError(error)).rejects.toBe(data);
-        expect(openModal).toHaveBeenCalledOnce();
-      },
-    );
-    it('contains a throwing presentation predicate without replacing rejection or debug capture', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { setErrorDebugInfo } = await import(
-        '@services/core/error-debug-store'
-      );
-      const data = { errors: [{ detail: 'Original failure' }] };
-      const config = {
-        headers: {},
-        handlesErrorResponse: () => {
-          throw new Error('policy failed');
-        },
-      } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-      await expect(
-        service.handleError({
-          config,
-          message: 'Request failed',
-          response: { status: 409, data },
-        } as AxiosError),
-      ).rejects.toBe(data);
-      expect(openModal).toHaveBeenCalledOnce();
-      expect(setErrorDebugInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ response: { data } }),
-      );
-    });
-    it('retains handled-status policy when the response predicate rejects the presentation exemption', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const data = { errors: [{ detail: 'Unavailable' }] };
-      const config = {
-        headers: {},
-        handledErrorStatuses: [503],
-        handlesErrorResponse: () => false,
-      } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-      await expect(
-        service.handleError({
-          config,
-          message: 'Request failed',
-          response: { status: 503, data },
-        } as AxiosError),
-      ).rejects.toBe(data);
-      expect(openModal).not.toHaveBeenCalled();
-    });
-    it('cancels before invoking policy, capturing debug data or opening a modal', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { setErrorDebugInfo } = await import(
-        '@services/core/error-debug-store'
-      );
-      const predicate = vi.fn(() => true);
-      const config = {
-        handlesErrorResponse: predicate,
-      } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-      await expect(
-        service.handleError({
-          code: 'ERR_CANCELED',
-          config,
-          message: 'canceled',
-        } as AxiosError),
-      ).rejects.toEqual({ isCancelled: true, silent: true });
-      expect(predicate).not.toHaveBeenCalled();
-      expect(setErrorDebugInfo).not.toHaveBeenCalled();
-      expect(openModal).not.toHaveBeenCalled();
-    });
-    it.each([undefined, '409', Number.NaN, Number.POSITIVE_INFINITY])(
-      'does not invoke response policy for an unknown HTTP status (%s)',
-      async (status) => {
-        const predicate = vi.fn(() => true);
-        const data = { errors: [{ detail: 'Original failure' }] };
-        const config = {
-          handlesErrorResponse: predicate,
-        } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-        await expect(
-          service.handleError({
-            config,
-            message: 'Request failed',
-            response: { status, data },
-          } as unknown as AxiosError),
-        ).rejects.toBe(data);
-        expect(predicate).not.toHaveBeenCalled();
-      },
-    );
-    it.each([true, false])(
-      'keeps production safe pass-through/sanitization equivalent (safe=%s)',
-      async (safe) => {
-        const { openModal } = await import(
-          '@genfeedai/helpers/ui/modal/modal.helper'
-        );
-        const { setErrorDebugInfo } = await import(
-          '@services/core/error-debug-store'
-        );
-        Object.defineProperty(EnvironmentService, 'isProduction', {
-          configurable: true,
-          value: true,
-        });
-        const predicate = vi.fn(() => true);
-        const data = {
-          errors: [
-            {
-              status: '409',
-              detail: safe
-                ? 'Safe conflict'
-                : 'Internal stack\nprivate diagnostic',
-            },
-          ],
-        };
-        const config = {
-          handlesErrorResponse: predicate,
-        } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-        const error = {
-          config,
-          message: 'Request failed',
-          response: { status: 409, statusText: 'Conflict', data },
-        } as AxiosError;
-        if (safe) await expect(service.handleError(error)).rejects.toBe(data);
-        else
-          await expect(service.handleError(error)).rejects.toMatchObject({
-            message: 'Request failed with status 409 (Conflict)',
-            status: 409,
-            statusText: 'Conflict',
-          });
-        expect(predicate).not.toHaveBeenCalled();
-        expect(openModal).not.toHaveBeenCalled();
-        expect(setErrorDebugInfo).toHaveBeenCalledWith(
-          expect.objectContaining({ response: { data } }),
-        );
-      },
-    );
-    it('keeps auth rejection under a response presentation policy', async () => {
-      const data = { errors: [{ detail: 'Unauthorized' }] };
-      const config = {
-        handlesErrorResponse: () => true,
-      } as unknown as InternalAxiosRequestConfig & IHttpRequestOptions;
-      await expect(
-        service.handleError({
-          config,
-          message: 'Request failed',
-          response: { status: 401, data },
-        } as AxiosError),
-      ).rejects.toMatchObject({ isAuthError: true });
-    });
-    it('preserves predicate metadata through real Axios merging without request/default leakage', async () => {
-      const realAxios = await vi.importActual<typeof import('axios')>('axios');
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { setErrorDebugInfo } = await import(
-        '@services/core/error-debug-store'
-      );
-      const mockedFactory = vi.mocked(axios.create).getMockImplementation();
-      const configs: Array<InternalAxiosRequestConfig & IHttpRequestOptions> =
-        [];
-      const data = { errors: [{ status: '409', detail: 'Conflict fixture' }] };
-      vi.mocked(axios.create).mockImplementation((config) =>
-        realAxios.default.create({
-          ...config,
-          adapter: async (request) => {
-            configs.push(request);
-            throw new realAxios.AxiosError(
-              'Request failed',
-              'ERR_BAD_RESPONSE',
-              request,
-              undefined,
-              {
-                config: request,
-                data,
-                headers: {},
-                status: 409,
-                statusText: 'Conflict',
-              },
-            );
-          },
-        }),
-      );
-      try {
-        setRequestOrganizationId('org-policy');
-        const realService = new TestHTTPService(mockBaseURL, mockToken);
-        const predicate = vi.fn(() => true);
-        const signal = new AbortController().signal;
-        const params = { revision: 2 };
-        await expect(
-          realService.requestForTest({
-            handlesErrorResponse: predicate,
-            params,
-            signal,
-            headers: { 'X-Fixture': 'preserved' },
-          }),
-        ).rejects.toBe(data);
-        expect(openModal).not.toHaveBeenCalled();
-        await expect(realService.requestForTest({})).rejects.toBe(data);
-        expect(openModal).toHaveBeenCalledOnce();
-        expect(setErrorDebugInfo).toHaveBeenCalledTimes(2);
-        expect(configs[0]?.handlesErrorResponse).toBe(predicate);
-        expect(configs[1]?.handlesErrorResponse).toBeUndefined();
-        expect(configs[0]?.params).toEqual(params);
-        expect(configs[0]?.data).toBeUndefined();
-        expect(configs[0]?.headers).toMatchObject({
-          Authorization: `Bearer ${mockToken}`,
-          'X-Fixture': 'preserved',
-          [ORGANIZATION_CONTEXT_HEADER]: 'org-policy',
-        });
-        expect(configs[0]?.headers).not.toHaveProperty('handlesErrorResponse');
-        expect(configs[0]?.params).not.toHaveProperty('handlesErrorResponse');
-        expect(configs[0]?.timeout).toBe(HTTP_REQUEST_TIMEOUT_MS);
-        expect(configs[0]?.signal).not.toBe(signal);
-        expect(configs[0]?.signal?.aborted).toBe(false);
-      } finally {
-        if (mockedFactory)
-          vi.mocked(axios.create).mockImplementation(mockedFactory);
-      }
-    });
 
     it('preserves custom config through real Axios merging without leaking it between requests', async () => {
       const realAxios = await vi.importActual<typeof import('axios')>('axios');
@@ -1250,60 +795,4 @@ describe('HTTPBaseService (InterceptorService)', () => {
       }
     });
   });
-
-  it.each(['safe detail', 'long '.repeat(50), 'multiline\ndetail'])(
-    'retains only bounded IDs through production handling for %j',
-    async (detail) => {
-      const descriptor = Object.getOwnPropertyDescriptor(
-        EnvironmentService,
-        'isProduction',
-      );
-      Object.defineProperty(EnvironmentService, 'isProduction', {
-        configurable: true,
-        value: true,
-      });
-      const responseData = {
-        errors: [
-          {
-            code: 'VIDEO_INPUT',
-            status: '422',
-            detail,
-            meta: {
-              persistedVideoIngredientIds: ['saved'],
-              privateProvider: 'private',
-            },
-          },
-        ],
-      };
-      const error = {
-        response: {
-          status: 422,
-          statusText: 'Unprocessable Entity',
-          data: responseData,
-        },
-        config: {},
-      } as AxiosError;
-      const target = service as unknown as {
-        handleError: (error: AxiosError) => Promise<never>;
-      };
-      let caught: unknown;
-      try {
-        await target.handleError(error);
-      } catch (value) {
-        caught = value;
-      }
-      if (detail === 'safe detail') expect(caught).toBe(responseData);
-      else {
-        expect(caught).toBeInstanceOf(Error);
-        expect(caught).toMatchObject({
-          status: 422,
-          persistedVideoIngredientIds: ['saved'],
-        });
-        expect(JSON.stringify(caught)).not.toContain('privateProvider');
-        expect(JSON.stringify(caught)).not.toContain(detail);
-      }
-      if (descriptor)
-        Object.defineProperty(EnvironmentService, 'isProduction', descriptor);
-    },
-  );
 });

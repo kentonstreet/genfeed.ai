@@ -213,19 +213,6 @@ export abstract class BaseService<
     document: JsonApiResponseDocument,
   ): Promise<IPaginatedResponse<T>> => {
     const items = await this.mapMany(document);
-    const cursor = document.links?.cursor;
-    if (cursor) {
-      return {
-        hasNext: cursor.hasMore,
-        hasPrevious: false,
-        items,
-        nextCursor: cursor.nextCursor,
-        page: 1,
-        pageSize: cursor.limit,
-        total: items.length,
-        totalPages: 1,
-      };
-    }
     const pagination = document.links?.pagination;
     const page = pagination?.page ?? 1;
     const pageSize = pagination?.limit ?? items.length;
@@ -397,9 +384,6 @@ export abstract class BaseService<
       signal,
       ...(options?.handledErrorStatuses !== undefined
         ? { handledErrorStatuses: options.handledErrorStatuses }
-        : {}),
-      ...(options?.handlesErrorResponse !== undefined
-        ? { handlesErrorResponse: options.handlesErrorResponse }
         : {}),
     };
     return this.executeWithErrorHandling(
