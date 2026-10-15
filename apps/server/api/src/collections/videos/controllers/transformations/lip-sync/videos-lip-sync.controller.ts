@@ -15,13 +15,14 @@ import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { serializeSingle } from '@api/helpers/utils/response/response.util';
 import { WebSocketPaths } from '@api/helpers/utils/websocket/websocket.util';
-import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
+import { ByokService } from '@api/services/byok/byok.service';
 import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
 import { AuthorizedMediaUrlService } from '@api/services/media-urls/authorized-media-url.service';
 import { NotificationsPublisherService } from '@api/services/notifications/publisher/notifications-publisher.service';
 import { FailedGenerationService } from '@api/shared/services/failed-generation/failed-generation.service';
 import { SharedService } from '@api/shared/services/shared/shared.service';
 import {
+  ByokProvider,
   categoryToPlural,
   IngredientCategory,
   IngredientOrigin,
@@ -56,6 +57,7 @@ export class VideosLipSyncController {
 
   constructor(
     private readonly avatarBilling: AvatarVideoBillingService,
+    private readonly byokService: ByokService,
     private readonly configService: ConfigService,
     private readonly failedGenerationService: FailedGenerationService,
     private readonly heygenService: HeyGenService,
@@ -92,9 +94,7 @@ export class VideosLipSyncController {
   // Priced on the per-second heygen/avatar row at the voice ingredient's
   // measured length. The hold carries the frozen quote; the HeyGen webhook
   // settles it to the duration HeyGen returns. No @Credits decorator: that
-  // path would also deduct a flat credit on the response. One HeyGen
-  // connection decides who pays and which key renders, so a transient key
-  // lookup cannot charge the platform rate for a render on the customer key.
+  // path would also deduct a flat credit on the response.
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async createLipSyncVideo(
     @Req() request: Request,
@@ -105,7 +105,6 @@ export class VideosLipSyncController {
     let ingredientId: string | undefined;
     let billing: GenerationBillingRequest | undefined;
     let providerAccepted = false;
-    let providerSubmissionStarted = false;
 
     try {
       const imageIngredient = await this.resolveImageIngredient(
@@ -125,21 +124,15 @@ export class VideosLipSyncController {
         createLipSyncDto.voice,
         user.organizationId,
       );
-      const connection = await this.heygenService.resolveOrganizationConnection(
+      const heygenByokKey = await this.byokService.resolveApiKey(
         user.organizationId,
-      );
-      const sources = await this.resolveLipSyncSources(
-        user,
-        imageIngredient,
-        audioIngredient,
-        url,
+        ByokProvider.HEYGEN,
       );
       const funded = await this.avatarBilling.fundLipSync({
         audioIngredientId: String(audioIngredient.id),
-        audioUrl: sources.audioUrl,
         brandId: imageIngredient.brandId ?? user.brandId,
         organizationId: user.organizationId,
-        useCustomerKey: connection.binding.kind === 'byok',
+        useCustomerKey: Boolean(heygenByokKey?.apiKey),
         userId: user.userId ?? user.id,
       });
       billing = funded.request;
@@ -166,14 +159,13 @@ export class VideosLipSyncController {
           ingredientId,
         );
       }
-      providerSubmissionStarted = true;
-      const heygenVideoId = await this.heygenService.generatePhotoAvatarVideo(
+      const heygenVideoId = await this.dispatchLipSyncGeneration(
+        user,
+        imageIngredient,
+        audioIngredient,
         ingredientId,
-        sources.photoUrl,
-        sources.audioUrl,
-        user.organizationId,
-        user.userId ?? user.id,
-        connection.apiKey,
+        url,
+        heygenByokKey?.apiKey,
       );
       providerAccepted = true;
       await this.metadataService.patch(
@@ -191,20 +183,9 @@ export class VideosLipSyncController {
     } catch (error: unknown) {
       this.loggerService.error(`${url} failed`, error);
 
-      // Fail the output and return its hold only when HeyGen never got the
-      // job or rejected it. A submission that timed out or dropped may still
-      // render, so its hold stays for the webhook or the ceiling recovery.
-      const isRejected = error instanceof HeyGenSubmissionRejectedError;
-      if (
-        ingredientId &&
-        !providerAccepted &&
-        (!providerSubmissionStarted || isRejected)
-      ) {
-        if (isRejected)
-          await this.avatarBilling.recordSubmissionRejection(
-            ingredientId,
-            user.organizationId,
-          );
+      // If ingredient was created but HeyGen did not accept the job, mark it
+      // failed and return the output hold. An accepted job settles on the webhook.
+      if (ingredientId && !providerAccepted) {
         const websocketUrl = WebSocketPaths.video(ingredientId);
         await this.failedGenerationService.handleFailedVideoGeneration(
           this.videosService,
@@ -321,13 +302,14 @@ export class VideosLipSyncController {
     }
   }
 
-  /** The image and narration URLs HeyGen fetches, resolved before any hold. */
-  private async resolveLipSyncSources(
+  private async dispatchLipSyncGeneration(
     user: User,
     imageIngredient: IngredientDocument,
     audioIngredient: IngredientDocument,
+    ingredientId: string,
     url: string,
-  ): Promise<{ audioUrl: string; photoUrl: string }> {
+    heygenApiKey?: string,
+  ): Promise<string> {
     const photoUrl = await this.processingMediaUrl(
       user.organizationId,
       String(imageIngredient.id),
@@ -344,6 +326,13 @@ export class VideosLipSyncController {
       imageCategory: imageIngredient.category,
       photoUrl,
     });
-    return { audioUrl, photoUrl };
+    return this.heygenService.generatePhotoAvatarVideo(
+      ingredientId,
+      photoUrl,
+      audioUrl,
+      user.organizationId,
+      user.userId ?? user.id,
+      heygenApiKey,
+    );
   }
 }

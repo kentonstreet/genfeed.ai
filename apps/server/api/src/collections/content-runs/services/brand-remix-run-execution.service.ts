@@ -453,10 +453,8 @@ export class BrandRemixRunExecutionService implements OnModuleInit {
     const { user } = this.runtimeOf(request);
     const credits = state.config.execution?.generationCredits;
     const successfulIds = new Set(state.successfulVariantIds ?? []);
-    // Avatar variants are charged by their own render holds, not the run.
-    const isRunCharged = state.config.draft.output.kind !== 'avatar';
     const settleAmount =
-      credits && !credits.isByokBypass && isRunCharged
+      credits && !credits.isByokBypass
         ? credits.variants.reduce(
             (sum, entry) =>
               successfulIds.has(entry.variantId) ? sum + entry.amount : sum,
@@ -861,11 +859,23 @@ export class BrandRemixRunExecutionService implements OnModuleInit {
     ) as RemixCreditsRequest;
     const originalCredits = (params.request as RemixCreditsRequest)
       .creditsConfig;
-    // An avatar render prices and holds its own credits, never the request's.
-    const isAvatar = params.config.draft.output.kind === 'avatar';
-    variantRequest.creditsConfig = originalCredits
-      ? { ...originalCredits, deferred: true }
-      : undefined;
+    if (params.config.draft.output.kind === 'avatar') {
+      const requestedAmount = originalCredits?.amount;
+      variantRequest.creditsConfig = {
+        ...originalCredits,
+        amount:
+          typeof requestedAmount === 'number' &&
+          Number.isFinite(requestedAmount) &&
+          requestedAmount > 0
+            ? requestedAmount
+            : await this.dispatch.quoteAvatarCredits(params.config),
+        deferred: true,
+      };
+    } else {
+      variantRequest.creditsConfig = originalCredits
+        ? { ...originalCredits, deferred: true }
+        : undefined;
+    }
     try {
       const assetId = await this.dispatch.dispatchVariant({
         brandId: params.brandId,
@@ -898,8 +908,7 @@ export class BrandRemixRunExecutionService implements OnModuleInit {
           groupId: params.runId,
           groupIndex,
           isByokBypass: params.avatarByokBypass,
-          // An avatar render owns its hold (webhook settlement, failure release).
-          settleCreditsExternally: !isAvatar,
+          settleCreditsExternally: true,
         },
         request: variantRequest,
         user: params.generationUser,
