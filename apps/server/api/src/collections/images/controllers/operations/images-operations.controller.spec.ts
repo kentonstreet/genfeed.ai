@@ -1,12 +1,9 @@
-import { ImageGenerationReceiptsService } from '@api/collections/images/services/image-generation-receipts.service';
 import { ModelCreditQuoteService } from '@api/collections/models/services/model-credit-quote.service';
 import { testModelCreditQuote } from '@api/helpers/utils/credits/model-billable-quote.fixture';
 import {
   type MediaPromptEnhancementInput,
   MediaPromptEnhancementService,
 } from '@api/services/harness/media-prompt-enhancement.service';
-import { MediaGenerationReceiptsService } from '@api/services/media-generation-receipts/media-generation-receipts.service';
-import { AuthorizedMediaUrlService } from '@api/services/media-urls/authorized-media-url.service';
 
 vi.mock('@api/services/integrations/klingai/services/klingai.service', () => ({
   KlingAIService: class {},
@@ -76,7 +73,6 @@ import { MetadataService } from '@api/collections/metadata/services/metadata.ser
 import { ModelRegistrationService } from '@api/collections/models/services/model-registration.service';
 import { ModelsService } from '@api/collections/models/services/models.service';
 import { OrganizationSettingsService } from '@api/collections/organization-settings/services/organization-settings.service';
-import { PersonasService } from '@api/collections/personas/services/personas.service';
 import { PromptsService } from '@api/collections/prompts/services/prompts.service';
 import type { TagEntity } from '@api/collections/tags/entities/tag.entity';
 import { TagsService } from '@api/collections/tags/services/tags.service';
@@ -248,10 +244,6 @@ describe('ImagesOperationsController', () => {
       controllers: [ImagesOperationsController],
       providers: [
         {
-          provide: AuthorizedMediaUrlService,
-          useValue: { issueServerPublish: vi.fn() },
-        },
-        {
           provide: ModelCreditQuoteService,
           inject: [ModelsService],
           useFactory: (models: ModelsService) =>
@@ -279,15 +271,6 @@ describe('ImagesOperationsController', () => {
         FalImageGenerationProviderAdapter,
         GenfeedAiImageGenerationProviderAdapter,
         ImageGenerationAdmissionService,
-        {
-          provide: PersonasService,
-          useValue: {
-            resolveCharacterReferences: vi.fn().mockResolvedValue({
-              availableAvatarIds: new Set(),
-              personaId: null,
-            }),
-          },
-        },
         ImageGenerationCreditsService,
         ImageGenerationProviderDispatchService,
         {
@@ -302,15 +285,6 @@ describe('ImagesOperationsController', () => {
           },
         },
         ImageGenerationProviderRegistryService,
-        ImageGenerationReceiptsService,
-        {
-          provide: MediaGenerationReceiptsService,
-          useValue: {
-            open: vi.fn().mockResolvedValue(undefined),
-            recordAccepted: vi.fn().mockResolvedValue(undefined),
-            syncTerminal: vi.fn().mockResolvedValue(undefined),
-          },
-        },
         ImageGenerationService,
         {
           inject: [HiggsFieldService],
@@ -638,7 +612,6 @@ describe('ImagesOperationsController', () => {
       module.get(SharedService),
       module.get(TagsService),
       imageGenerationService,
-      module.get(AuthorizedMediaUrlService),
     );
     brandsService = module.get(BrandsService);
     imagesService = module.get(ImagesService);
@@ -1308,7 +1281,6 @@ describe('ImagesOperationsController', () => {
       );
 
       expect(imagesService.patch).toHaveBeenCalledWith(expect.any(String), {
-        s3Key: 'ingredients/images/test',
         status: IngredientStatus.GENERATED,
       });
     });

@@ -1,32 +1,22 @@
 import { BetterAuthGuard } from '@api/auth/better-auth/guards/better-auth.guard';
 import { ModelCreditQuoteService } from '@api/collections/models/services/model-credit-quote.service';
-import { PersonasService } from '@api/collections/personas/services/personas.service';
-import { CrunVideoGenerationService } from '@api/collections/videos/services/crun-video-generation.service';
 import { WebhooksService } from '@api/endpoints/webhooks/webhooks.service';
-import { PersistedVideoGenerationException } from '@api/helpers/exceptions/persisted-video-generation/persisted-video-generation.exception';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { ModelsGuard } from '@api/helpers/guards/models/models.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
-import { ValidationPipe } from '@api/helpers/pipes/validation.pipe';
 import { testModelCreditQuote } from '@api/helpers/utils/credits/model-billable-quote.fixture';
 import { ReplicatePollQueueService } from '@api/queues/replicate-poll/replicate-poll-queue.service';
 import {
   type MediaPromptEnhancementInput,
   MediaPromptEnhancementService,
 } from '@api/services/harness/media-prompt-enhancement.service';
-import { MediaGenerationReceiptsService } from '@api/services/media-generation-receipts/media-generation-receipts.service';
-import { AuthorizedMediaUrlService } from '@api/services/media-urls/authorized-media-url.service';
-import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
-import { VideoGenerationSerializer } from '@genfeedai/serializers';
 
 vi.mock('@api/collections/templates/services/templates.service', () => ({
   TemplatesService: class {},
 }));
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
 import { AssetsService } from '@api/collections/assets/services/assets.service';
 import { BookmarksService } from '@api/collections/bookmarks/services/bookmarks.service';
@@ -35,7 +25,6 @@ import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { CreditsUtilsService } from '@api/collections/credits/services/credits.utils.service';
 import { GenerationBillingService } from '@api/collections/credits/services/generation-billing.service';
 import type { IngredientDocument } from '@api/collections/ingredients/schemas/ingredient.schema';
-import { IngredientCharacterFilterService } from '@api/collections/ingredients/services/ingredient-character-filter.service';
 import { IngredientGenerationCancellationService } from '@api/collections/ingredients/services/ingredient-generation-cancellation.service';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { MembersService } from '@api/collections/members/services/members.service';
@@ -46,10 +35,9 @@ import { OrganizationSettingsService } from '@api/collections/organization-setti
 import { PromptsService } from '@api/collections/prompts/services/prompts.service';
 import { TemplatesService } from '@api/collections/templates/services/templates.service';
 import { VideosController } from '@api/collections/videos/controllers/videos.controller';
-import { CreateVideoDto } from '@api/collections/videos/dto/create-video.dto';
+import type { CreateVideoDto } from '@api/collections/videos/dto/create-video.dto';
 import type { VideosQueryDto } from '@api/collections/videos/dto/videos-query.dto';
 import { FalVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/fal-video-generation-provider.adapter';
-import { HeyGenVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/heygen-video-generation-provider.adapter';
 import { HiggsFieldVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/higgsfield-video-generation-provider.adapter';
 import { KlingAiVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/klingai-video-generation-provider.adapter';
 import { ReplicateVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/replicate-video-generation-provider.adapter';
@@ -68,7 +56,6 @@ import { ByokService } from '@api/services/byok/byok.service';
 import { CacheService } from '@api/services/cache/cache.service';
 import { FilesClientService } from '@api/services/files-microservice/client/files-client.service';
 import { FalService } from '@api/services/integrations/fal/services/fal.service';
-import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
 import { HiggsFieldService } from '@api/services/integrations/higgsfield/higgsfield.service';
 import { KlingAIService } from '@api/services/integrations/klingai/services/klingai.service';
 import { ReplicateService } from '@api/services/integrations/replicate/services/replicate.service';
@@ -84,11 +71,8 @@ import {
   IngredientCategory,
   IngredientStatus,
   ModelCategory,
-  TagMatchMode,
 } from '@genfeedai/contracts';
 import { MODEL_KEYS } from '@genfeedai/contracts/constants';
-import type { PopulateOption } from '@genfeedai/contracts/interfaces';
-import { testId } from '@helpers/testing/test-id.helper';
 import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
 import { HttpException, HttpStatus, StreamableFile } from '@nestjs/common';
@@ -97,11 +81,6 @@ import type { Response as ExpressResponse } from 'express';
 
 describe('VideosController', () => {
   let controller: VideosController;
-  const mediaConfig = {
-    isAuthorizedMediaDeliveryEnabled: false,
-    ingredientsEndpoint: 'https://cdn.genfeed.ai',
-  };
-  const mediaIssuer = { projectIngredients: vi.fn() };
   let videosService: vi.Mocked<VideosService>;
   let brandsService: vi.Mocked<BrandsService>;
   let votesService: vi.Mocked<VotesService>;
@@ -221,24 +200,12 @@ describe('VideosController', () => {
     key: MODEL_KEYS.KLINGAI_V2,
   };
 
-  const characterFilterService = {
-    buildFilter: vi.fn().mockResolvedValue({}),
-  };
-
   beforeEach(async () => {
     vi.clearAllMocks();
-    characterFilterService.buildFilter.mockResolvedValue({});
-    mediaConfig.isAuthorizedMediaDeliveryEnabled = false;
-    mediaIssuer.projectIngredients.mockReset();
 
     testingModule = await Test.createTestingModule({
       controllers: [VideosController],
       providers: [
-        { provide: AuthorizedMediaUrlService, useValue: mediaIssuer },
-        {
-          provide: IngredientCharacterFilterService,
-          useValue: characterFilterService,
-        },
         {
           provide: ModelCreditQuoteService,
           inject: [ModelsService],
@@ -268,7 +235,9 @@ describe('VideosController', () => {
         },
         {
           provide: ConfigService,
-          useValue: mediaConfig,
+          useValue: {
+            ingredientsEndpoint: 'https://cdn.genfeed.ai',
+          },
         },
         {
           provide: ActivityRecorderService,
@@ -404,7 +373,6 @@ describe('VideosController', () => {
             findOne: vi.fn().mockResolvedValue(mockModelData),
           },
         },
-        { provide: PersonasService, useValue: personasServiceStub() },
         {
           provide: OrganizationSettingsService,
           useValue: {
@@ -515,11 +483,6 @@ describe('VideosController', () => {
         // previous `new VideoGenerationService(...)` pattern silently missed.
         FalVideoGenerationProviderAdapter,
         {
-          provide: HeyGenService,
-          useValue: { generateModelVideo: vi.fn() },
-        },
-        HeyGenVideoGenerationProviderAdapter,
-        {
           inject: [HiggsFieldService],
           provide: HiggsFieldVideoGenerationProviderAdapter,
           useFactory: (higgsFieldService: HiggsFieldService) =>
@@ -530,21 +493,9 @@ describe('VideosController', () => {
         VideoGenerationCompletionService,
         VideoGenerationCreditsService,
         VideoGenerationExecutionService,
-        {
-          provide: MediaGenerationReceiptsService,
-          useValue: {
-            open: vi.fn().mockResolvedValue(undefined),
-            recordAccepted: vi.fn().mockResolvedValue(undefined),
-            syncTerminal: vi.fn().mockResolvedValue(undefined),
-          },
-        },
         VideoGenerationPreparationService,
         VideoGenerationProviderDispatchService,
         VideoGenerationService,
-        {
-          provide: CrunVideoGenerationService,
-          useValue: { generate: vi.fn() },
-        },
       ],
     })
       .overrideGuard(BetterAuthGuard)
@@ -663,27 +614,6 @@ describe('VideosController', () => {
       expect(branch).not.toHaveProperty('organization');
     });
 
-    it('keeps the origin filter in the latest aggregate', async () => {
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        limit: 10,
-        page: 1,
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, {
-        ...latestQuery,
-        origins: ['UPLOADED', 'IMPORTED'],
-      } as unknown as VideosQueryDto);
-
-      const aggregate = videosService.findAll.mock.calls[0][0] as {
-        where: { AND: Array<Record<string, unknown>> };
-      };
-      expect(aggregate.where.AND).toContainEqual({
-        origin: { in: ['UPLOADED', 'IMPORTED'] },
-      });
-    });
-
     it('should cap the latest limit at 50', async () => {
       videosService.findAll.mockResolvedValue({
         docs: [],
@@ -744,116 +674,6 @@ describe('VideosController', () => {
       expect(result.data).toBeDefined();
     });
 
-    it('narrows the list to the characters the brand can use', async () => {
-      const characterId = testId('character');
-      const resolved = { personaId: { in: [characterId] } };
-      characterFilterService.buildFilter.mockResolvedValueOnce(resolved);
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, {
-        ...baseQuery,
-        characters: [characterId],
-      } as VideosQueryDto);
-
-      expect(characterFilterService.buildFilter).toHaveBeenCalledWith({
-        brandId: mockUser.brandId,
-        characterIds: [characterId],
-        organizationId: mockUser.organizationId,
-      });
-      const aggregate = videosService.findAll.mock.calls[0]?.[0] as {
-        where: { AND: Array<Record<string, unknown>> };
-      };
-      expect(aggregate.where.AND).toContainEqual(resolved);
-      expect(aggregate.where.AND[0]).toEqual({
-        organizationId: mockUser.organizationId,
-      });
-    });
-
-    it('resolves availability for the active brand, not a brandId override', async () => {
-      characterFilterService.buildFilter.mockResolvedValueOnce({
-        personaId: { in: [] },
-      });
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, {
-        ...baseQuery,
-        brandId: testId('brand', 2),
-        characters: [testId('character')],
-      } as VideosQueryDto);
-
-      expect(characterFilterService.buildFilter).toHaveBeenCalledWith(
-        expect.objectContaining({ brandId: mockUser.brandId }),
-      );
-    });
-
-    it('filters by tags beside the other filters and loads each row’s tags', async () => {
-      const [first, second] = [testId('tag', 1), testId('tag', 2)];
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, {
-        ...baseQuery,
-        tags: [first, second],
-      } as VideosQueryDto);
-
-      const aggregate = videosService.findAll.mock.calls[0]?.[0] as {
-        include: Record<string, unknown>;
-        where: { AND: Array<Record<string, unknown>> };
-      };
-      expect(aggregate.where.AND).toContainEqual({
-        tags: { some: { id: { in: [first, second] }, isDeleted: false } },
-      });
-      expect(aggregate.where.AND[0]).toEqual({
-        organizationId: mockUser.organizationId,
-      });
-      expect(aggregate.include).toMatchObject({
-        tags: { where: { isDeleted: false } },
-      });
-    });
-
-    it('requires every tag in all mode', async () => {
-      const [first, second] = [testId('tag', 1), testId('tag', 2)];
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, {
-        ...baseQuery,
-        tagMatch: TagMatchMode.ALL,
-        tags: [first, second],
-      } as VideosQueryDto);
-
-      const aggregate = videosService.findAll.mock.calls[0]?.[0] as {
-        where: { AND: Array<Record<string, unknown>> };
-      };
-      expect(aggregate.where.AND).toContainEqual({
-        AND: [
-          { tags: { some: { id: first, isDeleted: false } } },
-          { tags: { some: { id: second, isDeleted: false } } },
-        ],
-      });
-    });
-
-    it('does not resolve characters when none were asked for', async () => {
-      videosService.findAll.mockResolvedValue({
-        docs: [],
-        totalDocs: 0,
-      } as unknown as AggregatePaginateResult<IngredientDocument>);
-
-      await controller.findAll(mockRequest, mockUser, baseQuery);
-
-      expect(characterFilterService.buildFilter).not.toHaveBeenCalled();
-    });
-
     it('should filter by search query', async () => {
       const query: VideosQueryDto = {
         ...baseQuery,
@@ -876,8 +696,8 @@ describe('VideosController', () => {
         where?: {
           AND?: Array<{
             OR?: Array<{
-              metadata?: {
-                label?: { contains?: unknown };
+              'metadata.label'?: {
+                contains?: unknown;
               };
             }>;
           }>;
@@ -885,20 +705,20 @@ describe('VideosController', () => {
       };
       const searchStage = aggregate.where?.AND?.find((condition) =>
         condition.OR?.some(
-          (orCondition) => orCondition.metadata?.label?.contains,
+          (orCondition) => orCondition['metadata.label']?.contains,
         ),
       ) as
         | {
             OR?: Array<{
-              metadata?: {
-                label?: { contains?: unknown };
+              'metadata.label'?: {
+                contains?: unknown;
               };
             }>;
           }
         | undefined;
 
       expect(searchStage).toBeDefined();
-      expect(searchStage?.OR?.[0]?.metadata?.label?.contains).toBe('sunset');
+      expect(searchStage?.OR?.[0]?.['metadata.label']?.contains).toBe('sunset');
     });
 
     it('should filter by status', async () => {
@@ -1003,7 +823,6 @@ describe('VideosController', () => {
       const buildKey = (organization: string) =>
         cacheConfig.keyGenerator({
           params: { videoId: mockVideoId.toString() },
-          query: {},
           user: {
             id: mockUser.id,
             organizationId: organization,
@@ -1011,40 +830,6 @@ describe('VideosController', () => {
         });
 
       expect(buildKey('org-a')).not.toBe(buildKey('org-b'));
-    });
-
-    it('partitions verified selected organizations while preserving actor identity and refusing unverified selection', () => {
-      const cacheConfig = Reflect.getMetadata(
-        'cache',
-        VideosController.prototype.findOne,
-      ) as { keyGenerator: (request: Record<string, unknown>) => string };
-      const user = { ...mockUser, isSuperAdmin: true };
-      const request = {
-        params: { videoId: mockVideoId.toString() },
-        query: { organizationId: 'foreign-a' },
-        user,
-        context: { organizationId: user.organizationId, isSuperAdmin: true },
-      };
-      const first = cacheConfig.keyGenerator(request);
-      request.query.organizationId = 'foreign-b';
-      expect(cacheConfig.keyGenerator(request)).not.toBe(first);
-      expect(request.user).toBe(user);
-      expect(user.organizationId).toBe(mockUser.organizationId);
-      expect(request.query.organizationId).toBe('foreign-b');
-      expect(
-        cacheConfig.keyGenerator({
-          ...request,
-          params: { videoId: 'other-video' },
-        }),
-      ).not.toBe(cacheConfig.keyGenerator(request));
-      expect(
-        cacheConfig.keyGenerator({
-          ...request,
-          user: { ...user, id: 'other-user' },
-        }),
-      ).not.toBe(cacheConfig.keyGenerator(request));
-      request.context.isSuperAdmin = false;
-      expect(() => cacheConfig.keyGenerator(request)).toThrow();
     });
 
     it('should return a single video', async () => {
@@ -1076,55 +861,6 @@ describe('VideosController', () => {
       );
       expect(result).toBeDefined();
       expect(result.data).toMatchObject({ type: 'video' });
-    });
-
-    it('filters populated relations only by fields their Prisma model has', async () => {
-      const schema = readFileSync(
-        resolve(
-          __dirname,
-          '../../../../../../../packages/prisma/prisma/schema.prisma',
-        ),
-        'utf8',
-      );
-      const modelFields = (name: string): Map<string, string> => {
-        const match = schema.match(
-          new RegExp(`\\nmodel ${name} \\{\\n([\\s\\S]*?)\\n\\}`),
-        );
-        expect(match, `model ${name}`).not.toBeNull();
-        return new Map(
-          (match?.[1] ?? '')
-            .split('\n')
-            .map((line) => line.trim().split(/\s+/))
-            .filter(
-              ([field, type]) =>
-                type && !field.startsWith('@') && !field.startsWith('//'),
-            )
-            .map(([field, type]) => [field, type.replace(/[?[\]]/g, '')]),
-        );
-      };
-      const ingredientFields = modelFields('Ingredient');
-
-      await controller.findOne(mockRequest, mockVideoId.toString(), mockUser);
-
-      const populate = videosService.findOne.mock.lastCall?.[1] as
-        | PopulateOption[]
-        | undefined;
-      const metadataOption = populate?.find(
-        (option) => option.path === 'metadata',
-      );
-      expect(metadataOption).toBeDefined();
-      expect(metadataOption).not.toHaveProperty('where');
-      for (const option of populate ?? []) {
-        const target = ingredientFields.get(option.path);
-        expect(target, `Ingredient.${option.path}`).toBeDefined();
-        const targetFields = modelFields(target ?? '');
-        for (const key of Object.keys(option.where ?? {})) {
-          expect(
-            targetFields.has(key),
-            `${target}.${key} filtered by ${option.path}`,
-          ).toBe(true);
-        }
-      }
     });
 
     it('should include vote status', async () => {
@@ -1198,45 +934,6 @@ describe('VideosController', () => {
         body: new ReadableStream(),
         ok: true,
       });
-    });
-
-    it('extracts a free-tier thumbnail from the authorized protected preview', async () => {
-      mediaConfig.isAuthorizedMediaDeliveryEnabled = true;
-      mediaIssuer.projectIngredients.mockResolvedValue([
-        {
-          ingredientId: mockVideoId,
-          grant: {
-            state: 'READY',
-            url: 'https://cdn.example.com/watermarked-video?Signature=fresh',
-          },
-        },
-      ]);
-      await controller.getThumbnail(
-        mockVideoId,
-        mockUser,
-        mockResponse as never,
-      );
-      expect(mediaIssuer.projectIngredients).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: mockOrgId }),
-        [mockVideoId],
-      );
-      expect(filesClientService.generateThumbnail).toHaveBeenCalledWith(
-        'https://cdn.example.com/watermarked-video?Signature=fresh',
-        mockVideoId,
-        undefined,
-        undefined,
-      );
-    });
-
-    it('does no thumbnail rendering while the protected preview is pending', async () => {
-      mediaConfig.isAuthorizedMediaDeliveryEnabled = true;
-      mediaIssuer.projectIngredients.mockResolvedValue([
-        { ingredientId: mockVideoId, grant: { state: 'PENDING', url: null } },
-      ]);
-      await expect(
-        controller.getThumbnail(mockVideoId, mockUser, mockResponse as never),
-      ).rejects.toThrow();
-      expect(filesClientService.generateThumbnail).not.toHaveBeenCalled();
     });
 
     it('should generate and return thumbnail', async () => {
@@ -1391,27 +1088,6 @@ describe('VideosController', () => {
       brandsService.findOne.mockResolvedValue(
         mockBrand as unknown as BrandDocument,
       );
-    });
-
-    it('passes the original serialized HTTP body unchanged through controller and Crun routing', async () => {
-      const body = VideoGenerationSerializer.serialize({
-        model: 'crun/kling/v2-5-turbo-pro',
-        text: 'A bird',
-        crunControls: { contractVersion: 'reviewed', guidanceScale: 0 },
-        crunQuoteId: 'frozen',
-      });
-      const dto = (await new ValidationPipe().transform(body, {
-        type: 'body',
-        metatype: CreateVideoDto,
-      })) as CreateVideoDto;
-      const request = { ...mockRequest, body } as ExpressRequest;
-      const crun = testingModule.get(CrunVideoGenerationService);
-      vi.mocked(crun.generate).mockResolvedValue({
-        data: { type: 'video', id: 'owned', attributes: {} },
-      });
-      await controller.create(request, dto, mockUser);
-      expect(crun.generate).toHaveBeenCalledWith(mockUser, dto, request);
-      expect(request.body).toBe(body);
     });
 
     it('should create a video with KlingAI model', async () => {
@@ -1648,7 +1324,6 @@ describe('VideosController', () => {
       expect(bookmarksService.addGeneratedIngredient).toHaveBeenCalledWith(
         bookmarkId.toString(),
         mockVideoId,
-        mockOrgId.toString(),
       );
     });
 
@@ -1669,25 +1344,13 @@ describe('VideosController', () => {
     });
 
     it('should handle generation failure and cleanup', async () => {
-      const original = new Error('Generation failed');
-      klingAIService.queueGenerateTextToVideo.mockRejectedValue(original);
-
-      const error: unknown = await controller
-        .create(mockRequest, baseCreateDto, mockUser)
-        .catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(PersistedVideoGenerationException);
-      if (!(error instanceof PersistedVideoGenerationException))
-        throw new Error('Expected persisted video generation failure');
-      expect(error.cause).toBe(original);
-      expect(error.persistedVideoIngredientIds).toEqual([mockVideoId]);
-      expect(error.getStatus()).toBe(HttpStatus.INTERNAL_SERVER_ERROR);
-      expect(error.getResponse()).toEqual({
-        title: 'Internal Server Error',
-        detail: 'An unexpected error occurred',
-      });
-      expect(JSON.stringify(error.getResponse())).not.toContain(
-        'Generation failed',
+      klingAIService.queueGenerateTextToVideo.mockRejectedValue(
+        new Error('Generation failed'),
       );
+
+      await expect(
+        controller.create(mockRequest, baseCreateDto, mockUser),
+      ).rejects.toThrow('Generation failed');
 
       expect(
         failedGenerationService.handleFailedVideoGeneration,
@@ -1937,7 +1600,6 @@ beforeAll(async () => {
         useValue: { registerGeneratedOutput: vi.fn() },
       },
       { provide: ModelsService, useValue: { findOne: vi.fn() } },
-      { provide: PersonasService, useValue: personasServiceStub() },
       {
         provide: OrganizationSettingsService,
         useValue: { findOne: vi.fn() },

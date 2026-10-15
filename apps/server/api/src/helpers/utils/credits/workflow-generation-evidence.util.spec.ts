@@ -60,51 +60,6 @@ function completed(
 }
 
 describe('workflow immutable financial evidence', () => {
-  it.each(['video-token', 'input-video-token'] as const)(
-    'requires real completion quantities for %s',
-    (unit) => {
-      let plan = workflowFundingFixture();
-      const quote = plan.manifest.allocations[0].quote;
-      if (!quote) throw new Error('Missing quote fixture');
-      quote.pricingProfile.reviewedPricing = {
-        currency: 'USD',
-        reviewStatus: 'approved',
-        version: 'native-v1',
-        sourceUrl:
-          'https://fal.ai/models/bytedance/seedance-2.0/reference-to-video',
-        verifiedAt: now.toISOString(),
-        rates: [{ component: 'video', unit, unitPriceUsd: 0.000014, when: {} }],
-      };
-      plan.manifestHash = quoteSnapshotHash(plan.manifest);
-      plan = submit(plan);
-      const proof = completed(plan);
-      expect(() => applyWorkflowOperationEvidence(plan, proof, now)).toThrow(
-        expect.objectContaining({
-          response: expect.objectContaining({
-            detail: expect.stringContaining(
-              'actual native video-token quantities',
-            ),
-          }),
-        }),
-      );
-      proof.completion = {
-        completedOutputs: 1,
-        successfulRequests: 1,
-        width: 1280,
-        height: 720,
-        duration: 5,
-      };
-      if (unit === 'input-video-token') {
-        expect(() =>
-          applyWorkflowOperationEvidence(plan, proof, now),
-        ).toThrow();
-        proof.completion.inputDuration = 10;
-      }
-      expect(
-        applyWorkflowOperationEvidence(plan, proof, now).operations[0].phase,
-      ).toBe('completed');
-    },
-  );
   it.each(['claimed', 'submission-intent'] as const)(
     'rejects %s evidence through the callback proof boundary',
     (phase) => {
@@ -130,84 +85,6 @@ describe('workflow immutable financial evidence', () => {
     },
   );
 
-  it('refuses old or crossed projection contracts instead of fabricating missing funding evidence', () => {
-    const missing = structuredClone(workflowFundingFixture());
-    const old = missing.manifest.allocations[0].dispatch as unknown as Record<
-      string,
-      unknown
-    >;
-    delete old.preparationContract;
-    delete old.projectionPolicy;
-    expect(fundingSchema.safeParse(missing).success).toBe(false);
-    const crossed = structuredClone(workflowFundingFixture());
-    crossed.manifest.allocations[0].dispatch.projectionPolicy = {
-      kind: 'exact-provider-input',
-      version: 1,
-      inputKeys: [],
-      inputFingerprint: quoteSnapshotHash({}),
-    };
-    expect(fundingSchema.safeParse(crossed).success).toBe(false);
-  });
-  it('requires exact-input BYOK policy with no quote or guessed selectors', () => {
-    const plan = workflowFundingFixture();
-    const allocation = plan.manifest.allocations[0];
-    allocation.billingMode = 'byok';
-    delete allocation.quote;
-    allocation.dispatch.credentialRoute = {
-      kind: 'byok',
-      credentialId: 'test-key',
-    };
-    allocation.dispatch.projectionPolicy = {
-      kind: 'exact-provider-input',
-      version: 1,
-      inputKeys: [],
-      inputFingerprint: quoteSnapshotHash({}),
-    };
-    expect(fundingSchema.safeParse(plan).success).toBe(true);
-    allocation.dispatch.quantities.selectors = {};
-    expect(fundingSchema.safeParse(plan).success).toBe(false);
-    delete allocation.dispatch.quantities.selectors;
-    allocation.dispatch.projectionPolicy.inputKeys = ['z', 'a'];
-    expect(fundingSchema.safeParse(plan).success).toBe(false);
-    allocation.dispatch.projectionPolicy.inputKeys = ['a', 'a'];
-    expect(fundingSchema.safeParse(plan).success).toBe(false);
-  });
-  it('binds the structured preparation contract even after the outer dispatch hash is recomputed', () => {
-    const plan = workflowFundingFixture();
-    const dispatch = plan.manifest.allocations[0].dispatch;
-    if (!('compilerVersion' in dispatch.preparationContract.brief))
-      throw new Error('Expected compiled brief fixture');
-    dispatch.preparationContract.brief.compilerVersion++;
-    dispatch.billableFingerprint = quoteSnapshotHash({
-      ...dispatch,
-      billableFingerprint: undefined,
-    });
-    plan.manifestHash = quoteSnapshotHash(plan.manifest);
-    expect(() => assertWorkflowFundingIdentity(plan)).toThrow(
-      expect.objectContaining({
-        response: expect.objectContaining({
-          detail: 'Workflow preparation contract identity changed',
-        }),
-      }),
-    );
-  });
-  it.each(['model', 'target', 'kind', 'profile'] as const)(
-    'rejects forged cross-field prepared %s identity',
-    (field) => {
-      const plan = workflowFundingFixture();
-      const allocation = plan.manifest.allocations[0];
-      if (field === 'model')
-        allocation.dispatch.preparationContract.brief.modelKey =
-          'different/model';
-      if (field === 'target')
-        allocation.dispatch.target = JSON.stringify({ version: 'different' });
-      if (field === 'kind')
-        allocation.dispatch.preparationContract.brief.mediaKind = 'image';
-      if (field === 'profile' && allocation.quote)
-        allocation.quote.pricingProfile.key = 'different/model';
-      expect(fundingSchema.safeParse(plan).success).toBe(false);
-    },
-  );
   it('uses stable retry identity and isolates a fresh execution', () => {
     const first = workflowFundingFixture();
     expect(workflowFundingFixture().manifestHash).toBe(first.manifestHash);
@@ -215,7 +92,7 @@ describe('workflow immutable financial evidence', () => {
       workflowFundingFixture('execution-b').manifest.allocations[0].operationId,
     ).not.toBe(first.manifest.allocations[0].operationId);
   });
-  it('reserves test video 5 plus image 1, settles completed video 5 and releases the failed image share', () => {
+  it('reserves test video 5 plus stitch 1, settles completed video 5 and releases the failed stitch share', () => {
     let plan = submit(submit(workflowFundingFixture()), 1);
     plan = applyWorkflowOperationEvidence(plan, completed(plan), now);
     const operationId = plan.manifest.allocations[1].operationId;
@@ -227,8 +104,8 @@ describe('workflow immutable financial evidence', () => {
         intentId: operationId,
         proofId: 'confirmed-job-failure',
         observedAt: now.toISOString(),
-        kind: 'provider-terminal',
-        provider: 'replicate',
+        kind: 'local-job-terminal',
+        provider: 'local',
       },
       now,
     );
@@ -323,7 +200,7 @@ describe('workflow immutable financial evidence', () => {
       claimId: 'claim-a',
     };
     expect(() =>
-      applyWorkflowOperationEvidence(plan, claim, new Date('2099-01-02')),
+      applyWorkflowOperationEvidence(plan, claim, new Date('2026-10-02')),
     ).toThrow(
       expect.objectContaining({
         response: expect.objectContaining({

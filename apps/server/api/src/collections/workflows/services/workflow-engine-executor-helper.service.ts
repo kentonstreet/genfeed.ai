@@ -3,12 +3,10 @@ import { MetadataEntity } from '@api/collections/metadata/entities/metadata.enti
 import { MetadataService } from '@api/collections/metadata/services/metadata.service';
 import { WorkflowNodeContinuationService } from '@api/collections/workflows/services/workflow-node-continuation.service';
 import { scopedWhere } from '@api/index';
-import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
 import { isReplicateSubmissionRejected } from '@api/services/integrations/replicate/errors/replicate-provider.error';
 import { SharedService } from '@api/shared/services/shared/shared.service';
 import {
   IngredientCategory,
-  IngredientOrigin,
   IngredientStatus,
   MetadataExtension,
   TransformationCategory,
@@ -109,7 +107,6 @@ export class WorkflowEngineExecutorHelperService {
     model?: string;
     negativePrompt?: string;
     parentIngredientId?: string;
-    personaId?: string | null;
     providerData?: Record<string, unknown>;
     references?: Array<string | undefined>;
     transformations?: TransformationCategory[];
@@ -127,7 +124,6 @@ export class WorkflowEngineExecutorHelperService {
 
     const { ingredientData, metadataData } =
       await this.sharedService.createMediaDocumentsInternal({
-        origin: IngredientOrigin.GENERATED,
         brandId: args.brandId,
         category: args.category,
         extension: args.extension,
@@ -137,7 +133,6 @@ export class WorkflowEngineExecutorHelperService {
         negativePrompt: args.negativePrompt,
         organizationId: args.organizationId,
         parentId: args.parentIngredientId || undefined,
-        personaId: args.personaId,
         providerData: args.providerData,
         sourceIds: (args.references ?? []).filter(
           (reference): reference is string => typeof reference === 'string',
@@ -181,22 +176,7 @@ export class WorkflowEngineExecutorHelperService {
     runProvider: (
       ingredientId: string,
       continuationId: string,
-    ) => Promise<
-      | string
-      | {
-          externalId: string;
-          completionQuantities?: {
-            width?: number;
-            height?: number;
-            duration?: number;
-          };
-        }
-    >;
-    /** Runs only after durable provider acceptance; remote output uses canonical file ingestion. */
-    onProviderAccepted?: (
-      output: PendingWorkflowOutput,
-      continuationId: string,
-    ) => Promise<void>;
+    ) => Promise<string>;
     resultUrl: (ingredientId: string) => string;
   }): Promise<PendingWorkflowOutput> {
     if (!this.metadataService) {
@@ -214,25 +194,13 @@ export class WorkflowEngineExecutorHelperService {
       ingredientId: pendingOutput.ingredientId,
     });
     let externalId: string;
-    let completionQuantities:
-      | { width?: number; height?: number; duration?: number }
-      | undefined;
     try {
-      const accepted = await args.runProvider(
+      externalId = await args.runProvider(
         pendingOutput.ingredientId,
         continuation.continuationId,
       );
-      externalId =
-        typeof accepted === 'string' ? accepted : accepted.externalId;
-      completionQuantities =
-        typeof accepted === 'string'
-          ? undefined
-          : accepted.completionQuantities;
     } catch (error: unknown) {
-      if (
-        isReplicateSubmissionRejected(error) ||
-        error instanceof HeyGenSubmissionRejectedError
-      ) {
+      if (isReplicateSubmissionRejected(error)) {
         await this.failProviderContinuationSubmission({
           continuationId: continuation.continuationId,
           error: error instanceof Error ? error.message : String(error),
@@ -247,7 +215,6 @@ export class WorkflowEngineExecutorHelperService {
     await this.markProviderContinuationSubmitted({
       continuationId: continuation.continuationId,
       externalId,
-      ...(completionQuantities ? { completionQuantities } : {}),
       organizationId: args.continuation.context.organizationId,
     });
 
@@ -264,8 +231,6 @@ export class WorkflowEngineExecutorHelperService {
         }),
       )
       .catch(() => undefined);
-
-    await args.onProviderAccepted?.(pendingOutput, continuation.continuationId);
 
     return pendingOutput;
   }
@@ -302,26 +267,11 @@ export class WorkflowEngineExecutorHelperService {
     continuationId: string;
     externalId: string;
     organizationId: string;
-    completionQuantities?: {
-      width?: number;
-      height?: number;
-      duration?: number;
-    };
   }): Promise<void> {
     if (!this.continuationService) {
       throw new Error('Workflow continuation service is not available');
     }
     await this.continuationService.markProviderSubmitted(input);
-  }
-
-  async recordFalOutputMeasurement(
-    input: Parameters<
-      WorkflowNodeContinuationService['recordFalOutputMeasurement']
-    >[0],
-  ): Promise<void> {
-    if (!this.continuationService)
-      throw new Error('Workflow continuation service is not available');
-    await this.continuationService.recordFalOutputMeasurement(input);
   }
 
   async failProviderContinuationSubmission(input: {
@@ -419,7 +369,6 @@ export class WorkflowEngineExecutorHelperService {
     id: string;
     brandId: string;
     category: IngredientCategory;
-    objectKey?: string;
     storageKey: string;
     storageType: string;
   }> {
@@ -457,9 +406,6 @@ export class WorkflowEngineExecutorHelperService {
       typeof asset.s3Key === 'string'
         ? asset.s3Key.match(/^ingredients\/([^/]+)\/(.+)$/)
         : null;
-    if (this.configService.isAuthorizedMediaDeliveryEnabled && !stored) {
-      throw new Error('Media asset has no trusted stored object key');
-    }
     const storageType =
       stored?.[1] ??
       (
@@ -484,7 +430,6 @@ export class WorkflowEngineExecutorHelperService {
       id,
       brandId: asset.brandId,
       category: asset.category as IngredientCategory,
-      ...(stored ? { objectKey: stored[0] } : {}),
       storageKey: stored?.[2] ?? id,
       storageType,
     };
@@ -506,21 +451,6 @@ export class WorkflowEngineExecutorHelperService {
     }
 
     return IngredientCategory.IMAGE;
-  }
-
-  /** True when the id is a live Library asset of this organization. */
-  async hasOrganizationAsset(
-    id: string,
-    organizationId: string,
-  ): Promise<boolean> {
-    if (!this.ingredientsService) {
-      return false;
-    }
-    return Boolean(
-      await this.ingredientsService.findOne(
-        scopedWhere(organizationId, { id }),
-      ),
-    );
   }
 
   extractIngredientId(value: unknown): string | undefined {

@@ -80,8 +80,6 @@ export interface ICreditReservation extends IBaseEntity {
   billingAccountId: string;
   organizationId: string;
   actorUserId: string | null;
-  /** Brand the hold is attributed to; null for org-level spend. */
-  brandId?: string | null;
   amount: number;
   settledAmount: number | null;
   status: CreditReservationStatus;
@@ -99,8 +97,6 @@ export interface IReserveCreditsInput {
   workflowExecutionId?: string;
   organizationId: string;
   actorUserId: string;
-  /** Brand the spend is attributed to; omit for org-level (brandless) spend. */
-  brandId?: string | null;
   amount: number;
   idempotencyKey: string;
   workloadType?: string;
@@ -118,16 +114,12 @@ export interface IBindCreditReservationOutputInput {
   reservationId: string;
   /** The output's ingredient; the bound hold is found by it. */
   workloadId: string;
-  /** Workload type of the bound hold; media generation when omitted. */
-  workloadType?: string;
   amount: number;
   expiresAt: Date;
   metadata?: Record<string, unknown>;
 }
 
 export interface ISettleCreditReservationInput {
-  /** Ledger key, separate from the reservation lookup idempotencyKey. */
-  settlementIdempotencyKey?: string;
   /** Internal evidence CAS: reject a claim computed from an obsolete completion snapshot. */
   expectedReservationMetadata?: Record<string, unknown>;
   organizationId: string;
@@ -135,8 +127,6 @@ export interface ISettleCreditReservationInput {
   idempotencyKey?: string;
   actualAmount: number;
   actorUserId: string;
-  /** Fallback brand when the reservation itself carries none. */
-  brandId?: string | null;
   description: string;
   /** Attached to the settlement ledger row (never prompt or completion text). */
   metadata?: Record<string, unknown>;

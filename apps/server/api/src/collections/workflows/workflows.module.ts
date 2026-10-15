@@ -1,20 +1,9 @@
-import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { AgentStrategyPerformanceModule } from '@api/collections/agent-strategies/agent-strategy-performance.module';
-import { ModelsModule } from '@api/collections/models/models.module';
-import { PersonasCoreModule } from '@api/collections/personas/personas-core.module';
 import { DailyPublishingService } from '@api/collections/workflows/services/daily-publishing.service';
-import { WorkflowFalOutputFinalizationService } from '@api/collections/workflows/services/workflow-fal-output-finalization.service';
-import { WorkflowGenerationAdmissionPlanService } from '@api/collections/workflows/services/workflow-generation-admission-plan.service';
-import { WorkflowMediaBillingPlanService } from '@api/collections/workflows/services/workflow-media-billing-plan.service';
 import { WorkflowMediaCredentialRouteService } from '@api/collections/workflows/services/workflow-media-credential-route.service';
-import { WorkflowMediaDispatchAdmissionService } from '@api/collections/workflows/services/workflow-media-dispatch-admission.service';
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
-import { OrganizationModuleAccessModule } from '@api/common/organization-modules/organization-module-access.module';
-import { WebhooksMediaModule } from '@api/endpoints/webhooks/webhooks-media.module';
-import { BrandedTextGenerationModule } from '@api/services/branded-text-generation/branded-text-generation.module';
 import { ByokModule } from '@api/services/byok/byok.module';
 import { MediaLocalizationModule } from '@api/services/media-localization/media-localization.module';
-import { MediaUrlsModule } from '@api/services/media-urls/media-urls.module';
 /**
  * Workflows Module
  * Automation templates: reusable multi-step workflows, triggers (manual/auto),
@@ -29,7 +18,6 @@ import { AgentGoalsModule } from '@api/collections/agent-goals/agent-goals.modul
 import { AgentThreadsModule } from '@api/collections/agent-threads/agent-threads.module';
 import { BrandsCoreModule } from '@api/collections/brands/brands-core.module';
 import { CaptionsModule } from '@api/collections/captions/captions.module';
-import { ContentLearningCoreModule } from '@api/collections/content-learning/content-learning-core.module';
 import { ContentPerformanceModule } from '@api/collections/content-performance/content-performance.module';
 import { CredentialsCoreModule } from '@api/collections/credentials/credentials-core.module';
 import { CreditsModule } from '@api/collections/credits/credits.module';
@@ -62,7 +50,6 @@ import { TwitterSocialAdapter } from '@api/collections/workflows/services/adapte
 import { YoutubeSocialAdapter } from '@api/collections/workflows/services/adapters/youtube-social.adapter';
 import { AgentAutopilotWorkflowService } from '@api/collections/workflows/services/agent-autopilot-workflow.service';
 import { BatchWorkflowExecutionService } from '@api/collections/workflows/services/batch-workflow-execution.service';
-import { ContentLearningWorkflowService } from '@api/collections/workflows/services/content-learning-workflow.service';
 import { ContentProductionWorkflowService } from '@api/collections/workflows/services/content-production-workflow.service';
 import { LivestreamBotWorkflowService } from '@api/collections/workflows/services/livestream-bot-workflow.service';
 import { OutreachCampaignDispatchWorkflowService } from '@api/collections/workflows/services/outreach-campaign-dispatch-workflow.service';
@@ -85,14 +72,11 @@ import { WorkflowExecutorService } from '@api/collections/workflows/services/wor
 import { WorkflowFormatConverterService } from '@api/collections/workflows/services/workflow-format-converter.service';
 import { WorkflowGenerationService } from '@api/collections/workflows/services/workflow-generation.service';
 import { WorkflowKnowledgeGroundingService } from '@api/collections/workflows/services/workflow-knowledge-grounding.service';
-import { WorkflowLipSyncExecutorRegistrarService } from '@api/collections/workflows/services/workflow-lip-sync-executor-registrar.service';
-import { WorkflowLipSyncFundingService } from '@api/collections/workflows/services/workflow-lip-sync-funding.service';
 import { WorkflowMediaGenerationExecutorRegistrarService } from '@api/collections/workflows/services/workflow-media-generation-executor-registrar.service';
 import { WorkflowMediaProcessingExecutorRegistrarService } from '@api/collections/workflows/services/workflow-media-processing-executor-registrar.service';
 import { WorkflowNodeClaimService } from '@api/collections/workflows/services/workflow-node-claim.service';
 import { WorkflowNodeContinuationService } from '@api/collections/workflows/services/workflow-node-continuation.service';
 import { WorkflowNodeContinuationCoordinatorService } from '@api/collections/workflows/services/workflow-node-continuation-coordinator.service';
-import { WorkflowPostGenerationService } from '@api/collections/workflows/services/workflow-post-generation.service';
 import { WorkflowRunControlService } from '@api/collections/workflows/services/workflow-run-control.service';
 import { WorkflowSchedulerService } from '@api/collections/workflows/services/workflow-scheduler.service';
 import { WorkflowSocialExecutorRegistrarService } from '@api/collections/workflows/services/workflow-social-executor-registrar.service';
@@ -174,29 +158,21 @@ import { Module } from '@nestjs/common';
     YoutubeLongFormWorkflowService,
   ],
   imports: [
-    BrandAccessModule,
-    WebhooksMediaModule,
-    OrganizationModuleAccessModule,
-    PersonasCoreModule,
-    MediaUrlsModule,
     AgentStrategyPerformanceModule,
     WorkflowsCoreModule,
     FeaturedWorkflowsModule,
     MediaLocalizationModule,
     ByokModule,
-    ModelsModule,
     AdOptimizationAuditLogsModule,
     AdOptimizationConfigsModule,
     AdOptimizationRecommendationsModule,
     AdPerformanceModule,
     AgentGoalsModule,
     AgentThreadsModule,
-    BrandedTextGenerationModule,
     BrandsCoreModule,
     CaptionsModule,
     ContentEngineModule,
     ContentPerformanceModule,
-    ContentLearningCoreModule,
     CredentialsCoreModule,
     CreditsModule,
     ElevenLabsModule,
@@ -238,7 +214,6 @@ import { Module } from '@nestjs/common';
     BullModule.registerQueue({ name: HEYGEN_POLL_QUEUE }),
   ],
   providers: [
-    WorkflowFalOutputFinalizationService,
     DailyPublishingService,
     AdAutomationWorkflowService,
     TwitterSocialAdapter,
@@ -252,15 +227,9 @@ import { Module } from '@nestjs/common';
     WorkflowMediaProcessingExecutorRegistrarService,
     WorkflowMediaCredentialRouteService,
     WorkflowMediaProviderPlanService,
-    WorkflowMediaBillingPlanService,
-    WorkflowGenerationAdmissionPlanService,
-    WorkflowMediaDispatchAdmissionService,
     WorkflowMediaGenerationExecutorRegistrarService,
-    WorkflowLipSyncFundingService,
-    WorkflowLipSyncExecutorRegistrarService,
     WorkflowKnowledgeGroundingService,
     WorkflowContentExecutorRegistrarService,
-    WorkflowPostGenerationService,
     WorkflowAutomationExecutorRegistrarService,
     WorkflowTrendPublishExecutorRegistrarService,
     WorkflowEngineExecutorRegistryService,
@@ -281,7 +250,6 @@ import { Module } from '@nestjs/common';
     // are unregistered — so the services backing those actions belong here.
     AgentAutopilotWorkflowService,
     ContentProductionWorkflowService,
-    ContentLearningWorkflowService,
     TrendNotificationWorkflowService,
     LivestreamBotWorkflowService,
     OutreachCampaignDispatchWorkflowService,

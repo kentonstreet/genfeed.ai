@@ -1,749 +1,233 @@
 import { ApiKeyHelperService } from '@api/services/api-key/api-key-helper.service';
-import { ByokService } from '@api/services/byok/byok.service';
 import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
 import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
-import { PollUntilService } from '@api/shared/services/poll-until/poll-until.service';
 import { LoggerService } from '@libs/logger/logger.service';
 import { HttpService } from '@nestjs/axios';
-import { BadRequestException } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModule } from '@nestjs/testing';
 import { isAxiosError } from 'axios';
 import { of, throwError } from 'rxjs';
 
-// Contracts verified against developers.heygen.com/reference on 2026-10-07.
-
-const NATIVE_LOOK = {
-  avatarType: 'digital_twin',
-  lookId: 'look',
-  supportedEngines: ['avatar_iv'],
-};
-
-describe('HeyGen v3 contracts', () => {
+/**
+ * Contract tests for the HeyGen integration (avatar-video revenue path).
+ *
+ * These pin the outgoing request payload shape sent to the HeyGen v2 REST API
+ * and the response shape the service parses back (`data.data.video_id`). The
+ * `HttpService` is mocked; no network calls are made. Fixtures cover a success
+ * response and provider failure shapes (non-200 status, network error).
+ *
+ * To update when HeyGen changes its API: adjust the `/video/generate` and
+ * `/avatar/create` body assertions and the response fixtures below.
+ */
+describe('HeyGenService (contract)', () => {
   let service: HeyGenService;
-  const http = { get: vi.fn(), post: vi.fn() };
-  const byok = { resolveApiKey: vi.fn(), lookupApiKeyWithIdentity: vi.fn() };
-  const keys = { getApiKey: vi.fn() };
-  const logger = { error: vi.fn(), log: vi.fn() };
-  const accepted = () =>
-    of({ status: 200, data: { data: { video_id: 'vid_abc' } } });
+  let httpService: {
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+  };
+  let logger: {
+    error: ReturnType<typeof vi.fn>;
+    log: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
-    vi.resetAllMocks();
-    keys.getApiKey.mockReturnValue('platform-key');
-    byok.resolveApiKey.mockResolvedValue(null);
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(null);
-    http.post.mockReturnValue(accepted());
-    const module = await Test.createTestingModule({
+    httpService = { get: vi.fn(), post: vi.fn() };
+    logger = { error: vi.fn(), log: vi.fn() };
+
+    const apiKeyHelperMock = {
+      getApiKey: vi.fn().mockReturnValue('heygen-key'),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
       providers: [
         HeyGenService,
         { provide: LoggerService, useValue: logger },
-        { provide: ApiKeyHelperService, useValue: keys },
-        { provide: ByokService, useValue: byok },
-        { provide: HttpService, useValue: http },
-        { provide: PollUntilService, useValue: { poll: vi.fn() } },
+        { provide: ApiKeyHelperService, useValue: apiKeyHelperMock },
+        { provide: HttpService, useValue: httpService },
       ],
     }).compile();
-    service = module.get(HeyGenService);
+
+    service = module.get<HeyGenService>(HeyGenService);
   });
 
-  it('keeps the full-catalogue limit rather than silently reporting partial results', async () => {
-    let cursor = 0;
-    http.get.mockImplementation(() =>
-      page([look({ id: `look-${cursor}` })], `cursor-${++cursor}`),
-    );
-    await expect(service.getAvatars('org-a')).rejects.toThrow(
-      'pagination limit',
-    );
-    expect(http.get).toHaveBeenCalledTimes(100);
-  });
+  afterEach(() => vi.clearAllMocks());
 
-  it('returns just one public avatar page with explicit continuation', async () => {
-    http.get.mockReturnValue(page([look({ id: 'public-look' })], 'next-page'));
-    const result = await service.getAvatarPage('org-a');
-    expect(result.avatars.map((avatar) => avatar.avatarId)).toEqual([
-      'public-look',
-    ]);
-    expect(result).toMatchObject({
-      ownership: 'public',
-      nextCursor: 'next-page',
-    });
-    expect(http.get).toHaveBeenCalledTimes(1);
-    expect(http.get.mock.calls[0][1].params).toEqual({
-      ownership: 'public',
-      limit: 50,
-    });
-    expect(result.avatars[0].avatarRef.connection).toMatchObject({
-      kind: 'platform',
-      organizationId: 'org-a',
-    });
-  });
-
-  it('never substitutes the platform key for a missing private connection', async () => {
-    await expect(service.getAvatarPage('org-a', 'private')).resolves.toEqual({
-      avatars: [],
-      ownership: 'private',
-      nextCursor: null,
-    });
-    expect(http.get).not.toHaveBeenCalled();
-    byok.lookupApiKeyWithIdentity.mockRejectedValueOnce(
-      new Error('binding lookup failed'),
-    );
-    await expect(service.getAvatarPage('org-a', 'private')).rejects.toThrow(
-      'binding lookup failed',
-    );
-    expect(http.get).not.toHaveBeenCalled();
-  });
-
-  it('maps a private page with verified group readiness and its own credential', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue({
-      apiKey: 'personal-key',
-      credentialId: 'credential-a',
-    });
-    http.get
-      .mockReturnValueOnce(page([look({ group_id: 'group' })]))
-      .mockReturnValueOnce(
-        of({
-          status: 200,
-          data: {
-            data: {
-              id: 'group',
-              status: 'completed',
-              consent_status: 'accepted',
-            },
-          },
-        }),
+  describe('generateAvatarVideo — /video/generate request/response contract', () => {
+    it('POSTs the avatar video payload with X-Api-Key and returns data.video_id', async () => {
+      // Success fixture: HeyGen returns the queued video id under data.data.
+      httpService.post.mockReturnValue(
+        of({ data: { data: { video_id: 'vid_abc' } }, status: 200 }),
       );
-    const result = await service.getAvatarPage('org-a', 'private', 'cursor-a');
-    expect(http.get.mock.calls[0][1]).toMatchObject({
-      params: { ownership: 'private', limit: 50, token: 'cursor-a' },
-      headers: { 'X-Api-Key': 'personal-key' },
-    });
-    expect(result.avatars[0].avatarRef).toMatchObject({
-      ownership: 'private',
-      readiness: { usable: true },
-      connection: { kind: 'byok', credentialVersionId: 'credential-a' },
-    });
-    expect(result.nextCursor).toBeNull();
-  });
 
-  it.each([undefined, '', 'current'])(
-    'rejects an invalid advancing page cursor %s',
-    async (next_token) => {
-      http.get.mockReturnValue(
-        of({ status: 200, data: { data: [], has_more: true, next_token } }),
+      const id = await service.generateAvatarVideo(
+        'meta_1',
+        'avatar_1',
+        'voice_1',
+        'Hello world',
       );
-      await expect(
-        service.getAvatarPage('org-a', 'public', 'current'),
-      ).rejects.toThrow('invalid catalog cursor');
-    },
-  );
 
-  it('admits a selected look from its filtered page without exhausting the whole catalogue', async () => {
-    http.get.mockReturnValue(
-      page([look({ id: 'selected' })], 'more-than-gallery'),
-    );
-    const result = await service.resolveAvatarSelection(
-      { lookId: 'selected', ownership: 'public' },
-      'org-a',
-    );
-    expect(result.avatarRef.lookId).toBe('selected');
-    expect(http.get).toHaveBeenCalledTimes(1);
-    expect(http.get.mock.calls[0][1].params.ownership).toBe('public');
-    expect(http.post).not.toHaveBeenCalled();
-  });
-
-  it('submits a native avatar with its script, voice and callback correlation', async () => {
-    await expect(
-      service.generateNativeAvatarVideo(
-        'meta',
-        NATIVE_LOOK,
-        { inputText: 'Hello', voiceId: 'voice' },
-        'platform-key',
-        '16:9',
-      ),
-    ).resolves.toBe('vid_abc');
-    expect(http.post).toHaveBeenCalledWith(
-      'https://api.heygen.com/v3/videos',
-      {
-        type: 'avatar',
-        avatar_id: 'look',
-        script: 'Hello',
-        voice_id: 'voice',
-        aspect_ratio: '16:9',
-        resolution: '720p',
-        callback_id: 'meta',
-      },
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Api-Key': 'platform-key',
-          'Idempotency-Key': expect.any(String),
+      expect(id).toBe('vid_abc');
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.heygen.com/v2/video/generate',
+        expect.objectContaining({
+          callback_id: 'meta_1',
+          caption: false,
+          dimension: { height: 720, width: 1280 },
+          video_inputs: [
+            expect.objectContaining({
+              character: expect.objectContaining({
+                avatar_id: 'avatar_1',
+                type: 'avatar',
+              }),
+              voice: expect.objectContaining({
+                input_text: 'Hello world',
+                type: 'text',
+                voice_id: 'voice_1',
+              }),
+            }),
+          ],
         }),
-      }),
-    );
-    expect(http.post.mock.calls[0][1]).not.toHaveProperty('callback_url');
-  });
-
-  it('animates an image with external audio and preserves framing', async () => {
-    await expect(
-      service.generatePhotoAvatarVideo(
-        'meta',
-        'https://cdn/photo.png',
         {
-          audioUrl: 'https://cdn/audio.mp3',
-          inputText: 'unused',
-          voiceId: 'unused',
-        },
-        undefined,
-        undefined,
-        'pinned-key',
-        '1:1',
-      ),
-    ).resolves.toBe('vid_abc');
-    expect(http.post).toHaveBeenCalledWith(
-      'https://api.heygen.com/v3/videos',
-      {
-        type: 'image',
-        image: { type: 'url', url: 'https://cdn/photo.png' },
-        audio_url: 'https://cdn/audio.mp3',
-        aspect_ratio: '1:1',
-        resolution: '1080p',
-        callback_id: 'meta',
-      },
-      expect.objectContaining({
-        headers: expect.objectContaining({ 'X-Api-Key': 'pinned-key' }),
-      }),
-    );
-    expect(byok.resolveApiKey).not.toHaveBeenCalled();
-  });
-
-  it('animates an image with a script and a HeyGen voice', async () => {
-    await service.generatePhotoAvatarVideo('meta', 'https://cdn/photo.png', {
-      inputText: 'Hello',
-      voiceId: 'voice',
-    });
-    expect(http.post.mock.calls[0][1]).toEqual({
-      type: 'image',
-      image: { type: 'url', url: 'https://cdn/photo.png' },
-      script: 'Hello',
-      voice_id: 'voice',
-      aspect_ratio: '9:16',
-      resolution: '720p',
-      callback_id: 'meta',
-    });
-  });
-
-  it.each([{}, { voiceId: 'voice' }, { voiceId: 'voice', inputText: ' ' }])(
-    'rejects incomplete speech before submission: %j',
-    async (input) => {
-      await expect(
-        service.generatePhotoAvatarVideo(
-          'meta',
-          'https://cdn/photo.png',
-          input,
-        ),
-      ).rejects.toThrow();
-      expect(http.post).not.toHaveBeenCalled();
-    },
-  );
-
-  it('accepts the terminal catalogue page when HeyGen omits next_token', async () => {
-    http.get
-      .mockReturnValueOnce(
-        page([{ voice_id: 'first', name: 'First voice' }], 'last-page'),
-      )
-      .mockReturnValueOnce(
-        of({
-          status: 200,
-          data: {
-            data: [{ voice_id: 'last', name: 'Last voice' }],
-            has_more: false,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': 'heygen-key',
           },
-        }),
-      );
-    const voices = await service.getVoices();
-    expect(voices.map((voice) => voice.voiceId)).toEqual(['first', 'last']);
-    expect(http.get).toHaveBeenCalledTimes(2);
-    expect(http.get.mock.calls[1][1].params.token).toBe('last-page');
-  });
-
-  it.each([
-    { data: {} },
-    { data: { task_id: 'legacy-task' } },
-    { data: { video_id: ' ' } },
-  ])('rejects ambiguous acceptance without a v3 video id: %j', async (data) => {
-    http.post.mockReturnValue(of({ status: 200, data }));
-    await expect(
-      service.generateNativeAvatarVideo(
-        'meta',
-        NATIVE_LOOK,
-        { inputText: 'Hello', voiceId: 'voice' },
-        'platform-key',
-        '16:9',
-      ),
-    ).rejects.toThrow('HeyGen submission returned no operation identity');
-  });
-
-  it('classifies payment rejection while preserving transport ambiguity', async () => {
-    vi.mocked(isAxiosError).mockReturnValueOnce(true);
-    http.post.mockReturnValueOnce(
-      throwError(() => ({ isAxiosError: true, response: { status: 402 } })),
-    );
-    await expect(
-      service.generatePhotoAvatarVideo('meta', 'https://cdn/photo.png', {
-        voiceId: 'voice',
-        inputText: 'Hello',
-      }),
-    ).rejects.toBeInstanceOf(HeyGenSubmissionRejectedError);
-    const transport = new Error('Response lost');
-    http.post.mockReturnValueOnce(throwError(() => transport));
-    await expect(
-      service.generateNativeAvatarVideo(
-        'meta',
-        NATIVE_LOOK,
-        { inputText: 'Hello', voiceId: 'voice' },
-        'platform-key',
-        '16:9',
-      ),
-    ).rejects.toBe(transport);
-  });
-
-  it('does not retry an ambiguous paid submission', async () => {
-    http.post.mockReturnValue(throwError(() => new Error('timeout')));
-    await expect(
-      service.generateNativeAvatarVideo(
-        'meta',
-        NATIVE_LOOK,
-        { inputText: 'Hello', voiceId: 'voice' },
-        'platform-key',
-        '16:9',
-      ),
-    ).rejects.toThrow('timeout');
-    expect(http.post).toHaveBeenCalledTimes(1);
-  });
-
-  const page = (data: unknown[], next_token: string | null = null) =>
-    of({
-      status: 200,
-      data: { data, has_more: next_token !== null, next_token },
-    });
-  const look = (patch: Record<string, unknown> = {}) => ({
-    id: 'look',
-    name: 'Saved look',
-    avatar_type: 'digital_twin',
-    group_id: null,
-    supported_api_engines: ['avatar_iv'],
-    status: 'completed',
-    preview_image_url: 'https://cdn/preview.jpg',
-    ...patch,
-  });
-  const credential = { apiKey: 'tenant-key', credentialId: 'version-2' };
-
-  it('paginates public presets with the platform key and preserves renderable look ids', async () => {
-    http.get
-      .mockReturnValueOnce(page([look({ id: 'look1' })], 'cursor/2'))
-      .mockReturnValueOnce(page([look({ id: 'look2' })]));
-    const avatars = await service.getAvatars('org');
-    expect(avatars.map((avatar) => avatar.avatarId)).toEqual([
-      'look1',
-      'look2',
-    ]);
-    expect(avatars[0].avatarRef).toMatchObject({
-      source: 'heygen-look',
-      lookId: 'look1',
-      ownership: 'public',
-      connection: { kind: 'platform', organizationId: 'org' },
-      readiness: { usable: true },
-    });
-    expect(http.get).toHaveBeenNthCalledWith(
-      2,
-      'https://api.heygen.com/v3/avatars/looks',
-      expect.objectContaining({
-        headers: expect.objectContaining({ 'X-Api-Key': 'platform-key' }),
-        params: { ownership: 'public', limit: 50, token: 'cursor/2' },
-      }),
-    );
-  });
-
-  it('retains accessible saved private looks after key rotation, with the current binding', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockReturnValue(page([look()]));
-    const result = await service.resolveAvatarSelection(
-      {
-        lookId: 'look',
-        ownership: 'private',
-        connection: {
-          provider: 'heygen',
-          kind: 'byok',
-          organizationId: 'org',
-          credentialVersionId: 'old-version',
         },
-      },
-      'org',
-    );
-    expect(result.avatarRef.connection.credentialVersionId).toBe('version-2');
-    expect(result.connection.apiKey).toBe('tenant-key');
-    expect(http.get).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: expect.objectContaining({ 'X-Api-Key': 'tenant-key' }),
-        params: { ownership: 'private', limit: 50 },
-      }),
-    );
-    expect(keys.getApiKey).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['training', look({ status: 'processing' }), null],
-    [
-      'engine',
-      look({
-        avatar_type: 'photo_avatar',
-        supported_api_engines: ['avatar_v'],
-      }),
-      null,
-    ],
-    ['type', look({ avatar_type: 'unknown' }), null],
-    [
-      'group training',
-      look({ group_id: 'group' }),
-      { id: 'group', status: 'processing', consent_status: 'accepted' },
-    ],
-    [
-      'consent',
-      look({ group_id: 'group' }),
-      { id: 'group', status: 'completed', consent_status: 'pending' },
-    ],
-    [
-      'unknown consent',
-      look({ group_id: 'group' }),
-      { id: 'group', status: 'completed' },
-    ],
-  ])(
-    'rejects unusable private %s before submission',
-    async (_name, selected, group) => {
-      byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-      http.get.mockImplementation((url: string) =>
-        url.endsWith('/looks')
-          ? page([selected])
-          : of({ data: { data: group }, status: 200 }),
       );
-      await expect(
-        service.resolveAvatarSelection(
-          { lookId: 'look', ownership: 'private' },
-          'org',
-        ),
-      ).rejects.toThrow();
-      expect(http.post).not.toHaveBeenCalled();
-    },
-  );
+    });
 
-  it('accepts documented null consent and deduplicates shared group reads', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockImplementation((url: string) =>
-      url.endsWith('/looks')
-        ? page([
-            look({ group_id: 'group' }),
-            look({ id: 'second', group_id: 'group' }),
-          ])
-        : of({
-            status: 200,
-            data: {
-              data: { id: 'group', status: 'completed', consent_status: null },
-            },
-          }),
-    );
-    const result = await service.resolveAvatarSelection(
-      { lookId: 'look', ownership: 'private' },
-      'org',
-    );
-    expect(result.avatarRef.readiness.usable).toBe(true);
-    expect(http.get).toHaveBeenCalledTimes(2);
+    it('sends no callback_url, so no secret can ride the request line', async () => {
+      // Deliveries arrive at the endpoint registered with HeyGen and are
+      // authenticated by the Heygen-Signature HMAC. Reintroducing a per-request
+      // callback_url would mean unsigned callbacks the verifier must reject.
+      httpService.post.mockReturnValue(
+        of({ data: { data: { video_id: 'vid_abc' } }, status: 200 }),
+      );
+
+      await service.generateAvatarVideo('meta_1', 'a', 'v', 'text');
+
+      const [, body] = httpService.post.mock.calls[0];
+      expect(body).not.toHaveProperty('callback_url');
+      expect(body.callback_id).toBe('meta_1');
+    });
+
+    it('falls back to data.task_id when video_id is absent', async () => {
+      httpService.post.mockReturnValue(
+        of({ data: { data: { task_id: 'task_xyz' } }, status: 200 }),
+      );
+
+      const id = await service.generateAvatarVideo('m', 'a', 'v', 'text');
+      expect(id).toBe('task_xyz');
+    });
+
+    it('throws on a non-200 provider response', async () => {
+      // Failure fixture: HeyGen 400 with an error body.
+      httpService.post.mockReturnValue(
+        of({ data: { error: 'invalid avatar' }, status: 400 }),
+      );
+
+      await expect(
+        service.generateAvatarVideo('m', 'a', 'v', 'text'),
+      ).rejects.toThrow('HeyGen API returned non-200 status');
+    });
+
+    it('rethrows and logs on a network/transport error', async () => {
+      // Failure fixture: transport-level failure (e.g. 500 → axios throws).
+      httpService.post.mockReturnValue(
+        throwError(() => ({ response: { data: {}, status: 500 } })),
+      );
+
+      await expect(
+        service.generateAvatarVideo('m', 'a', 'v', 'text'),
+      ).rejects.toBeDefined();
+      expect(logger.error).toHaveBeenCalled();
+    });
   });
 
-  it('rejects foreign refs and missing private connections without public fallback', async () => {
-    await expect(
-      service.resolveAvatarSelection(
+  describe('generatePhotoAvatarVideo — voice payload contract', () => {
+    it('uses an audio voice payload when an audio url is supplied', async () => {
+      httpService.post.mockReturnValue(
+        of({ data: { data: { video_id: 'vid_photo' } }, status: 200 }),
+      );
+
+      const id = await service.generatePhotoAvatarVideo(
+        'meta_2',
+        'https://p/photo.png',
         {
-          lookId: 'look',
-          ownership: 'private',
-          connection: {
-            provider: 'heygen',
-            kind: 'byok',
-            organizationId: 'foreign',
-          },
+          audioUrl: 'https://a/audio.mp3',
         },
-        'org',
-      ),
-    ).rejects.toThrow('another organization');
-    await expect(
-      service.resolveAvatarSelection(
-        { lookId: 'look', ownership: 'private' },
-        'org',
-      ),
-    ).rejects.toThrow('Reconnect');
-    expect(http.get).not.toHaveBeenCalled();
-    expect(keys.getApiKey).not.toHaveBeenCalled();
-  });
-
-  it('keeps public voices on the platform connection and private voices on BYOK', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockImplementation((_url, config) =>
-      page([{ voice_id: config.params.type, name: config.params.type }]),
-    );
-    const voices = await service.getVoices('org');
-    expect(
-      voices.map((voice) => [voice.ownership, voice.connection.kind]),
-    ).toEqual([
-      ['public', 'platform'],
-      ['private', 'byok'],
-    ]);
-    expect(voices[1].connection.credentialVersionId).toBe('version-2');
-    http.get.mockClear();
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(null);
-    expect(await service.getVoices('other')).toHaveLength(1);
-    expect(http.get).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(['avatars', 'voices'] as const)(
-    'loads the authorized private %s when the platform catalogue rejects its key',
-    async (catalog) => {
-      byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-      http.get.mockImplementation((_url, config) =>
-        config.headers['X-Api-Key'] === 'platform-key'
-          ? throwError(() => new Error('platform unauthorized'))
-          : page(
-              catalog === 'avatars'
-                ? [look()]
-                : [{ voice_id: 'mine', name: 'Personal voice' }],
-            ),
       );
-      const result =
-        catalog === 'avatars'
-          ? await service.getAvatars('org')
-          : await service.getVoices('org');
-      expect(result).toHaveLength(1);
-      const identity =
-        'avatarRef' in result[0] ? result[0].avatarRef : result[0];
-      expect(identity).toMatchObject({
-        ownership: 'private',
-        connection: {
-          kind: 'byok',
-          organizationId: 'org',
-          credentialVersionId: 'version-2',
-        },
+
+      expect(id).toBe('vid_photo');
+      const [, body] = httpService.post.mock.calls[0];
+      expect(body.video_inputs[0].character).toEqual({
+        photo_url: 'https://p/photo.png',
+        type: 'photo_avatar',
       });
-      expect(http.post).not.toHaveBeenCalled();
-    },
-  );
-
-  it('does not hide a platform failure as an empty catalogue when the tenant has no binding', async () => {
-    http.get.mockReturnValue(
-      throwError(() => new Error('platform unauthorized')),
-    );
-    await expect(service.getAvatars('org')).rejects.toThrow(
-      'platform unauthorized',
-    );
-    expect(byok.lookupApiKeyWithIdentity).toHaveBeenCalledWith('org', 'heygen');
-  });
-
-  it('loads a configured private catalogue when no platform key exists', async () => {
-    keys.getApiKey.mockReturnValue('');
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockReturnValue(
-      page([{ voice_id: 'mine', name: 'Personal voice' }]),
-    );
-    expect(await service.getVoices('org')).toMatchObject([
-      {
-        ownership: 'private',
-        connection: { kind: 'byok', credentialVersionId: 'version-2' },
-      },
-    ]);
-    expect(http.get).toHaveBeenCalledOnce();
-    expect(http.get.mock.calls[0][1].headers['X-Api-Key']).toBe('tenant-key');
-  });
-
-  it('preserves explicit override public and private partitions without a tenant lookup', async () => {
-    byok.lookupApiKeyWithIdentity.mockRejectedValue(new Error('unused lookup'));
-    http.get.mockReturnValue(page([{ voice_id: 'voice', name: 'Voice' }]));
-    expect(
-      await service.getVoices('org', undefined, 'override-key'),
-    ).toMatchObject([
-      {
-        ownership: 'public',
-        connection: { kind: 'byok', organizationId: 'org' },
-      },
-      {
-        ownership: 'private',
-        connection: { kind: 'byok', organizationId: 'org' },
-      },
-    ]);
-    expect(byok.lookupApiKeyWithIdentity).not.toHaveBeenCalled();
-    expect(keys.getApiKey).not.toHaveBeenCalled();
-    expect(
-      http.get.mock.calls.every(
-        ([, config]) => config.headers['X-Api-Key'] === 'override-key',
-      ),
-    ).toBe(true);
-  });
-
-  it('does not reinterpret a strict tenant lookup failure as permission to use platform identities', async () => {
-    byok.lookupApiKeyWithIdentity.mockRejectedValue(
-      new Error('credential lookup failed'),
-    );
-    await expect(service.getVoices('org')).rejects.toThrow(
-      'credential lookup failed',
-    );
-    expect(http.get).not.toHaveBeenCalled();
-  });
-
-  it('keeps the authorized public catalogue when only the private provider request fails', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockImplementation((_url, config) =>
-      config.headers['X-Api-Key'] === 'platform-key'
-        ? page([{ voice_id: 'public', name: 'Public voice' }])
-        : throwError(() => new Error('personal unauthorized')),
-    );
-    expect(await service.getVoices('org')).toMatchObject([
-      { ownership: 'public', connection: { kind: 'platform' } },
-    ]);
-    await expect(
-      service.resolveAvatarSelection(
-        { lookId: 'look', ownership: 'private' },
-        'org',
-      ),
-    ).rejects.toThrow('personal unauthorized');
-  });
-
-  it.each([
-    { data: [], has_more: true },
-    { data: [], has_more: true, next_token: null },
-    { data: 'invalid', has_more: false, next_token: null },
-    { data: [], has_more: true, next_token: 'same' },
-  ])('fails closed on broken pagination: %j', async (data) => {
-    http.get.mockReturnValue(of({ status: 200, data }));
-    await expect(service.getAvatars()).rejects.toThrow();
-    expect(http.get.mock.calls.length).toBeLessThanOrEqual(2);
-  });
-
-  it('never substitutes a platform key when a private account is rejected', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockReturnValue(throwError(() => new Error('unauthorized')));
-    await expect(
-      service.resolveAvatarSelection(
-        { lookId: 'look', ownership: 'private' },
-        'org',
-      ),
-    ).rejects.toThrow('unauthorized');
-    expect(keys.getApiKey).not.toHaveBeenCalled();
-    expect(http.get).toHaveBeenCalledTimes(1);
-  });
-
-  it('reports the personal account as disconnected when only platform presets exist', async () => {
-    await expect(service.getConnectionStatus('org')).resolves.toEqual({
-      hasCustomKey: false,
-      isConnected: false,
-      state: 'disconnected',
+      expect(body.video_inputs[0].voice).toEqual({
+        audio_url: 'https://a/audio.mp3',
+        type: 'audio',
+      });
     });
-    expect(http.get).not.toHaveBeenCalled();
-  });
 
-  it('admits a digital twin that renders only with Avatar V', async () => {
-    byok.lookupApiKeyWithIdentity.mockResolvedValue(credential);
-    http.get.mockReturnValue(
-      page([look({ supported_api_engines: ['avatar_v'] })]),
-    );
-    const result = await service.resolveAvatarSelection(
-      { lookId: 'look', ownership: 'private' },
-      'org',
-    );
-    expect(result.avatarRef).toMatchObject({
-      avatarType: 'digital_twin',
-      readiness: { usable: true },
-      supportedEngines: ['avatar_v'],
-    });
-  });
-
-  const nativeLook = (
-    avatarType: string,
-    supportedEngines: string[] = ['avatar_iv', 'avatar_v'],
-  ) => ({ avatarType, lookId: 'look', supportedEngines });
-
-  it('renders a native look with audio without converting its preview to an image', async () => {
-    await service.generateNativeAvatarVideo(
-      'meta',
-      nativeLook('digital_twin'),
-      { audioUrl: 'https://cdn/narration.mp3' },
-      'tenant-key',
-    );
-    expect(http.post.mock.calls[0][1]).toEqual({
-      type: 'avatar',
-      avatar_id: 'look',
-      audio_url: 'https://cdn/narration.mp3',
-      aspect_ratio: '9:16',
-      resolution: '720p',
-      callback_id: 'meta',
-    });
-  });
-
-  it('sends Avatar V as the engine for an eligible digital twin', async () => {
-    await service.generateNativeAvatarVideo(
-      'meta',
-      nativeLook('digital_twin'),
-      { inputText: 'Hello', voiceId: 'voice' },
-      'tenant-key',
-      '16:9',
-      'avatar_v',
-    );
-    expect(http.post.mock.calls[0][1]).toMatchObject({
-      avatar_id: 'look',
-      engine: { type: 'avatar_v' },
-      type: 'avatar',
-    });
-  });
-
-  it('sends no engine for Avatar IV, the default', async () => {
-    await service.generateNativeAvatarVideo(
-      'meta',
-      nativeLook('photo_avatar', ['avatar_iv']),
-      { inputText: 'Hello', voiceId: 'voice' },
-      'tenant-key',
-      '9:16',
-      'avatar_iv',
-    );
-    expect(http.post.mock.calls[0][1]).not.toHaveProperty('engine');
-  });
-
-  it.each([
-    [
-      'a photo avatar',
-      nativeLook('photo_avatar', ['avatar_iv', 'avatar_v']),
-      'avatar_v',
-    ],
-    [
-      'a twin without avatar_v',
-      nativeLook('digital_twin', ['avatar_iv']),
-      'avatar_v',
-    ],
-    [
-      'a twin without avatar_iv',
-      nativeLook('digital_twin', ['avatar_v']),
-      'avatar_iv',
-    ],
-    ['an unpriced image look', nativeLook('image', ['avatar_iv']), 'avatar_iv'],
-  ] as const)(
-    'refuses %s before the paid submission',
-    async (_name, avatar, engine) => {
+    it('classifies an explicit HTTP402 payment rejection, preserving transport ambiguity', async () => {
+      vi.mocked(isAxiosError).mockReturnValueOnce(true);
+      httpService.post.mockReturnValueOnce(
+        throwError(() => ({ isAxiosError: true, response: { status: 402 } })),
+      );
       await expect(
-        service.generateNativeAvatarVideo(
-          'meta',
-          avatar,
-          { inputText: 'Hello', voiceId: 'voice' },
-          'tenant-key',
-          '9:16',
-          engine,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(http.post).not.toHaveBeenCalled();
-    },
-  );
+        service.generatePhotoAvatarVideo('meta', 'https://p/photo.png', {
+          voiceId: 'voice',
+        }),
+      ).rejects.toBeInstanceOf(HeyGenSubmissionRejectedError);
+      const transportError = new Error('Response lost');
+      httpService.post.mockReturnValueOnce(throwError(() => transportError));
+      await expect(
+        service.generatePhotoAvatarVideo('meta', 'https://p/photo.png', {
+          voiceId: 'voice',
+        }),
+      ).rejects.toBe(transportError);
+    });
+
+    it('treats a success response missing its operation identity as unresolved', async () => {
+      httpService.post.mockReturnValueOnce(
+        of({ status: 200, data: { data: {} } }),
+      );
+      await expect(
+        service.generatePhotoAvatarVideo('meta', 'https://p/photo.png', {
+          voiceId: 'voice',
+        }),
+      ).rejects.toThrow('HeyGen submission returned no operation identity');
+    });
+
+    it('rejects when neither audio url nor voice id is supplied', async () => {
+      await expect(
+        service.generatePhotoAvatarVideo('meta_3', 'https://p/photo.png', {}),
+      ).rejects.toThrow(/audioUrl or voiceId is required/i);
+    });
+  });
+
+  describe('createAvatar — /avatar/create request/response contract', () => {
+    it('POSTs avatar_name + video_url and returns data.avatar_id', async () => {
+      httpService.post.mockReturnValue(
+        of({ data: { data: { avatar_id: 'av_new' } }, status: 200 }),
+      );
+
+      const id = await service.createAvatar('My Avatar', 'https://v/clip.mp4');
+
+      expect(id).toBe('av_new');
+      expect(httpService.post).toHaveBeenCalledWith(
+        'https://api.heygen.com/v2/avatar/create',
+        expect.objectContaining({
+          avatar_name: 'My Avatar',
+          video_url: 'https://v/clip.mp4',
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': 'heygen-key',
+          },
+        },
+      );
+    });
+  });
 });

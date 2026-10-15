@@ -4,6 +4,7 @@ import {
   ActivityKey,
   IngredientStatus,
   JobState,
+  VideoEaseCurve,
   VideoTransition,
   WebSocketEventStatus,
   WebSocketEventType,
@@ -55,83 +56,6 @@ describe('VideoStitchService', () => {
     fixture.addClip({ category: 'MUSIC', id: 'music-1', s3Key: null });
   });
 
-  describe('authorized storage sources', () => {
-    const activatedFixture = () => {
-      const active = new VideoStitchFixture(true);
-      active.addClip({
-        id: 'clip-1',
-        s3Key: 'ingredients/videos/random-clip-one',
-      });
-      active.addClip({
-        id: 'clip-2',
-        s3Key: 'ingredients/videos/random-clip-two',
-      });
-      active.addClip({
-        category: 'MUSIC',
-        id: 'music-1',
-        s3Key: 'ingredients/musics/random-track',
-      });
-      return active;
-    };
-
-    it('preserves literal whitespace and reserved characters in activated source identities', async () => {
-      const active = activatedFixture();
-      const clipKey = 'ingredients/videos/clip %2F?#.mp4';
-      const musicKey = 'ingredients/musics/track %2F?#.wav';
-      active.row('clip-1').s3Key = clipKey;
-      active.row('music-1').s3Key = musicKey;
-      await active.service.stitch(request({ settings: { music: 'music-1' } }));
-      expect(active.queued[0]?.params).toMatchObject({
-        sourceStorageKeys: [clipKey, 'ingredients/videos/random-clip-two'],
-        musicStorageKey: musicKey,
-      });
-    });
-
-    it('passes canonical ordered source and music keys from scoped records to the worker', async () => {
-      const active = activatedFixture();
-      await active.service.stitch(
-        request({
-          clipIds: ['clip-2', 'clip-1', 'clip-2'],
-          settings: { music: 'music-1' },
-        }),
-      );
-      expect(active.queued[0]?.params).toMatchObject({
-        sourceStorageKeys: [
-          'ingredients/videos/random-clip-two',
-          'ingredients/videos/random-clip-one',
-          'ingredients/videos/random-clip-two',
-        ],
-        musicStorageKey: 'ingredients/musics/random-track',
-      });
-    });
-
-    it('rejects keyless clips before creating output or enqueueing work', async () => {
-      const active = activatedFixture();
-      active.row('clip-1').s3Key = null;
-      expect(await failingField(active.service.stitch(request()))).toBe(
-        'clipIds',
-      );
-      expect(active.outputs()).toHaveLength(0);
-      expect(active.queued).toHaveLength(0);
-    });
-
-    it.each(['keyless', 'cross-organization'] as const)(
-      'rejects %s music before enqueueing work',
-      async (kind) => {
-        const active = activatedFixture();
-        if (kind === 'keyless') active.row('music-1').s3Key = null;
-        else active.row('music-1').organizationId = 'org-2';
-        expect(
-          await failingField(
-            active.service.stitch(request({ settings: { music: 'music-1' } })),
-          ),
-        ).toBe('music');
-        expect(active.outputs()).toHaveLength(0);
-        expect(active.queued).toHaveLength(0);
-      },
-    );
-  });
-
   describe('contract', () => {
     it('creates one processing output with lineage and queues its deterministic merge job', async () => {
       const handle = await fixture.service.stitch(
@@ -145,6 +69,7 @@ describe('VideoStitchService', () => {
             musicVolume: 25,
             transition: VideoTransition.FADE,
             transitionDuration: 0.75,
+            transitionEaseCurve: VideoEaseCurve.EASE_IN_OUT_SINE,
           },
         }),
       );
@@ -185,6 +110,7 @@ describe('VideoStitchService', () => {
             ],
             transition: VideoTransition.FADE,
             transitionDuration: 0.75,
+            transitionEaseCurve: VideoEaseCurve.EASE_IN_OUT_SINE,
           },
           room: getUserRoomName('auth-user-1'),
           type: 'merge-videos',
@@ -266,6 +192,12 @@ describe('VideoStitchService', () => {
         request({ settings: { transition: 'morph' as VideoTransition } }),
       ],
       ['transitionDuration', request({ settings: { transitionDuration: 3 } })],
+      [
+        'transitionEaseCurve',
+        request({
+          settings: { transitionEaseCurve: 'bounce' as VideoEaseCurve },
+        }),
+      ],
       ['musicVolume', request({ settings: { musicVolume: 101 } })],
       ['brandId', request({ brandId: '' })],
       ['idempotencyKey', request({ idempotencyKey: ' ' })],
@@ -817,52 +749,20 @@ describe('VideoStitchService', () => {
       },
     );
 
-    it('fails the output when the finished job returned no persisted video', async () => {
+    it('rejects a result that is not a persisted video', async () => {
       const handle = await fixture.service.stitch(request());
       fixture.jobStates.set(handle.jobId, JobState.COMPLETED);
       fixture.jobResults.set(handle.jobId, {
         outputPath: '/tmp/merged.mp4',
         success: true,
       });
-      await expect(fixture.service.settle(handle)).resolves.toMatchObject({
-        error: 'Video merge did not return a persisted video',
-        state: 'failed',
-      });
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError: 'Video merge did not return a persisted video',
-        status: IngredientStatus.FAILED,
-      });
-      expect(fixture.eventsNamed('media.failed')).toHaveLength(1);
-    });
-
-    it('fails a processing output whose job the queue no longer holds', async () => {
-      const handle = await fixture.service.stitch(request());
-      fixture.dropJob(handle.jobId);
-
-      await expect(fixture.service.settle(handle)).resolves.toMatchObject({
-        error: 'Video merge job is no longer queued; retry the merge',
-        state: 'failed',
-      });
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError: 'Video merge job is no longer queued; retry the merge',
-        status: IngredientStatus.FAILED,
-      });
-    });
-
-    it('leaves a lost job to the completer that already claimed the output', async () => {
-      const handle = await fixture.service.stitch(request());
-      Object.assign(fixture.row(handle.outputId), {
-        generationStage: 'stitch-completing',
-        updatedAt: new Date(),
-      });
-      fixture.dropJob(handle.jobId);
-
-      await expect(fixture.service.settle(handle)).resolves.toMatchObject({
-        state: 'processing',
-      });
+      await expect(fixture.service.settle(handle)).rejects.toThrow(
+        'Video merge did not return a persisted video',
+      );
       expect(fixture.row(handle.outputId).status).toBe(
         IngredientStatus.PROCESSING,
       );
+      expect(fixture.eventsNamed('media.failed')).toEqual([]);
     });
 
     it('reports a still-running job as processing without touching the output', async () => {
@@ -875,100 +775,6 @@ describe('VideoStitchService', () => {
       expect(fixture.row(handle.outputId).status).toBe(
         IngredientStatus.PROCESSING,
       );
-    });
-  });
-
-  describe('background tracking', () => {
-    it('persists a merge that finishes after the waiting caller timeout', async () => {
-      const handle = await fixture.service.stitch(request());
-      const tracking = fixture.service.trackInBackground(handle, 1_000, 1);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      fixture.completeJob(
-        handle.jobId,
-        `ingredients/videos/${handle.outputId}`,
-      );
-      await tracking;
-
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        s3Key: `ingredients/videos/${handle.outputId}`,
-        status: IngredientStatus.GENERATED,
-      });
-    });
-
-    it('fails the output with the worker error when the merge job fails', async () => {
-      const handle = await fixture.service.stitch(
-        request({
-          settings: {
-            transition: VideoTransition.FADE,
-            transitionDuration: 0.5,
-          },
-        }),
-      );
-      fixture.jobStates.set(handle.jobId, JobState.FAILED);
-
-      await fixture.service.trackInBackground(handle, 1_000, 1);
-
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError: 'ffmpeg exited',
-        status: IngredientStatus.FAILED,
-      });
-      expect(fixture.eventsNamed('media.failed')).toHaveLength(1);
-    });
-
-    it('fails an output whose job is still unfinished at the deadline', async () => {
-      const handle = await fixture.service.stitch(request());
-
-      await fixture.service.trackInBackground(handle, 20, 1);
-
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError: 'Video merge did not finish within 1 minutes',
-        status: IngredientStatus.FAILED,
-      });
-    });
-
-    it('rides out unreadable job statuses, then fails with the last error', async () => {
-      const handle = await fixture.service.stitch(request());
-      fixture.failStatusFor.set(
-        handle.jobId,
-        new Error('connect ECONNREFUSED files:3012'),
-      );
-
-      await fixture.service.trackInBackground(handle, 20, 1);
-
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError:
-          'Lost track of the video merge: connect ECONNREFUSED files:3012',
-        status: IngredientStatus.FAILED,
-      });
-    });
-
-    it('recovers when the job status becomes readable again', async () => {
-      const handle = await fixture.service.stitch(request());
-      fixture.failStatusFor.set(handle.jobId, new Error('socket hang up'));
-      const tracking = fixture.service.trackInBackground(handle, 1_000, 1);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      fixture.failStatusFor.delete(handle.jobId);
-      fixture.completeJob(
-        handle.jobId,
-        `ingredients/videos/${handle.outputId}`,
-      );
-      await tracking;
-
-      expect(fixture.row(handle.outputId).status).toBe(
-        IngredientStatus.GENERATED,
-      );
-    });
-
-    it('fails an output whose job the queue lost', async () => {
-      const handle = await fixture.service.stitch(request());
-      fixture.dropJob(handle.jobId);
-
-      await fixture.service.trackInBackground(handle, 1_000, 1);
-
-      expect(fixture.row(handle.outputId)).toMatchObject({
-        generationError: 'Video merge job is no longer queued; retry the merge',
-        status: IngredientStatus.FAILED,
-      });
     });
   });
 

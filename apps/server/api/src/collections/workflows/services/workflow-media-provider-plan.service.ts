@@ -1,13 +1,3 @@
-import { isFalDestination } from '@api/collections/models/utils/model-key.util';
-import { findReviewedFalVideoOutputContract } from '@api/collections/models/utils/model-reviewed-fal-video-output-contract.util';
-import { PersonasService } from '@api/collections/personas/services/personas.service';
-import { prepareFalVideoDispatch } from '@api/collections/videos/services/providers/fal-video-generation-provider.adapter';
-import { prepareSeedanceNativeOutputQuote } from '@api/collections/videos/services/seedance-native-output-quote.util';
-import {
-  bindSeedanceVideoReferences,
-  seedanceVideoReferenceLimit,
-} from '@api/collections/videos/services/seedance-reference-evidence.util';
-import { measureStoredSeedanceVideoReferences } from '@api/collections/videos/services/seedance-reference-measurement.util';
 import { WorkflowEngineExecutorHelperService } from '@api/collections/workflows/services/workflow-engine-executor-helper.service';
 import type {
   WorkflowImageProviderPlan,
@@ -15,13 +5,6 @@ import type {
   WorkflowMediaProviderPlanInput,
   WorkflowVideoProviderPlan,
 } from '@api/collections/workflows/services/workflow-media-provider-plan.interface';
-import { assertWorkflowExtensionSourceEvidence } from '@api/collections/workflows/utils/workflow-extension-source-evidence.util';
-import { NotFoundException } from '@api/exceptions/not-found.exception';
-import { quoteSnapshotHash } from '@api/helpers/utils/credits/quote-snapshot.util';
-import {
-  classifyInternalMediaUrl,
-  internalMediaHosts,
-} from '@api/helpers/utils/reference/internal-media-url.util';
 import { FilesClientService } from '@api/services/files-microservice/client/files-client.service';
 import {
   resolveVideoIdentityReferencePlan,
@@ -31,12 +14,9 @@ import {
   toRedactedVideoGenerationBriefProviderData,
 } from '@api/services/generation-brief';
 import { resolvePredictionTarget } from '@api/services/integrations/replicate/helpers/replicate-prediction-target.util';
-import { AuthorizedMediaUrlService } from '@api/services/media-urls/authorized-media-url.service';
 import { PromptBuilderService } from '@api/services/prompt-builder/prompt-builder.service';
-import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   IngredientCategory,
-  IngredientStatus,
   MetadataExtension,
   ModelCategory,
 } from '@genfeedai/contracts';
@@ -52,7 +32,6 @@ import {
   type ExecutionContext,
   unwrapExecutableActionNode,
 } from '@genfeedai/workflows/engine';
-import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
 import { Injectable, Optional } from '@nestjs/common';
 
@@ -99,12 +78,6 @@ function readIdentityReferences(value: unknown): ClipChainIdentityReference[] {
   });
 }
 
-function readStrings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string')
-    : [];
-}
-
 function replaceReferenceTokens(
   value: unknown,
   replacements: ReadonlyMap<string, string>,
@@ -131,12 +104,8 @@ export class WorkflowMediaProviderPlanService {
   constructor(
     private readonly helper: WorkflowEngineExecutorHelperService,
     private readonly loggerService: LoggerService,
-    private readonly personasService: PersonasService,
     @Optional() private readonly promptBuilderService?: PromptBuilderService,
     @Optional() private readonly filesClientService?: FilesClientService,
-    @Optional() private readonly configService?: ConfigService,
-    @Optional() private readonly mediaIssuer?: AuthorizedMediaUrlService,
-    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   get canPrepareImage(): boolean {
@@ -159,76 +128,8 @@ export class WorkflowMediaProviderPlanService {
       return this.prepareVideo({ ...request, context, node: executable });
     }
     throw new Error(
-      `No direct media preparation contract for ${executable.type}`,
+      `No direct Replicate media preparation contract for ${executable.type}`,
     );
-  }
-
-  /**
-   * Admits the characters a node feeds into a generation (#6040, #6037): a
-   * revoked character fails the node before any output or provider dispatch
-   * exists. Values are the node's raw inputs: bare asset ids, asset records
-   * and Library media URLs. An internal media URL must point at an asset of
-   * the running organization or at the reference image of a character with an
-   * active grant to it; any other internal URL is refused, so a revoked grant
-   * cannot be used through a still-public URL. Returns the character to link
-   * the output to.
-   */
-  private async admitCharacters(args: {
-    brandId: string;
-    organizationId: string;
-    values: readonly unknown[];
-  }) {
-    const hosts = this.internalHosts();
-    const targets: Array<{ id?: string; isInternalUrl: boolean }> = [];
-    for (const value of args.values) {
-      if (typeof value === 'string') {
-        const url = classifyInternalMediaUrl(value, hosts);
-        if (url.isInternal) {
-          targets.push({ id: url.assetId, isInternalUrl: true });
-          continue;
-        }
-      }
-      const id =
-        this.helper.extractIngredientId(value) ??
-        (typeof value === 'string' && value && !value.includes('/')
-          ? value
-          : undefined);
-      if (id) {
-        targets.push({ id, isInternalUrl: false });
-      }
-    }
-    const admission = await this.personasService.resolveCharacterReferences({
-      brandId: args.brandId,
-      ingredientIds: targets.flatMap((target) =>
-        target.id ? [target.id] : [],
-      ),
-      organizationId: args.organizationId,
-      path: 'workflow',
-    });
-    for (const target of targets) {
-      // An internal URL whose asset cannot be resolved fails closed.
-      if (
-        target.isInternalUrl &&
-        (!target.id ||
-          (!admission.availableAvatarIds.has(target.id) &&
-            !(await this.helper.hasOrganizationAsset(
-              target.id,
-              args.organizationId,
-            ))))
-      ) {
-        throw new NotFoundException('Reference image');
-      }
-    }
-    return admission;
-  }
-
-  private internalHosts(): Set<string> {
-    const config = this.configService;
-    return internalMediaHosts([
-      config?.cdnUrl,
-      config?.ingredientsEndpoint,
-      config?.apiUrl,
-    ]);
   }
 
   async prepareImage({
@@ -290,11 +191,6 @@ export class WorkflowMediaProviderPlanService {
           undefined,
         );
     const brandId = this.helper.requireBrandId(params.brandId, 'imageGen');
-    const { personaId } = await this.admitCharacters({
-      brandId,
-      organizationId: context.organizationId,
-      values: references ?? [],
-    });
     return {
       actionId: 'imageGen',
       preparationVersion: 1,
@@ -314,130 +210,10 @@ export class WorkflowMediaProviderPlanService {
         model,
         negativePrompt,
         organizationId: context.organizationId,
-        personaId,
         providerData: toRedactedGenerationBriefProviderData(compiled.evidence),
         userId: context.userId,
       },
     };
-  }
-
-  private async resolveExtensionAssetUrls(
-    params: Record<string, unknown>,
-    context: ExecutionContext,
-    brandId: string,
-    referenceAssetIds: string[] | undefined,
-    videoReferenceAssetIds: string[],
-    referenceReplacements: Map<string, string>,
-  ): Promise<void> {
-    if (typeof params.frameIngredientId === 'string') {
-      if (
-        referenceAssetIds?.length !== 1 ||
-        referenceAssetIds[0] !== params.frameIngredientId ||
-        !this.prisma ||
-        !this.filesClientService
-      )
-        throw new Error(
-          'Fabricated extension must use its exact stored last frame',
-        );
-      const frame = await this.prisma.ingredient.findFirst({
-        select: { s3Key: true },
-        where: {
-          id: params.frameIngredientId,
-          organizationId: context.organizationId,
-          brandId,
-          parentId: String(params.parentIngredientId),
-          isDeleted: false,
-          category: IngredientCategory.IMAGE,
-          status: {
-            in: [IngredientStatus.GENERATED, IngredientStatus.VALIDATED],
-          },
-        },
-      });
-      if (!frame?.s3Key)
-        throw new Error('Fabricated extension last frame is unavailable');
-      referenceReplacements.set(
-        params.frameIngredientId,
-        await this.filesClientService.getPresignedDownloadUrlForObjectKey(
-          frame.s3Key,
-        ),
-      );
-    }
-    if (
-      params.sourceEvidence !== undefined &&
-      videoReferenceAssetIds.length === 1 &&
-      this.prisma &&
-      this.filesClientService
-    ) {
-      const source = await this.prisma.ingredient.findFirst({
-        select: { s3Key: true },
-        where: {
-          id: videoReferenceAssetIds[0],
-          organizationId: context.organizationId,
-          brandId,
-          isDeleted: false,
-          category: IngredientCategory.VIDEO,
-          status: {
-            in: [IngredientStatus.GENERATED, IngredientStatus.VALIDATED],
-          },
-        },
-      });
-      if (
-        !source?.s3Key ||
-        videoReferenceAssetIds[0] !== params.parentIngredientId
-      )
-        throw new Error('Native extension must use its exact stored source');
-      referenceReplacements.set(
-        videoReferenceAssetIds[0],
-        await this.filesClientService.getPresignedDownloadUrlForObjectKey(
-          source.s3Key,
-        ),
-      );
-    }
-  }
-
-  private async admitVideoSource({
-    model,
-    params,
-    context,
-  }: WorkflowMediaProviderPlanInput) {
-    const brandId = this.helper.requireBrandId(params.brandId, 'videoGen');
-    if (params.sourceEvidence !== undefined) {
-      if (!this.prisma || !this.filesClientService)
-        throw new Error('Workflow Extend source measurement is unavailable');
-      await assertWorkflowExtensionSourceEvidence(
-        this.prisma,
-        this.filesClientService,
-        {
-          organizationId: context.organizationId,
-          brandId,
-          parentIngredientId: params.parentIngredientId,
-          sourceEvidence: params.sourceEvidence,
-          frameIngredientId: params.frameIngredientId,
-        },
-      );
-    }
-    // Admit the raw inputs first: later steps replace bare ids with synthetic
-    // names that no character could match.
-    const identityReferences = readIdentityReferences(
-      params.identityReferences,
-    );
-    if (isFalDestination(model) && identityReferences.length > 0) {
-      throw new Error(
-        'Fal workflow identity locks require a reviewed reference mapping',
-      );
-    }
-    const { availableAvatarIds, personaId } = await this.admitCharacters({
-      brandId,
-      organizationId: context.organizationId,
-      values: [
-        ...readStrings(params.references),
-        params.lastFrame,
-        ...readStrings(params.videoReferences),
-        ...identityReferences.map((reference) => reference.assetId),
-        params.parentIngredientId,
-      ],
-    });
-    return { brandId, identityReferences, availableAvatarIds, personaId };
   }
 
   async prepareVideo({
@@ -446,22 +222,12 @@ export class WorkflowMediaProviderPlanService {
     context,
     node,
   }: WorkflowMediaProviderPlanInput): Promise<WorkflowVideoProviderPlan> {
-    const { brandId, identityReferences, availableAvatarIds, personaId } =
-      await this.admitVideoSource({ model, params, context, node });
     const {
       endFrameId,
       referenceAssetIds,
       referenceReplacements,
       videoReferenceAssetIds,
-    } = await this.resolveVideoReferenceInputs(params, context.organizationId);
-    await this.resolveExtensionAssetUrls(
-      params,
-      context,
-      brandId,
-      referenceAssetIds,
-      videoReferenceAssetIds,
-      referenceReplacements,
-    );
+    } = await this.resolveVideoReferenceInputs(params);
     const prompt = typeof params.prompt === 'string' ? params.prompt : '';
     const height = typeof params.height === 'number' ? params.height : 1080;
     const width = typeof params.width === 'number' ? params.width : 1920;
@@ -471,13 +237,16 @@ export class WorkflowMediaProviderPlanService {
       typeof params.negativePrompt === 'string'
         ? params.negativePrompt
         : undefined;
+    const brandId = this.helper.requireBrandId(params.brandId, 'videoGen');
     // Run-level identity stills (#4653). Tenancy preflight runs before the
     // brief compiles and before any output or provider dispatch exists, so
     // a deleted or foreign id fails without consuming credits.
+    const identityReferences = readIdentityReferences(
+      params.identityReferences,
+    );
     const identityPlan =
       identityReferences.length > 0
         ? await this.resolveIdentityReferencePlan({
-            availableAvatarIds,
             brandId,
             firstFrameAssetId: referenceAssetIds?.[0],
             identityReferences,
@@ -529,31 +298,13 @@ export class WorkflowMediaProviderPlanService {
         (reference) => reference.assetId,
       ) ?? []),
     ];
-    const providerPlan = isFalDestination(model)
-      ? await this.prepareFalVideoInput({
-          model,
-          params,
-          context,
-          input,
-          prompt,
-          duration,
-          width,
-          height,
-          referenceAssetIds,
-          videoReferenceAssetIds,
-          referenceReplacements,
-          endFrameId,
-        })
-      : {
-          provider: 'replicate' as const,
-          target: resolvePredictionTarget(model),
-          input,
-        };
     return {
       actionId: 'videoGen',
       preparationVersion: 1,
+      provider: 'replicate',
       model,
-      ...providerPlan,
+      target: resolvePredictionTarget(model),
+      input,
       generationBriefEvidence: compiled.evidence,
       generationSource: compiled.generationSource,
       ...(identityPlan ? { identityLock: identityPlan.identityLock } : {}),
@@ -566,7 +317,6 @@ export class WorkflowMediaProviderPlanService {
         generationSource: compiled.generationSource,
         model,
         organizationId: context.organizationId,
-        personaId,
         parentIngredientId:
           typeof params.parentIngredientId === 'string'
             ? params.parentIngredientId
@@ -581,187 +331,12 @@ export class WorkflowMediaProviderPlanService {
     };
   }
 
-  /** Use the published provider adapter and exact reviewed schema; no funding or provider effects. */
-  private async prepareFalVideoInput(args: {
-    model: string;
-    params: Record<string, unknown>;
-    context: ExecutionContext;
-    input: Record<string, unknown>;
-    prompt: string;
-    duration?: number;
-    width: number;
-    height: number;
-    referenceAssetIds?: string[];
-    videoReferenceAssetIds: string[];
-    referenceReplacements: ReadonlyMap<string, string>;
-    endFrameId?: string;
-  }) {
-    const prisma = this.prisma;
-    if (!prisma)
-      throw new Error('Reviewed Fal workflow preparation is unavailable');
-    const reviewed = await findReviewedFalVideoOutputContract(
-      prisma,
-      args.model,
-      args.context.organizationId,
-    );
-    if (reviewed.status !== 'reviewed')
-      throw new Error(
-        `Reviewed Fal workflow preparation is unresolved: ${reviewed.reason}`,
-      );
-    const resolve = (assetId: string): string => {
-      const url = args.referenceReplacements.get(assetId);
-      if (!url) throw new Error('Fal workflow reference is unresolved');
-      return url;
-    };
-    const images = args.referenceAssetIds?.map(resolve) ?? [];
-    const measuredReferences =
-      seedanceVideoReferenceLimit(reviewed.contract.endpoint) &&
-      args.videoReferenceAssetIds.length
-        ? await measureStoredSeedanceVideoReferences(
-            {
-              files: this.requireReferenceFiles(),
-              findStoredVideo: (id, organizationId) =>
-                prisma.ingredient.findFirst({
-                  select: { s3Key: true },
-                  where: {
-                    id,
-                    organizationId,
-                    isDeleted: false,
-                    category: IngredientCategory.VIDEO,
-                  },
-                }),
-            },
-            {
-              endpoint: reviewed.contract.endpoint,
-              organizationId: args.context.organizationId,
-              assetIds: args.videoReferenceAssetIds,
-            },
-          )
-        : undefined;
-    const referenceQuoteEvidence = measuredReferences
-      ? bindSeedanceVideoReferences(
-          reviewed.contract.endpoint,
-          args.context.organizationId,
-          measuredReferences,
-        )
-      : undefined;
-    const videos = measuredReferences
-      ? measuredReferences.map((reference) => reference.url)
-      : args.videoReferenceAssetIds.map(resolve);
-    const promptParams: Record<string, unknown> = { ...args.input };
-    for (const key of [
-      'resolution',
-      'aspect_ratio',
-      'duration',
-      'generate_audio',
-      'task',
-      'seed',
-      'draft',
-    ]) {
-      if (Object.hasOwn(args.params, key)) promptParams[key] = args.params[key];
-    }
-    if (images.length) {
-      promptParams.image_url = images[0];
-      promptParams.image_urls = images;
-    }
-    if (videos.length) promptParams.video_urls = videos;
-    if (args.endFrameId) promptParams.end_image_url = resolve(args.endFrameId);
-    const preparedFalDispatch = prepareFalVideoDispatch({
-      model: args.model,
-      modelProvider: 'fal',
-      modelEndpoint: reviewed.contract.endpoint,
-      modelInputSchema: reviewed.inputSchema,
-      modelSchemaFamily: reviewed.schemaFamily,
-      organizationId: args.context.organizationId,
-      prompt:
-        typeof args.input.prompt === 'string' ? args.input.prompt : args.prompt,
-      promptParams,
-      duration: args.duration,
-      width: args.width,
-      height: args.height,
-      imageUrl: images[0],
-    });
-    if (preparedFalDispatch.endpoint !== reviewed.contract.endpoint)
-      throw new Error('Fal workflow dispatch changed its reviewed endpoint');
-    this.assertFalReferenceMapping(
-      preparedFalDispatch.input,
-      images,
-      videos,
-      args.endFrameId,
-      resolve,
-    );
-    return {
-      provider: 'fal' as const,
-      target: { endpoint: preparedFalDispatch.endpoint },
-      input: preparedFalDispatch.input,
-      preparedFalDispatch,
-      reviewedOutput: reviewed.contract,
-      schemaPreparation: {
-        kind: 'reviewed-provider-schema' as const,
-        modelKey: args.model,
-        mediaKind: 'video' as const,
-        schemaVersion: reviewed.contract.version,
-        schemaFamily: reviewed.schemaFamily,
-        inputSchemaHash: quoteSnapshotHash(reviewed.inputSchema),
-        adapterVersion: 1 as const,
-      },
-      nativeOutputQuoteEvidence: prepareSeedanceNativeOutputQuote(
-        reviewed.contract.endpoint,
-        preparedFalDispatch.input,
-        measuredReferences ?? [],
-      ),
-      ...(referenceQuoteEvidence ? { referenceQuoteEvidence } : {}),
-    };
-  }
-
-  private assertFalReferenceMapping(
-    input: Record<string, unknown>,
-    images: string[],
-    videos: string[],
-    endFrameId: string | undefined,
-    resolve: (assetId: string) => string,
-  ): void {
-    for (const [field, values] of [
-      ['image_urls', images],
-      ['video_urls', videos],
-    ] as const) {
-      if (
-        values.length > 0 &&
-        field === 'video_urls' &&
-        JSON.stringify(input[field]) !== JSON.stringify(values)
-      )
-        throw new Error('Fal workflow cannot honor its video references');
-      if (
-        values.length > 1 &&
-        field === 'image_urls' &&
-        JSON.stringify(input[field]) !== JSON.stringify(values)
-      )
-        throw new Error('Fal workflow cannot honor its image references');
-    }
-    if (endFrameId && input.end_image_url !== resolve(endFrameId))
-      throw new Error('Fal workflow cannot honor its last frame');
-    if (
-      images.length === 1 &&
-      input.image_url !== images[0] &&
-      JSON.stringify(input.image_urls) !== JSON.stringify(images)
-    ) {
-      throw new Error('Fal workflow cannot honor its first frame');
-    }
-  }
-
-  private requireReferenceFiles(): FilesClientService {
-    if (!this.filesClientService)
-      throw new Error('Stored reference measurement is unavailable');
-    return this.filesClientService;
-  }
-
   /**
    * Maps the executor's reference inputs (start frame, last frame, reference
    * videos) to brief asset ids and the provider URL each id resolves to.
    */
   private async resolveVideoReferenceInputs(
     params: Record<string, unknown>,
-    organizationId: string,
   ): Promise<{
     endFrameId?: string;
     referenceAssetIds?: string[];
@@ -799,27 +374,13 @@ export class WorkflowMediaProviderPlanService {
       (videoReferences ?? []).map(async (reference, index) => {
         const ingredientId = this.helper.extractIngredientId(reference);
         const assetId = ingredientId ?? `workflow-video-reference-${index + 1}`;
-        let providerUrl = reference;
-        if (
-          this.configService?.isAuthorizedMediaDeliveryEnabled &&
-          ingredientId
-        ) {
-          if (!this.mediaIssuer)
-            throw new Error('Authorized media delivery is unavailable');
-          const canonicalUrl = (
-            await this.mediaIssuer.issueServerPublish(organizationId, [
-              ingredientId,
-            ])
-          ).get(ingredientId);
-          if (!canonicalUrl)
-            throw new Error('The reference video is unavailable');
-          providerUrl = canonicalUrl;
-        } else if (ingredientId && this.filesClientService) {
-          providerUrl = await this.filesClientService.getPresignedDownloadUrl(
-            ingredientId,
-            'videos',
-          );
-        }
+        const providerUrl =
+          ingredientId && this.filesClientService
+            ? await this.filesClientService.getPresignedDownloadUrl(
+                ingredientId,
+                'videos',
+              )
+            : reference;
         referenceReplacements.set(assetId, providerUrl);
         return assetId;
       }),
@@ -839,7 +400,6 @@ export class WorkflowMediaProviderPlanService {
    * conflict rule (identity stills win over a conflicting frame role).
    */
   private async resolveIdentityReferencePlan(args: {
-    availableAvatarIds: ReadonlySet<string>;
     brandId: string;
     firstFrameAssetId?: string;
     identityReferences: readonly ClipChainIdentityReference[];
@@ -868,10 +428,7 @@ export class WorkflowMediaProviderPlanService {
           `Identity ${reference.role} reference ${reference.assetId} is unavailable for this organization`,
         );
       }
-      if (
-        asset.brandId !== args.brandId &&
-        !args.availableAvatarIds.has(reference.assetId)
-      ) {
+      if (asset.brandId !== args.brandId) {
         throw new Error(
           `Identity ${reference.role} reference ${reference.assetId} does not belong to the run brand`,
         );

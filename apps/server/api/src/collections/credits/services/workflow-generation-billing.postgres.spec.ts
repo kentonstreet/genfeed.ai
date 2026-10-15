@@ -92,14 +92,13 @@ describe.skipIf(!connectionString)(
     )`);
       await pool.query(`CREATE TABLE "${schema}"."credit_reservations" (
       "id" text PRIMARY KEY, "billingAccountId" text NOT NULL, "organizationId" text NOT NULL,
-      "actorUserId" text, "brandId" text, "amount" double precision NOT NULL, "settledAmount" double precision,
+      "actorUserId" text, "amount" double precision NOT NULL, "settledAmount" double precision,
       "status" "${schema}"."CreditReservationStatus" NOT NULL DEFAULT 'RESERVED',
       "workloadType" text, "workloadId" text, "idempotencyKey" text NOT NULL,
       "description" text, "source" text, "metadata" jsonb, "expiresAt" timestamp(3) NOT NULL,
       "isDeleted" boolean NOT NULL DEFAULT false, "createdAt" timestamp(3) NOT NULL DEFAULT now(),
       "updatedAt" timestamp(3) NOT NULL DEFAULT now(), "workflowExecutionId" text,
-      "workflowNodeId" text, "workflowOperationId" text,
-      "recoveryNextAttemptAt" timestamp(3), "recoveryAttempts" integer NOT NULL DEFAULT 0
+      "workflowNodeId" text, "workflowOperationId" text
     )`);
       url.searchParams.set('options', `-c search_path=${schema}`);
       prisma = new PrismaClient({

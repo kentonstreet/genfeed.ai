@@ -48,29 +48,19 @@ export async function validatedWorkflowAccountingAttribution(
   return attribution;
 }
 
-/**
- * Aggregate workflow funding carries explicit execution attribution without
- * borrowing a node's ALS scope, plus the owning workflow's brand.
- */
+/** Aggregate workflow funding carries explicit execution attribution without borrowing a node's ALS scope. */
 export async function validatedWorkflowFundingAttribution(
   prisma: Pick<Prisma.TransactionClient, 'workflowExecution'>,
   organizationId: string,
   workflowExecutionId: string,
-): Promise<
-  Pick<WorkflowAccountingScope, 'workflowExecutionId'> & { brandId?: string }
-> {
+): Promise<Pick<WorkflowAccountingScope, 'workflowExecutionId'>> {
   const execution = await prisma.workflowExecution.findFirst({
     where: { id: workflowExecutionId, organizationId, isDeleted: false },
-    select: { id: true, workflow: { select: { brandId: true } } },
+    select: { id: true },
   });
   if (!execution)
     throw new BusinessLogicException(
       'Workflow funding execution is outside the organization',
     );
-  // The workflow's brand is the spend's brand; a brandless workflow stays null.
-  const brandId = execution.workflow?.brandId;
-  return {
-    workflowExecutionId: execution.id,
-    ...(brandId ? { brandId } : {}),
-  };
+  return { workflowExecutionId: execution.id };
 }

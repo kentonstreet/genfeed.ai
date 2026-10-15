@@ -207,7 +207,7 @@ describe('WorkflowGenerationBillingService recovery', () => {
         metadata: expect.objectContaining({
           workflowOperations: [
             expect.objectContaining({ nodeId: 'video', credits: 5 }),
-            expect.objectContaining({ nodeId: 'image', credits: 0 }),
+            expect.objectContaining({ nodeId: 'stitch', credits: 0 }),
           ],
         }),
       }),

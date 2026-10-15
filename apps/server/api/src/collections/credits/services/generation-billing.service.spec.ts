@@ -3,19 +3,14 @@ import {
   type GenerationBillingRequest,
   GenerationBillingService,
 } from '@api/collections/credits/services/generation-billing.service';
-import { avatarEngineSnapshot } from '@api/helpers/utils/credits/avatar-duration-quote.fixture';
-import { billableProfile } from '@api/helpers/utils/credits/model-billable-quote.fixture';
 import type { CreditDeductionQueueService } from '@api/queues/credit-deduction/credit-deduction-queue.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   ActivitySource,
-  CreditHoldRecoveryAction,
   CreditReservationStatus,
-  CreditTransactionCategory,
   IngredientStatus,
 } from '@genfeedai/contracts';
 import type { ICreditReservation } from '@genfeedai/contracts/interfaces/billing';
-import { quoteModelBillablePricing } from '@genfeedai/pricing';
 import type { LoggerService } from '@libs/logger/logger.service';
 
 const NOW = new Date('2026-09-29T12:00:00Z');
@@ -43,10 +38,6 @@ function hold(overrides: Partial<ICreditReservation> = {}): ICreditReservation {
   };
 }
 
-function job0(queue: { queueDeduction: { mock: { calls: unknown[][] } } }) {
-  return queue.queueDeduction.mock.calls[0][0] as object;
-}
-
 describe('GenerationBillingService', () => {
   const credits = {
     bindReservationOutput: vi.fn(),
@@ -56,10 +47,6 @@ describe('GenerationBillingService', () => {
   };
   const queue = { queueDeduction: vi.fn(), queueByokUsage: vi.fn() };
   const prisma = {
-    crunGenerationTask: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      findMany: vi.fn().mockResolvedValue([]),
-    },
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
     creditReservation: {
@@ -68,24 +55,21 @@ describe('GenerationBillingService', () => {
       updateMany: vi.fn(),
     },
     ingredient: { findMany: vi.fn(), findFirst: vi.fn(), updateMany: vi.fn() },
-    creditTransaction: { findFirst: vi.fn(), findMany: vi.fn() },
+    creditTransaction: { findFirst: vi.fn() },
   };
   const logger = { error: vi.fn(), log: vi.fn(), warn: vi.fn() };
   const quoteGroups = {
-    recordProviderCompletion: vi.fn(),
     reconcileOutput: vi.fn(),
     reconcile: vi.fn(),
     closeDispatch: vi.fn(),
     bindOutput: vi.fn(),
   };
-  const holdRecovery = { recoverAtCeiling: vi.fn() };
   const service = new GenerationBillingService(
     credits as unknown as CreditsUtilsService,
     queue as unknown as CreditDeductionQueueService,
     prisma as unknown as PrismaService,
     logger as unknown as LoggerService,
     quoteGroups as never,
-    holdRecovery as never,
   );
 
   const request = (
@@ -109,17 +93,7 @@ describe('GenerationBillingService', () => {
   });
 
   beforeEach(() => {
-    prisma.crunGenerationTask.findFirst.mockReset().mockResolvedValue(null);
-    prisma.crunGenerationTask.findMany.mockReset().mockResolvedValue([]);
     vi.resetAllMocks();
-    holdRecovery.recoverAtCeiling.mockResolvedValue(
-      CreditHoldRecoveryAction.RELEASE,
-    );
-    prisma.$transaction.mockImplementation(async (operation) =>
-      operation(prisma),
-    );
-    prisma.crunGenerationTask.findFirst.mockResolvedValue(null);
-    prisma.crunGenerationTask.findMany.mockResolvedValue([]);
     quoteGroups.reconcile.mockResolvedValue(0);
     quoteGroups.reconcileOutput.mockResolvedValue(false);
     credits.bindReservationOutput.mockResolvedValue(hold());
@@ -151,23 +125,6 @@ describe('GenerationBillingService', () => {
     );
   });
 
-  it('delegates trusted provider quantities to the existing quote ledger without charging at receipt', async () => {
-    const input = {
-      ingredientId: 'asset',
-      organizationId: 'org_1',
-      externalId: 'provider-result',
-      provider: 'fal' as const,
-      modelKey: 'test/model',
-      quantities: { width: 1280, height: 720, duration: 3 },
-    };
-    await service.recordProviderCompletion(input);
-    expect(
-      quoteGroups.recordProviderCompletion,
-    ).toHaveBeenCalledExactlyOnceWith(input);
-    expect(queue.queueDeduction).not.toHaveBeenCalled();
-    expect(credits.releaseReservation).not.toHaveBeenCalled();
-  });
-
   describe('hasPool', () => {
     it('is true only for a funded, completion-settled request hold', () => {
       expect(service.hasPool(request())).toBe(true);
@@ -196,23 +153,6 @@ describe('GenerationBillingService', () => {
         }),
       );
       expect(billing.creditsConfig?.boundOutputCount).toBe(1);
-    });
-
-    it('stores caller metadata on the bound hold without letting it replace the asset id', async () => {
-      await service.bindOutput(request(), {
-        credits: 4,
-        ingredientId: 'ing_1',
-        metadata: { assetId: 'spoofed', avatarDurationQuote: { seconds: 3 } },
-      });
-
-      expect(credits.bindReservationOutput).toHaveBeenCalledWith(
-        expect.objectContaining({
-          metadata: {
-            assetId: 'ing_1',
-            avatarDurationQuote: { seconds: 3 },
-          },
-        }),
-      );
     });
 
     it('links BYOK usage without reserving platform credits', async () => {
@@ -263,24 +203,6 @@ describe('GenerationBillingService', () => {
       expect(billing.creditsConfig?.reservationId).toBe('pool_9');
       expect(service.hasPool(billing)).toBe(true);
     });
-
-    it('attributes the pool and its identity to the caller brand', async () => {
-      credits.reserveCredits.mockResolvedValue(hold({ id: 'pool_9' }));
-
-      const billing = await service.holdForService({
-        brandId: 'brand_7',
-        credits: 4,
-        description: 'Avatar video generation',
-        organizationId: 'org_1',
-        source: ActivitySource.VIDEO_GENERATION,
-        userId: 'user_1',
-      });
-
-      expect(credits.reserveCredits).toHaveBeenCalledWith(
-        expect.objectContaining({ brandId: 'brand_7' }),
-      );
-      expect(billing.user?.brandId).toBe('brand_7');
-    });
   });
 
   describe('settleOutput', () => {
@@ -301,277 +223,6 @@ describe('GenerationBillingService', () => {
         type: 'deduct-credits',
         userId: 'user_1',
       });
-    });
-
-    describe('per-second avatar holds', () => {
-      const avatarHold = () =>
-        hold({
-          amount: 129,
-          metadata: {
-            assetId: 'ing_1',
-            avatarDurationQuote: {
-              estimatedSeconds: 10,
-              snapshot: avatarEngineSnapshot(
-                'heygen/avatar-iv',
-                'photo_avatar',
-                10,
-              ),
-            },
-          },
-        });
-
-      it('settles below the hold and refunds the rest for a shorter clip', async () => {
-        credits.findReservationForWorkload.mockResolvedValue(avatarHold());
-
-        await service.settleOutput('ing_1', 'org_1', { durationSeconds: 5 });
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-        expect(job0(queue)).toEqual(
-          expect.objectContaining({
-            amount: 65,
-            idempotencyKey: 'media-generation-settle:hold_1',
-            metadata: {
-              assetId: 'ing_1',
-              durationSettlement: {
-                actualCredits: 65,
-                actualSeconds: 5,
-                estimatedSeconds: 10,
-                heldCredits: 129,
-              },
-            },
-            reservationId: 'hold_1',
-          }),
-        );
-      });
-
-      it('settles the hold and tops up the overrun for a longer clip', async () => {
-        credits.findReservationForWorkload.mockResolvedValue(avatarHold());
-
-        await service.settleOutput('ing_1', 'org_1', { durationSeconds: 20 });
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(2);
-        expect(job0(queue)).toEqual(
-          expect.objectContaining({ amount: 129, reservationId: 'hold_1' }),
-        );
-        const topUp = queue.queueDeduction.mock.calls[1][0];
-        expect(topUp).toEqual(
-          expect.objectContaining({
-            amount: 128,
-            idempotencyKey: 'media-generation-duration-topup:hold_1',
-            metadata: {
-              assetId: 'ing_1',
-              durationTopUpOfReservationId: 'hold_1',
-            },
-            userId: 'user_1',
-          }),
-        );
-        expect(topUp).not.toHaveProperty('reservationId');
-      });
-
-      it('falls back to the stored output duration when the provider reports none', async () => {
-        credits.findReservationForWorkload.mockResolvedValue(avatarHold());
-        prisma.ingredient.findFirst.mockResolvedValue({
-          metadata: { duration: 5 },
-        });
-
-        await service.settleOutput('ing_1', 'org_1');
-
-        expect(prisma.ingredient.findFirst).toHaveBeenCalledWith(
-          expect.objectContaining({
-            where: { id: 'ing_1', isDeleted: false, organizationId: 'org_1' },
-          }),
-        );
-        expect(job0(queue)).toEqual(expect.objectContaining({ amount: 65 }));
-      });
-
-      it('caps the overrun per render and flags the excess for an operator', async () => {
-        credits.findReservationForWorkload.mockResolvedValue(avatarHold());
-
-        await service.settleOutput('ing_1', 'org_1', { durationSeconds: 60 });
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(2);
-        expect(job0(queue)).toEqual(
-          expect.objectContaining({
-            amount: 129,
-            metadata: expect.objectContaining({
-              durationSettlement: expect.objectContaining({
-                actualCredits: 770,
-                forgoneCredits: 512,
-              }),
-            }),
-          }),
-        );
-        // At most twice the hold in total: the top-up is the hold again.
-        expect(queue.queueDeduction.mock.calls[1][0]).toEqual(
-          expect.objectContaining({
-            amount: 129,
-            idempotencyKey: 'media-generation-duration-topup:hold_1',
-          }),
-        );
-        expect(logger.error).toHaveBeenCalledWith(
-          expect.stringContaining('per-render charge cap'),
-          expect.objectContaining({
-            forgoneCredits: 512,
-            maxChargeCredits: 258,
-            reservationId: 'hold_1',
-          }),
-        );
-      });
-
-      describe('after the hold ended', () => {
-        const endedAvatarHold = () => ({
-          ...avatarHold(),
-          status: CreditReservationStatus.EXPIRED,
-        });
-
-        it('does not enqueue the terminal late charge when the overrun enqueue fails', async () => {
-          credits.findReservationForWorkload.mockResolvedValue(
-            endedAvatarHold(),
-          );
-          prisma.ingredient.findFirst.mockResolvedValue({
-            status: IngredientStatus.GENERATED,
-            userId: 'user_1',
-          });
-          queue.queueDeduction.mockImplementation(async (job) => {
-            if (job.idempotencyKey === 'media-generation-duration-topup:hold_1')
-              throw new Error('Redis unavailable');
-          });
-
-          await expect(
-            service.settleOutput('ing_1', 'org_1', { durationSeconds: 60 }),
-          ).rejects.toThrow('Redis unavailable');
-
-          expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-          expect(job0(queue)).toEqual(
-            expect.objectContaining({
-              idempotencyKey: 'media-generation-duration-topup:hold_1',
-            }),
-          );
-        });
-
-        it('re-prices a late completion at the clip length instead of the hold', async () => {
-          credits.findReservationForWorkload.mockResolvedValue(
-            endedAvatarHold(),
-          );
-          prisma.ingredient.findFirst.mockResolvedValue({
-            metadata: { duration: 5 },
-            status: IngredientStatus.GENERATED,
-            userId: 'user_1',
-          });
-
-          expect(await service.settleOutput('ing_1', 'org_1')).toBe(
-            'late-queued',
-          );
-
-          expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-          expect(job0(queue)).toEqual(
-            expect.objectContaining({
-              amount: 65,
-              idempotencyKey: 'media-generation-late-settle:hold_1',
-              metadata: expect.objectContaining({
-                durationSettlement: expect.objectContaining({
-                  actualSeconds: 5,
-                  heldCredits: 129,
-                }),
-                lateSettlementOfReservationId: 'hold_1',
-              }),
-            }),
-          );
-        });
-
-        it('tops up a late overrun with the same capped, shared top-up', async () => {
-          credits.findReservationForWorkload.mockResolvedValue(
-            endedAvatarHold(),
-          );
-          prisma.ingredient.findFirst.mockResolvedValue({
-            status: IngredientStatus.GENERATED,
-            userId: 'user_1',
-          });
-
-          await service.settleOutput('ing_1', 'org_1', { durationSeconds: 60 });
-
-          expect(queue.queueDeduction).toHaveBeenCalledTimes(2);
-          expect(job0(queue)).toEqual(
-            expect.objectContaining({
-              amount: 129,
-              idempotencyKey: 'media-generation-duration-topup:hold_1',
-            }),
-          );
-          expect(queue.queueDeduction.mock.calls[1][0]).toEqual(
-            expect.objectContaining({
-              amount: 129,
-              idempotencyKey: 'media-generation-late-settle:hold_1',
-            }),
-          );
-        });
-
-        it('re-prices a late charge the reconcile sweep finds', async () => {
-          prisma.creditReservation.findMany.mockImplementation(
-            async ({ where }: { where: { status: unknown } }) =>
-              typeof where.status === 'object'
-                ? [
-                    {
-                      id: 'hold_1',
-                      organizationId: 'org_1',
-                      workloadId: 'ing_1',
-                    },
-                  ]
-                : [],
-          );
-          prisma.ingredient.findMany.mockResolvedValue([
-            {
-              id: 'ing_1',
-              organizationId: 'org_1',
-              status: IngredientStatus.GENERATED,
-            },
-          ]);
-          prisma.creditTransaction.findMany.mockResolvedValue([]);
-          credits.findReservationForWorkload.mockResolvedValue(
-            endedAvatarHold(),
-          );
-          prisma.ingredient.findFirst.mockResolvedValue({
-            metadata: { duration: 5 },
-            status: IngredientStatus.GENERATED,
-            userId: 'user_1',
-          });
-
-          expect(await service.reconcileLateCompletions(NOW)).toBe(1);
-          expect(job0(queue)).toEqual(
-            expect.objectContaining({
-              amount: 65,
-              idempotencyKey: 'media-generation-late-settle:hold_1',
-            }),
-          );
-        });
-      });
-
-      it('settles at the estimate and warns when no duration is known', async () => {
-        credits.findReservationForWorkload.mockResolvedValue(avatarHold());
-
-        await service.settleOutput('ing_1', 'org_1');
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-        expect(job0(queue)).toEqual(expect.objectContaining({ amount: 129 }));
-        expect(logger.warn).toHaveBeenCalledWith(
-          'Per-second generation settled at its admission estimate',
-          expect.objectContaining({ reservationId: 'hold_1' }),
-        );
-      });
-    });
-
-    it('carries the hold brand onto the queued settlement', async () => {
-      credits.findReservationForWorkload.mockResolvedValue(
-        hold({ brandId: 'brand_7' }),
-      );
-
-      await service.settleOutput('ing_1', 'org_1');
-
-      expect(queue.queueDeduction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          brandId: 'brand_7',
-          reservationId: 'hold_1',
-        }),
-      );
     });
 
     it('keys a redelivered completion identically so the queue collapses it', async () => {
@@ -599,56 +250,17 @@ describe('GenerationBillingService', () => {
       expect(queue.queueDeduction).not.toHaveBeenCalled();
     });
 
-    it.each([
-      CreditReservationStatus.RELEASED,
-      CreditReservationStatus.EXPIRED,
-    ])(
-      'charges a completion that arrives after its hold was %s, once per hold',
-      async (status) => {
-        credits.findReservationForWorkload.mockResolvedValue(hold({ status }));
-        prisma.ingredient.findFirst.mockResolvedValue({
-          status: IngredientStatus.GENERATED,
-          userId: 'user_2',
-        });
-
-        expect(await service.settleOutput('ing_1', 'org_1')).toBe(
-          'late-queued',
-        );
-        expect(await service.settleOutput('ing_1', 'org_1')).toBe(
-          'late-queued',
-        );
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(2);
-        for (const [job] of queue.queueDeduction.mock.calls)
-          expect(job).toEqual(
-            expect.objectContaining({
-              amount: 4,
-              idempotencyKey: 'media-generation-late-settle:hold_1',
-              maxOverdraftCredits: 1_000_000,
-              organizationId: 'org_1',
-              type: 'deduct-credits',
-              userId: 'user_1',
-            }),
-          );
-        expect(job0(queue)).not.toHaveProperty('reservationId');
-        expect(logger.error).toHaveBeenCalledWith(
-          expect.stringContaining('charged late'),
-          expect.objectContaining({ ingredientId: 'ing_1' }),
-        );
-      },
-    );
-
-    it('does not charge a hold that ended without a usable output', async () => {
+    it('flags a completion that arrives after its hold was released', async () => {
       credits.findReservationForWorkload.mockResolvedValue(
         hold({ status: CreditReservationStatus.RELEASED }),
       );
-      prisma.ingredient.findFirst.mockResolvedValue({
-        status: IngredientStatus.FAILED,
-        userId: 'user_1',
-      });
 
       expect(await service.settleOutput('ing_1', 'org_1')).toBe('hold-ended');
       expect(queue.queueDeduction).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('after its credit hold ended'),
+        expect.objectContaining({ ingredientId: 'ing_1' }),
+      );
     });
 
     it('ignores an output that never had a hold (BYOK, external billing)', async () => {
@@ -788,49 +400,6 @@ describe('GenerationBillingService', () => {
     });
   });
 
-  describe('media generation receipts', () => {
-    function withReceipts(syncTerminal: ReturnType<typeof vi.fn>) {
-      return new GenerationBillingService(
-        credits as unknown as CreditsUtilsService,
-        queue as unknown as CreditDeductionQueueService,
-        prisma as unknown as PrismaService,
-        logger as unknown as LoggerService,
-        quoteGroups as never,
-        holdRecovery as never,
-        { syncTerminal } as never,
-      );
-    }
-
-    it('settles the output receipt from the completion contract without waiting on it', async () => {
-      // A receipt write that never settles cannot hold the credit settlement.
-      const syncTerminal = vi.fn(() => new Promise<void>(() => undefined));
-      credits.findReservationForWorkload.mockResolvedValue(hold());
-
-      const outcome = await withReceipts(syncTerminal).settleOutput(
-        'ing_1',
-        'org_1',
-      );
-
-      expect(outcome).toBe('queued');
-      expect(syncTerminal).toHaveBeenCalledWith('org_1', 'ing_1', 'settled');
-      expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-    });
-
-    it('settles the output receipt as released when its hold is given back', async () => {
-      const syncTerminal = vi.fn(() => new Promise<void>(() => undefined));
-      credits.findReservationForWorkload.mockResolvedValue(hold());
-
-      await withReceipts(syncTerminal).releaseOutput('ing_1', 'org_1');
-
-      expect(syncTerminal).toHaveBeenCalledWith('org_1', 'ing_1', 'released');
-      expect(credits.releaseReservation).toHaveBeenCalledWith({
-        organizationId: 'org_1',
-        reason: 'release',
-        reservationId: 'hold_1',
-      });
-    });
-  });
-
   describe('reconcile', () => {
     const row = (
       id: string,
@@ -945,229 +514,6 @@ describe('GenerationBillingService', () => {
       },
     );
 
-    describe('intent-bound holds past the ceiling', () => {
-      const intentRow = (provider: string, expiredMsAgo: number) => ({
-        ...row('intent', new Date(NOW.getTime() - expiredMsAgo)),
-        metadata: {
-          assetId: 'intent',
-          submissionIntent: { version: 1, provider },
-        },
-      });
-      const DAY_MS = 24 * 60 * 60 * 1000;
-
-      beforeEach(() => {
-        prisma.ingredient.findMany.mockResolvedValue([
-          ingredient('intent', IngredientStatus.PROCESSING),
-        ]);
-      });
-
-      it('checks provider recovery before ending an intent hold', async () => {
-        const stale = intentRow('heygen', DAY_MS + 1);
-        prisma.creditReservation.findMany.mockResolvedValue([stale]);
-
-        expect(await service.reconcile(NOW)).toBe(1);
-
-        expect(holdRecovery.recoverAtCeiling).toHaveBeenCalledWith(
-          'org_1',
-          'hold_intent',
-        );
-        expect(credits.releaseReservation).not.toHaveBeenCalled();
-        expect(prisma.ingredient.updateMany).not.toHaveBeenCalled();
-        expect(logger.log).toHaveBeenCalledWith(
-          'Generation hold reconciliation completed',
-          expect.objectContaining({ expiredIntentHolds: 1 }),
-        );
-      });
-
-      it('bounds provider recovery to five calls across a sweep', async () => {
-        const holds = Array.from({ length: 7 }, (_, i) => ({
-          ...intentRow('heygen', DAY_MS + 1),
-          id: `hold_${i}`,
-          workloadId: `asset_${i}`,
-          metadata: {
-            assetId: `asset_${i}`,
-            submissionIntent: { version: 1, provider: 'heygen' },
-          },
-        }));
-        prisma.creditReservation.findMany.mockResolvedValue(holds);
-        prisma.ingredient.findMany.mockResolvedValue(
-          holds.map((hold) =>
-            ingredient(hold.workloadId, IngredientStatus.PROCESSING),
-          ),
-        );
-        expect(await service.reconcile(NOW)).toBe(5);
-        expect(holdRecovery.recoverAtCeiling).toHaveBeenCalledTimes(5);
-        expect(credits.releaseReservation).not.toHaveBeenCalled();
-      });
-
-      it('polls a recoverable hold within two sweeps despite six unknown-status holds (#6168)', async () => {
-        const state = new Map<
-          string,
-          { recoveryAttempts: number; recoveryNextAttemptAt: Date | null }
-        >();
-        const holds = Array.from({ length: 7 }, (_, i) => {
-          state.set(`hold_${i}`, {
-            recoveryAttempts: 0,
-            recoveryNextAttemptAt: null,
-          });
-          return {
-            ...intentRow('heygen', DAY_MS + 1),
-            id: `hold_${i}`,
-            metadata: {
-              assetId: `asset_${i}`,
-              submissionIntent: { version: 1, provider: 'heygen' },
-            },
-            workloadId: `asset_${i}`,
-          };
-        });
-        prisma.creditReservation.findMany.mockImplementation(async () =>
-          holds.map((hold) => ({ ...hold, ...state.get(hold.id) })),
-        );
-        prisma.creditReservation.updateMany.mockImplementation(
-          async ({
-            data,
-            where,
-          }: {
-            data: {
-              recoveryAttempts: number;
-              recoveryNextAttemptAt: Date;
-            };
-            where: { id: string };
-          }) => {
-            state.set(where.id, data);
-            return { count: 1 };
-          },
-        );
-        prisma.ingredient.findMany.mockResolvedValue(
-          holds.map((hold) =>
-            ingredient(hold.workloadId, IngredientStatus.PROCESSING),
-          ),
-        );
-        holdRecovery.recoverAtCeiling.mockImplementation(
-          async (_organizationId: string, reservationId: string) =>
-            reservationId === 'hold_6'
-              ? CreditHoldRecoveryAction.RELEASE
-              : undefined,
-        );
-
-        await service.reconcile(NOW);
-        await service.reconcile(new Date(NOW.getTime() + 60_000));
-
-        expect(holdRecovery.recoverAtCeiling).toHaveBeenCalledWith(
-          'org_1',
-          'hold_6',
-        );
-        // Each unknown hold was polled once, not re-polled ahead of hold_6.
-        expect(holdRecovery.recoverAtCeiling).toHaveBeenCalledTimes(7);
-      });
-
-      it('backs off an unknown-status hold with doubling delay capped at six hours', async () => {
-        prisma.creditReservation.findMany.mockResolvedValue([
-          {
-            ...intentRow('heygen', DAY_MS + 1),
-            recoveryAttempts: 9,
-            recoveryNextAttemptAt: new Date(NOW.getTime() - 1),
-          },
-        ]);
-        prisma.creditReservation.updateMany.mockResolvedValue({ count: 1 });
-        holdRecovery.recoverAtCeiling.mockResolvedValue(undefined);
-
-        await service.reconcile(NOW);
-
-        expect(prisma.creditReservation.updateMany).toHaveBeenCalledWith({
-          data: {
-            recoveryAttempts: 10,
-            recoveryNextAttemptAt: new Date(NOW.getTime() + 6 * 3_600_000),
-          },
-          where: {
-            id: 'hold_intent',
-            isDeleted: false,
-            organizationId: 'org_1',
-            status: 'RESERVED',
-          },
-        });
-      });
-
-      it('counts a hold still inside the ceiling as awaiting proof', async () => {
-        prisma.creditReservation.findMany.mockResolvedValue([
-          intentRow('heygen', DAY_MS - 1),
-        ]);
-
-        expect(await service.reconcile(NOW)).toBe(0);
-
-        expect(credits.releaseReservation).not.toHaveBeenCalled();
-        expect(logger.log).toHaveBeenCalledWith(
-          'Generation hold reconciliation completed',
-          expect.objectContaining({
-            awaitingIntentProof: 1,
-            expiredIntentHolds: 0,
-          }),
-        );
-      });
-
-      it('leaves Crun intent to its own task receipts', async () => {
-        prisma.creditReservation.findMany.mockResolvedValue([
-          intentRow('crun', 10 * DAY_MS),
-        ]);
-
-        expect(await service.reconcile(NOW)).toBe(0);
-        expect(credits.releaseReservation).not.toHaveBeenCalled();
-      });
-    });
-
-    describe('late completions after hold expiry', () => {
-      const expired = {
-        id: 'hold_late',
-        organizationId: 'org_1',
-        workloadId: 'late',
-      };
-
-      beforeEach(() => {
-        prisma.creditReservation.findMany.mockImplementation(
-          async ({ where }: { where: { status: unknown } }) =>
-            typeof where.status === 'object' ? [expired] : [],
-        );
-        prisma.ingredient.findMany.mockResolvedValue([
-          ingredient('late', IngredientStatus.GENERATED),
-        ]);
-        credits.findReservationForWorkload.mockResolvedValue(
-          hold({
-            id: 'hold_late',
-            status: CreditReservationStatus.EXPIRED,
-            workloadId: 'late',
-          }),
-        );
-        prisma.ingredient.findFirst.mockResolvedValue({
-          status: IngredientStatus.GENERATED,
-          userId: 'user_1',
-        });
-        prisma.creditTransaction.findMany.mockResolvedValue([]);
-      });
-
-      it('charges a completed output whose completion hook never ran', async () => {
-        expect(await service.reconcileLateCompletions(NOW)).toBe(1);
-
-        expect(queue.queueDeduction).toHaveBeenCalledTimes(1);
-        expect(queue.queueDeduction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            idempotencyKey: 'media-generation-late-settle:hold_late',
-          }),
-        );
-      });
-
-      it('skips an output whose late charge is already in the ledger', async () => {
-        prisma.creditTransaction.findMany.mockResolvedValue([
-          {
-            idempotencyKey: 'media-generation-late-settle:hold_late',
-            organizationId: 'org_1',
-          },
-        ]);
-
-        expect(await service.reconcileLateCompletions(NOW)).toBe(0);
-        expect(queue.queueDeduction).not.toHaveBeenCalled();
-      });
-    });
-
     it('settles finished output, releases failed output, and fails one that outlived its hold', async () => {
       prisma.creditReservation.findMany.mockResolvedValue([
         row('done'),
@@ -1274,139 +620,5 @@ describe('GenerationBillingService', () => {
       expect(queue.queueDeduction).toHaveBeenCalledTimes(2);
       expect(logger.error).toHaveBeenCalled();
     });
-  });
-  it.each(['submitting', 'pending', 'running', 'recovery-required'])(
-    'keeps unresolved Crun %s funding despite local failure/TTL',
-    async (state) => {
-      prisma.crunGenerationTask.findFirst.mockResolvedValue({
-        state,
-        terminalReceipt: null,
-        vendorCostRecordedAt: null,
-        mediaPersistedAt: null,
-        quoteSnapshot: {},
-      });
-      expect(await service.releaseOutput('ing_1', 'org_1')).toBe('held');
-      expect(await service.settleOutput('ing_1', 'org_1')).toBe('held');
-      await service.recordProviderFailure('ing_1', 'org_1');
-      expect(credits.releaseReservation).not.toHaveBeenCalled();
-      expect(queue.queueDeduction).not.toHaveBeenCalled();
-      expect(prisma.ingredient.updateMany).not.toHaveBeenCalled();
-    },
-  );
-  it('rechecks Crun release proof inside Serializable status mutation and retries only a rolled-back conflict', async () => {
-    prisma.crunGenerationTask.findFirst.mockResolvedValue({
-      state: 'prepared',
-      terminalReceipt: null,
-    });
-    prisma.ingredient.findFirst.mockResolvedValue({
-      id: 'ing_1',
-      status: IngredientStatus.PROCESSING,
-      generationBilling: null,
-    });
-    prisma.$transaction.mockRejectedValueOnce({ code: 'P2034' });
-    await service.recordProviderFailure('ing_1', 'org_1');
-    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
-    expect(prisma.$transaction).toHaveBeenLastCalledWith(expect.any(Function), {
-      isolationLevel: 'Serializable',
-    });
-    expect(prisma.ingredient.updateMany).toHaveBeenCalledTimes(1);
-    expect(queue.queueDeduction).not.toHaveBeenCalled();
-  });
-  it('a submitting task cannot acquire negative proof from a local failure projection', async () => {
-    prisma.crunGenerationTask.findFirst.mockResolvedValue({
-      state: 'submitting',
-      terminalReceipt: null,
-    });
-    await service.recordSubmissionRejection('ing_1', 'org_1');
-    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
-      isolationLevel: 'Serializable',
-    });
-    expect(prisma.ingredient.updateMany).not.toHaveBeenCalled();
-    expect(credits.releaseReservation).not.toHaveBeenCalled();
-  });
-  it('queues the server-only Crun marker and acknowledges only canonical usage category', async () => {
-    const usage = {
-      kind: 'byok',
-      state: 'pending',
-      amount: 4,
-      description: 'Image generation',
-      source: ActivitySource.IMAGE_GENERATION,
-      userId: 'user_1',
-      expiresAt: '2099-01-01T00:00:00.000Z',
-      submissionIntentProvider: 'crun',
-    };
-    const { kind: _kind, state: _state, ...immutable } = usage;
-    const priced = quoteModelBillablePricing(
-      billableProfile({
-        key: 'crun/google/nano-banana-pro',
-        provider: 'crun',
-        cost: 4,
-      }),
-      {
-        modelKey: 'crun/google/nano-banana-pro',
-        provider: 'crun',
-        outputs: 1,
-        requests: 1,
-      },
-      1,
-      NOW.toISOString(),
-    );
-    if (priced.status !== 'priced') throw new Error('Invalid fixture quote');
-    const task = {
-      credentialSource: 'byok',
-      fundingBinding: { kind: 'byok', receipt: immutable },
-      state: 'provider-success',
-      terminalReceipt: { status: 'success', credits: '8' },
-      vendorCostRecordedAt: new Date(),
-      mediaPersistedAt: new Date(),
-      quoteSnapshot: {
-        ...priced.snapshot,
-        providerQuote: {
-          provider: 'crun',
-          estimated: false,
-          providerCreditsPerTask: '8',
-          quoteHash: 'a'.repeat(64),
-          inputHash: 'b'.repeat(64),
-          contractVersion: 'v1',
-          creditsPerUsd: null,
-          acquisitionRateVersion: null,
-          credentialSource: 'byok',
-          credentialId: null,
-          credentialFingerprint: 'c'.repeat(64),
-        },
-      },
-    };
-    prisma.crunGenerationTask.findFirst.mockResolvedValue(task);
-    prisma.ingredient.findFirst.mockResolvedValue({
-      id: 'ing_1',
-      status: IngredientStatus.GENERATED,
-      generationBilling: usage,
-    });
-    credits.findReservationForWorkload.mockResolvedValue(null);
-    await service.settleOutput('ing_1', 'org_1');
-    expect(queue.queueByokUsage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: { assetId: 'ing_1', submissionIntentProvider: 'crun' },
-      }),
-    );
-    prisma.creditTransaction.findFirst.mockResolvedValue({ id: 'usage' });
-    await service.settleOutput('ing_1', 'org_1');
-    expect(prisma.creditTransaction.findFirst).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          category: CreditTransactionCategory.BYOK_USAGE,
-          actorUserId: 'user_1',
-          amount: 4,
-          metadata: { path: ['assetId'], equals: 'ing_1' },
-        }),
-      }),
-    );
-    expect(prisma.ingredient.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: {
-          generationBilling: expect.objectContaining({ state: 'recorded' }),
-        },
-      }),
-    );
   });
 });

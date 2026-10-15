@@ -1,951 +1,359 @@
-import { createHash, randomUUID } from 'node:crypto';
-import type { AvatarVideoAspectRatio } from '@api/collections/videos/dto/create-avatar-video.dto';
+import process from 'node:process';
+import { AvatarVideoAspectRatio } from '@api/collections/videos/dto/create-avatar-video.dto';
 import { ApiKeyHelperService } from '@api/services/api-key/api-key-helper.service';
-import { ByokService } from '@api/services/byok/byok.service';
 import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
-import { buildHeyGenAvatarEngineFields } from '@api/services/integrations/heygen/helpers/heygen-avatar-engine';
-import {
-  catalogPageSchema,
-  groupSchema,
-  type HeyGenCatalogLook,
-  lookSchema,
-  toCatalogAvatar,
-  voiceSchema,
-} from '@api/services/integrations/heygen/helpers/heygen-catalog';
-import {
-  buildHeyGenSpeechBody,
-  countHeyGenSpeechCharacters,
-  HEYGEN_SPEECH_MAX_ATTEMPTS,
-  HEYGEN_SPEECH_RETRY_BASE_DELAY_MS,
-  HEYGEN_SPEECH_RETRYABLE_STATUSES,
-  HEYGEN_SPEECH_TIMEOUT_MS,
-  HEYGEN_SPEECH_URL,
-  mapHeyGenSpeechFailure,
-  readHeyGenErrorEnvelope,
-  readHeyGenRetryAfter,
-  readHeyGenSpeech,
-} from '@api/services/integrations/heygen/helpers/heygen-speech';
-import {
-  buildHeyGenVideoCreateBody,
-  HEYGEN_API_ORIGIN,
-  HEYGEN_VIDEO_CREATE_PATH,
-  HEYGEN_VIDEO_POLL_INTERVAL_MS,
-  HEYGEN_VIDEO_POLL_TIMEOUT_MS,
-  type HeyGenVideoCreateBody,
-  heyGenVideoStatusUrl,
-  isHeyGenVideoTerminal,
-  readHeyGenVideoId,
-  readHeyGenVideoStatus,
-} from '@api/services/integrations/heygen/helpers/heygen-video';
-import { heyGenAvatarCandidateSchema } from '@api/services/integrations/heygen/heygen-identity.schema';
-import type {
-  HeyGenAvatarCandidate,
-  HeyGenNativeAvatar,
-  ResolvedHeyGenConnection,
-} from '@api/services/integrations/heygen/heygen-identity.types';
-import type {
-  HeyGenSpeechInput as HeyGenSpeechRequest,
-  HeyGenSpeechResult,
-} from '@api/services/integrations/heygen/heygen-speech.types';
-import { PollTimeoutException } from '@api/shared/services/poll-until/poll-until.exception';
-import { PollUntilService } from '@api/shared/services/poll-until/poll-until.service';
-import { ApiKeyCategory, ByokProvider } from '@genfeedai/contracts';
-import {
-  getEligibleHeyGenAvatarEngines,
-  type HeyGenAvatarEngine,
-} from '@genfeedai/contracts/constants';
-import type {
-  HeyGenAvatarCatalogPage,
-  HeyGenAvatarRef,
-  HeyGenCatalogAvatar,
-  HeyGenCatalogVoice,
-  HeyGenConnectionRef,
-} from '@genfeedai/contracts/interfaces';
+import { ApiKeyCategory } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
 import { CallerUtil } from '@libs/utils/caller/caller.util';
 import { HttpService } from '@nestjs/axios';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isAxiosError } from 'axios';
 import { firstValueFrom } from 'rxjs';
-import { z } from 'zod';
 
-type HeyGenSpeechInput =
-  | string
-  | {
-      audioUrl?: string;
-      inputText?: string;
-      voiceId?: string;
-    };
+type HeyGenApiRecord = Record<string, unknown>;
 
 @Injectable()
 export class HeyGenService {
   private readonly constructorName: string = String(this.constructor.name);
-  private readonly endpoint = `${HEYGEN_API_ORIGIN}/v3`;
+
+  private readonly endpoint = 'https://api.heygen.com/v2';
 
   constructor(
     private readonly loggerService: LoggerService,
     private readonly httpService: HttpService,
     private readonly apiKeyHelperService: ApiKeyHelperService,
-    private readonly pollUntilService: PollUntilService,
-    private readonly byokService: ByokService,
   ) {}
 
   private getApiKey(): string {
     return this.apiKeyHelperService.getApiKey(ApiKeyCategory.HEYGEN);
   }
 
-  public async resolveOrganizationConnection(
-    organizationId: string,
-    kind?: 'byok' | 'platform',
-  ): Promise<ResolvedHeyGenConnection> {
-    if (kind !== 'platform') {
-      const credential = await this.byokService.lookupApiKeyWithIdentity(
-        organizationId,
-        ByokProvider.HEYGEN,
-      );
-      if (credential)
-        return {
-          apiKey: credential.apiKey,
-          binding: {
-            provider: 'heygen',
-            kind: 'byok',
-            organizationId,
-            credentialVersionId: credential.credentialId,
-          },
-        };
-      if (kind === 'byok')
-        throw new BadRequestException(
-          'Reconnect your personal HeyGen account to use this identity.',
-        );
-    }
-    const apiKey = this.getApiKey();
-    if (!apiKey)
-      throw new BadRequestException(
-        'The public HeyGen connection is unavailable.',
-      );
-    return {
-      apiKey,
-      binding: {
-        provider: 'heygen',
-        kind: 'platform',
-        organizationId,
-        credentialVersionId: this.platformCredentialVersion(apiKey),
-      },
-    };
-  }
-
-  public platformCredentialVersion(apiKey: string): string {
-    return createHash('sha256')
-      .update('heygen-platform-credential:v1\0')
-      .update(apiKey)
-      .digest('hex');
-  }
-
-  private async resolveCredential(
-    apiKeyOverride?: string,
-    organizationId?: string,
-  ) {
-    if (apiKeyOverride) return { apiKey: apiKeyOverride, hasCustomKey: true };
-    const connection = await this.resolveOrganizationConnection(
-      organizationId ?? 'platform',
-      organizationId ? undefined : 'platform',
-    );
-    return {
-      apiKey: connection.apiKey,
-      hasCustomKey: connection.binding.kind === 'byok',
-    };
-  }
-
-  private async resolveApiKey(
-    apiKeyOverride?: string,
-    organizationId?: string,
-  ): Promise<string> {
-    return (await this.resolveCredential(apiKeyOverride, organizationId))
-      .apiKey;
+  private resolveApiKey(apiKeyOverride?: string): string {
+    return apiKeyOverride || this.getApiKey();
   }
 
   private getHeaders(apiKey: string) {
-    return { 'Content-Type': 'application/json', 'X-Api-Key': apiKey };
-  }
-
-  /** Renders a trained look with an engine checked against it. */
-  public async generateNativeAvatarVideo(
-    metadataId: string,
-    avatar: HeyGenNativeAvatar,
-    voiceInput: HeyGenSpeechInput,
-    apiKey: string,
-    aspectRatio: AvatarVideoAspectRatio = '9:16',
-    engine: HeyGenAvatarEngine = 'avatar_iv',
-  ): Promise<string> {
-    const speech =
-      typeof voiceInput === 'string' ? { audioUrl: voiceInput } : voiceInput;
-    const engineFields = buildHeyGenAvatarEngineFields(avatar, engine);
-    const avatarId = avatar.lookId;
-    if (
-      !avatarId.trim() ||
-      !apiKey ||
-      (speech.audioUrl && (speech.voiceId || speech.inputText)) ||
-      (!speech.audioUrl &&
-        (!speech.voiceId?.trim() || !speech.inputText?.trim()))
-    )
-      throw new BadRequestException(
-        'Choose a native avatar and either authorized audio or a voice with script.',
-      );
-    return this.submitAvatarVideo(apiKey, {
-      type: 'avatar',
-      avatar_id: avatarId,
-      ...(speech.audioUrl
-        ? { audio_url: speech.audioUrl }
-        : { script: speech.inputText, voice_id: speech.voiceId }),
-      ...engineFields,
-      aspect_ratio: aspectRatio,
-      resolution: aspectRatio === '1:1' ? '1080p' : '720p',
-      callback_id: metadataId,
-    });
-  }
-
-  /** Animate an image directly; trained avatar looks use generateNativeAvatarVideo. */
-  public async generatePhotoAvatarVideo(
-    metadataId: string,
-    photoUrl: string,
-    voiceInput: HeyGenSpeechInput,
-    organizationId?: string,
-    _userId?: string,
-    apiKeyOverride?: string,
-    aspectRatio: AvatarVideoAspectRatio = '9:16',
-  ): Promise<string> {
-    const speech =
-      typeof voiceInput === 'string' ? { audioUrl: voiceInput } : voiceInput;
-    const audioUrl = speech.audioUrl?.trim();
-    if (!photoUrl.trim())
-      throw new BadRequestException('A photo URL is required');
-    if (!audioUrl && (!speech.voiceId?.trim() || !speech.inputText?.trim())) {
-      throw new BadRequestException(
-        'Either audioUrl or voiceId with inputText is required for photo avatar generation',
-      );
-    }
-    const apiKey = await this.resolveApiKey(apiKeyOverride, organizationId);
-    return this.submitAvatarVideo(apiKey, {
-      type: 'image',
-      image: { type: 'url', url: photoUrl },
-      ...(audioUrl
-        ? { audio_url: audioUrl }
-        : { script: speech.inputText, voice_id: speech.voiceId }),
-      aspect_ratio: aspectRatio,
-      resolution: aspectRatio === '1:1' ? '1080p' : '720p',
-      callback_id: metadataId,
-    });
-  }
-
-  private async submitAvatarVideo(
-    apiKey: string,
-    body: Record<string, unknown>,
-  ): Promise<string> {
-    const caller = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    try {
-      // Never automatically retry an ambiguous paid submission.
-      const response = await firstValueFrom(
-        this.httpService.post<unknown>(`${this.endpoint}/videos`, body, {
-          headers: {
-            ...this.getHeaders(apiKey),
-            'Idempotency-Key': randomUUID(),
-          },
-          timeout: 30_000,
-        }),
-      );
-      if (response.status === 402) throw new HeyGenSubmissionRejectedError();
-      if (response.status !== 200)
-        throw new Error('HeyGen API returned non-200 status');
-      const videoId = readHeyGenVideoId(response.data);
-      if (!videoId)
-        throw new Error('HeyGen submission returned no operation identity');
-      return videoId;
-    } catch (error: unknown) {
-      this.loggerService.error(`${caller} error`, {
-        errorType: error instanceof Error ? error.name : 'Unknown',
-      });
-      if (isAxiosError(error) && error.response?.status === 402)
-        throw new HeyGenSubmissionRejectedError();
-      throw error;
-    }
-  }
-
-  /**
-   * HeyGen Voice (`heygen-voice-1`) on the synchronous
-   * `POST /v3/models/audio/tts`: one request, one WAV url back, no polling.
-   * Billed per submitted character, so the result carries the characters
-   * counted. Only 502/503/504 are retried, because HeyGen documents those as
-   * "did not complete and is safe to retry"; a timeout or dropped connection
-   * is ambiguous and is never replayed.
-   */
-  public async generateSpeech(
-    params: HeyGenSpeechRequest & {
-      apiKeyOverride?: string;
-      organizationId?: string;
-    },
-  ): Promise<HeyGenSpeechResult> {
-    let body: ReturnType<typeof buildHeyGenSpeechBody>;
-    try {
-      body = buildHeyGenSpeechBody(params);
-    } catch (error: unknown) {
-      throw new BadRequestException(
-        error instanceof Error
-          ? error.message
-          : 'Invalid HeyGen Voice request.',
-      );
-    }
-    const apiKey = await this.resolveApiKey(
-      params.apiKeyOverride,
-      params.organizationId,
-    );
-    const characters = countHeyGenSpeechCharacters(body.text);
-    const caller = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    for (let attempt = 1; ; attempt += 1) {
-      let status: number;
-      let data: unknown;
-      let retryAfter: number | undefined;
-      try {
-        const response = await firstValueFrom(
-          this.httpService.post<unknown>(HEYGEN_SPEECH_URL, body, {
-            headers: this.getHeaders(apiKey),
-            timeout: HEYGEN_SPEECH_TIMEOUT_MS,
-          }),
-        );
-        if (response.status >= 200 && response.status < 300)
-          return readHeyGenSpeech(response.data, characters);
-        status = response.status;
-        data = response.data;
-        retryAfter = readHeyGenRetryAfter(response.headers);
-      } catch (error: unknown) {
-        if (!isAxiosError(error) || !error.response) {
-          this.loggerService.error(`${caller} error`, {
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-          throw error;
-        }
-        status = error.response.status;
-        data = error.response.data;
-        retryAfter = readHeyGenRetryAfter(error.response.headers);
-      }
-      if (
-        HEYGEN_SPEECH_RETRYABLE_STATUSES.has(status) &&
-        attempt < HEYGEN_SPEECH_MAX_ATTEMPTS
-      ) {
-        await this.delay(
-          HEYGEN_SPEECH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
-        );
-        continue;
-      }
-      const { code, param } = readHeyGenErrorEnvelope(data);
-      this.loggerService.error(`${caller} error`, {
-        code: code ?? null,
-        status,
-      });
-      throw mapHeyGenSpeechFailure(status, code, param, retryAfter);
-    }
-  }
-
-  private delay(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, milliseconds));
-  }
-
-  public async getVoices(
-    organizationId?: string,
-    _userId?: string,
-    apiKeyOverride?: string,
-  ): Promise<HeyGenCatalogVoice[]> {
-    const orgId = organizationId ?? 'platform';
-    if (apiKeyOverride)
-      return this.readVoiceCatalog({
-        apiKey: apiKeyOverride,
-        binding: { provider: 'heygen', kind: 'byok', organizationId: orgId },
-      });
-    const voices = await this.readAccessibleCatalog(
-      organizationId,
-      (connection, ownership) => this.readVoiceCatalog(connection, ownership),
-    );
-    return voices.map((voice, index) => ({
-      ...voice,
-      index,
-    }));
-  }
-
-  private async readVoiceCatalog(
-    connection: { apiKey: string; binding: HeyGenConnectionRef },
-    ownership?: 'public' | 'private',
-  ): Promise<HeyGenCatalogVoice[]> {
-    const partitions = ownership
-      ? [ownership]
-      : connection.binding.kind === 'byok'
-        ? (['public', 'private'] as const)
-        : (['public'] as const);
-    const output: HeyGenCatalogVoice[] = [];
-    for (const partition of partitions) {
-      const items = await this.getCatalog('/voices', connection.apiKey, 100, {
-        type: partition,
-      });
-      for (const item of items) {
-        const voice = voiceSchema.parse(item);
-        output.push({
-          index: output.length,
-          name: voice.name,
-          gender: voice.gender,
-          preview: voice.preview_audio_url ?? '',
-          voiceId: voice.voice_id,
-          ownership: partition,
-          connection: this.savedConnection(connection.binding),
-        });
-      }
-    }
-    return output;
-  }
-
-  public savedConnection(binding: HeyGenConnectionRef): HeyGenConnectionRef {
-    return binding.kind === 'platform'
-      ? {
-          provider: 'heygen',
-          kind: 'platform',
-          organizationId: binding.organizationId,
-        }
-      : { ...binding };
-  }
-
-  public async getAvatars(
-    organizationId?: string,
-    _userId?: string,
-    apiKeyOverride?: string,
-  ): Promise<HeyGenCatalogAvatar[]> {
-    const orgId = organizationId ?? 'platform';
-    let avatars: HeyGenCatalogLook[];
-    if (apiKeyOverride)
-      avatars = await this.readAvatarCatalog({
-        apiKey: apiKeyOverride,
-        binding: { provider: 'heygen', kind: 'byok', organizationId: orgId },
-      });
-    else
-      avatars = await this.readAccessibleCatalog(
-        organizationId,
-        (connection, ownership) =>
-          this.readAvatarCatalog(connection, ownership),
-      );
-    return avatars.map((look, index) => toCatalogAvatar(look, index));
-  }
-
-  public async getAvatarPage(
-    organizationId: string,
-    ownership: 'public' | 'private' = 'public',
-    cursor?: string,
-  ): Promise<HeyGenAvatarCatalogPage> {
-    // Check binding storage even for public pages; lookup failure is not absence.
-    const credential = await this.byokService.lookupApiKeyWithIdentity(
-      organizationId,
-      ByokProvider.HEYGEN,
-    );
-    if (ownership === 'private' && !credential)
-      return { avatars: [], ownership, nextCursor: null };
-    const connection =
-      ownership === 'private' && credential
-        ? {
-            apiKey: credential.apiKey,
-            binding: {
-              provider: 'heygen' as const,
-              kind: 'byok' as const,
-              organizationId,
-              credentialVersionId: credential.credentialId,
-            },
-          }
-        : await this.resolveOrganizationConnection(organizationId, 'platform');
-    const page = await this.readCatalogPage(
-      '/avatars/looks',
-      connection.apiKey,
-      50,
-      { ownership },
-      cursor,
-    );
-    const looks = await this.readAvatarCatalog(
-      connection,
-      ownership,
-      page.data,
-    );
     return {
-      avatars: looks.map((look, index) => toCatalogAvatar(look, index)),
-      ownership,
-      nextCursor: page.has_more ? (page.next_token ?? null) : null,
+      'Content-Type': 'application/json',
+      'X-Api-Key': apiKey,
     };
   }
 
-  /** Catalogue sources fail independently; identity admission never falls back. */
-  private async readAccessibleCatalog<T>(
-    organizationId: string | undefined,
-    read: (
-      connection: ResolvedHeyGenConnection,
-      ownership: 'public' | 'private',
-    ) => Promise<T[]>,
-  ): Promise<T[]> {
-    const orgId = organizationId ?? 'platform';
-    // Entitlement/storage failures must not be mistaken for a missing binding.
-    const credential = organizationId
-      ? await this.byokService.lookupApiKeyWithIdentity(
-          orgId,
-          ByokProvider.HEYGEN,
-        )
-      : undefined;
-    const platformKey = this.getApiKey();
-    if (!organizationId && !platformKey)
-      throw new BadRequestException('Connect HeyGen to load identities.');
-    const sources: Promise<T[]>[] = [];
-    if (platformKey)
-      sources.push(
-        read(
-          {
-            apiKey: platformKey,
-            binding: {
-              provider: 'heygen',
-              kind: 'platform',
-              organizationId: orgId,
-              credentialVersionId: this.platformCredentialVersion(platformKey),
-            },
-          },
-          'public',
-        ),
-      );
-    if (credential)
-      sources.push(
-        read(
-          {
-            apiKey: credential.apiKey,
-            binding: {
-              provider: 'heygen',
-              kind: 'byok',
-              organizationId: orgId,
-              credentialVersionId: credential.credentialId,
-            },
-          },
-          'private',
-        ),
-      );
-    const results = await Promise.allSettled(sources);
-    if (
-      results.length &&
-      results.every((result) => result.status === 'rejected')
-    ) {
-      const failure = results.find((result) => result.status === 'rejected');
-      throw failure?.reason ?? new Error('HeyGen catalogue is unavailable.');
-    }
-    return results.flatMap((result) =>
-      result.status === 'fulfilled' ? result.value : [],
-    );
-  }
-
-  /** Ownership comes from a filtered provider response, never from missing fields. */
-  private async readAvatarCatalog(
-    connection: { apiKey: string; binding: HeyGenConnectionRef },
-    ownership?: 'public' | 'private',
-    pageItems?: Record<string, unknown>[],
-    lookId?: string,
-  ): Promise<HeyGenCatalogLook[]> {
-    const partitions = ownership
-      ? [ownership]
-      : connection.binding.kind === 'byok'
-        ? (['public', 'private'] as const)
-        : (['public'] as const);
-    const output: HeyGenCatalogLook[] = [];
-    const groups = new Map<string, Promise<z.infer<typeof groupSchema>>>();
-    for (const partition of partitions) {
-      if (partition === 'private' && connection.binding.kind !== 'byok')
-        throw new BadRequestException(
-          'Private avatars require your personal HeyGen connection.',
-        );
-      const items =
-        pageItems ??
-        (await this.getCatalog(
-          '/avatars/looks',
-          connection.apiKey,
-          50,
-          { ownership: partition },
-          lookId,
-        ));
-      // Five look/group resolutions at a time; groups are deduplicated per request.
-      for (let offset = 0; offset < items.length; offset += 5) {
-        output.push(
-          ...(await Promise.all(
-            items.slice(offset, offset + 5).map(async (item) => {
-              const look = lookSchema.parse(item);
-              let group: z.infer<typeof groupSchema> | undefined;
-              let groupUnavailable = false;
-              if (partition === 'private' && look.group_id) {
-                let pending = groups.get(look.group_id);
-                if (!pending) {
-                  pending = this.readAvatarGroup(
-                    look.group_id,
-                    connection.apiKey,
-                  );
-                  groups.set(look.group_id, pending);
-                }
-                try {
-                  group = await pending;
-                } catch {
-                  groupUnavailable = true;
-                }
-              }
-              const reason =
-                !look.avatar_type ||
-                !['studio_avatar', 'digital_twin', 'photo_avatar'].includes(
-                  look.avatar_type,
-                )
-                  ? 'Avatar type could not be verified.'
-                  : getEligibleHeyGenAvatarEngines({
-                        avatarType: look.avatar_type,
-                        supportedEngines: look.supported_api_engines,
-                      }).length === 0
-                    ? 'This look supports no HeyGen avatar engine Genfeed can price.'
-                    : partition === 'private' && look.status !== 'completed'
-                      ? 'This look has not completed training.'
-                      : partition === 'private' &&
-                          (groupUnavailable ||
-                            (look.group_id &&
-                              (!group || group.id !== look.group_id)))
-                        ? 'Avatar group readiness could not be verified.'
-                        : partition === 'private' &&
-                            group &&
-                            group.status !== 'completed'
-                          ? 'This avatar group is not ready.'
-                          : partition === 'private' &&
-                              group &&
-                              group.consent_status !== null &&
-                              group.consent_status !== 'accepted'
-                            ? 'Avatar consent is pending or rejected.'
-                            : null;
-              const avatarRef: HeyGenAvatarRef = {
-                version: 1,
-                source: 'heygen-look',
-                provider: 'heygen' as const,
-                lookId: look.id,
-                groupId: look.group_id ?? null,
-                ownership: partition,
-                label: look.name,
-                preview: look.preview_image_url ?? null,
-                avatarType: look.avatar_type ?? null,
-                supportedEngines: look.supported_api_engines,
-                readiness: {
-                  lookStatus: look.status ?? null,
-                  groupStatus: group?.status ?? null,
-                  consentStatus: group?.consent_status ?? null,
-                  usable: reason === null,
-                  reason,
-                },
-                connection: this.savedConnection(connection.binding),
-              };
-              return { avatarRef, gender: look.gender };
-            }),
-          )),
-        );
-      }
-    }
-    return output;
-  }
-
-  private async readAvatarGroup(groupId: string, apiKey: string) {
-    const response = await firstValueFrom(
-      this.httpService.get<unknown>(
-        `${this.endpoint}/avatars/${encodeURIComponent(groupId)}`,
-        { headers: this.getHeaders(apiKey), timeout: 15_000 },
-      ),
-    );
-    return z.object({ data: groupSchema }).parse(response.data).data;
-  }
-
-  public async resolveAvatarSelection(
-    candidate: HeyGenAvatarCandidate,
-    organizationId: string,
-  ): Promise<{
-    avatarRef: HeyGenAvatarRef;
-    connection: ResolvedHeyGenConnection;
-  }> {
-    const parsed = heyGenAvatarCandidateSchema.safeParse(candidate);
-    if (!parsed.success)
-      throw new BadRequestException('Select a valid avatar reference.');
-    candidate = parsed.data;
-    if (
-      candidate.connection &&
-      candidate.connection.organizationId !== organizationId
-    )
-      throw new BadRequestException(
-        'This avatar belongs to another organization.',
-      );
-    const connection = await this.resolveOrganizationConnection(
-      organizationId,
-      candidate.ownership === 'private'
-        ? 'byok'
-        : (candidate.connection?.kind ?? 'platform'),
-    );
-    const catalog = await this.readAvatarCatalog(
-      connection,
-      candidate.ownership,
-      undefined,
-      candidate.lookId,
-    );
-    const avatarRef = catalog.find(
-      ({ avatarRef: avatar }) => avatar.lookId === candidate.lookId,
-    )?.avatarRef;
-    if (!avatarRef)
-      throw new BadRequestException(
-        'The selected avatar is unavailable on this connection. Reselect an avatar.',
-      );
-    if (candidate.groupId != null && candidate.groupId !== avatarRef.groupId)
-      throw new BadRequestException(
-        'The selected look does not belong to this avatar group.',
-      );
-    if (!avatarRef.readiness.usable)
-      throw new BadRequestException(
-        avatarRef.readiness.reason ?? 'The selected avatar is unavailable.',
-      );
-    return { avatarRef, connection };
-  }
-
-  public async validateVoiceSelection(
+  public async generateAvatarVideo(
+    metadataId: string,
+    avatarId: string,
     voiceId: string,
-    connection: ResolvedHeyGenConnection,
-    ownership?: 'public' | 'private',
-  ): Promise<HeyGenCatalogVoice> {
-    if (ownership === 'private' && connection.binding.kind !== 'byok')
-      throw new BadRequestException(
-        'Private voices require your personal HeyGen connection.',
-      );
-    const voices = await this.readVoiceCatalog(connection, ownership);
-    const voice = voices.find((candidate) => candidate.voiceId === voiceId);
-    if (!voice)
-      throw new BadRequestException(
-        'The selected HeyGen voice is unavailable on this connection. Reselect a voice.',
-      );
-    return { ...voice, connection: this.savedConnection(connection.binding) };
-  }
+    inputText: string,
+    _organizationId?: string,
+    _userId?: string,
+    apiKeyOverride?: string,
+  ): Promise<string> {
+    const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
 
-  public async getConnectionStatus(organizationId?: string): Promise<{
-    hasCustomKey: boolean;
-    isConnected: boolean;
-    state: 'disconnected' | 'connected' | 'invalid';
-  }> {
-    if (!organizationId)
-      return { hasCustomKey: false, isConnected: false, state: 'disconnected' };
-    const credential = await this.byokService.lookupApiKeyWithIdentity(
-      organizationId,
-      ByokProvider.HEYGEN,
-    );
-    if (!credential)
-      return { hasCustomKey: false, isConnected: false, state: 'disconnected' };
     try {
-      await firstValueFrom(
-        this.httpService.get(`${this.endpoint}/users/me`, {
-          headers: this.getHeaders(credential.apiKey),
-          timeout: 15_000,
-        }),
+      this.loggerService.log(`${url} started`, {
+        avatarId,
+      });
+
+      const apiKey = this.resolveApiKey(apiKeyOverride);
+
+      const res = await firstValueFrom(
+        this.httpService.post(
+          `${this.endpoint}/video/generate`,
+          {
+            callback_id: metadataId,
+            caption: false,
+            dimension: {
+              height: 720,
+              width: 1280,
+            },
+            video_inputs: [
+              {
+                character: {
+                  avatar_id: avatarId,
+                  avatar_style: 'normal',
+                  expression: 'happy',
+                  scale: 1,
+                  talking_style: 'expressive',
+                  type: 'avatar',
+                },
+                voice: {
+                  emotion: 'Excited',
+                  input_text: inputText,
+                  locale: 'en-US',
+                  type: 'text',
+                  voice_id: voiceId,
+                },
+              },
+            ],
+          },
+          {
+            headers: this.getHeaders(apiKey),
+          },
+        ),
       );
-      return { hasCustomKey: true, isConnected: true, state: 'connected' };
-    } catch (error) {
-      if (
-        isAxiosError(error) &&
-        [401, 403].includes(error.response?.status ?? 0)
-      )
-        return { hasCustomKey: true, isConnected: false, state: 'invalid' };
+
+      if (res.status !== 200) {
+        throw new Error('HeyGen API returned non-200 status');
+      }
+
+      return res.data.data?.video_id || res.data.data?.task_id;
+    } catch (error: unknown) {
+      this.loggerService.error(`${url} error`, error);
       throw error;
     }
-  }
-
-  private async readCatalogPage(
-    path: string,
-    apiKey: string,
-    limit: number,
-    filters: Record<string, string>,
-    token?: string,
-  ): Promise<z.infer<typeof catalogPageSchema>> {
-    const response = await firstValueFrom(
-      this.httpService.get<unknown>(`${this.endpoint}${path}`, {
-        headers: this.getHeaders(apiKey),
-        params: { ...filters, limit, ...(token ? { token } : {}) },
-        timeout: 15_000,
-      }),
-    );
-    if (response.status !== 200)
-      throw new Error('HeyGen API returned non-200 status');
-    const data = catalogPageSchema.parse(response.data);
-    if (data.has_more && (!data.next_token || data.next_token === token))
-      throw new Error('HeyGen returned an invalid catalog cursor');
-    return data;
-  }
-
-  /** Every page of a HeyGen `/v3` catalog, or the page holding `findId`. */
-  public async getCatalog(
-    path: string,
-    apiKey: string,
-    limit: number,
-    filters: Record<string, string> = {},
-    findId?: string,
-  ): Promise<Record<string, unknown>[]> {
-    const items: Record<string, unknown>[] = [];
-    const seenTokens = new Set<string>();
-    let token: string | undefined;
-    for (let page = 0; page < 100; page++) {
-      const data = await this.readCatalogPage(
-        path,
-        apiKey,
-        limit,
-        filters,
-        token,
-      );
-      if (findId) {
-        const match = data.data.find((item) => item.id === findId);
-        if (match) return [match];
-      } else items.push(...data.data);
-      if (!data.has_more) return items;
-      if (!data.next_token || seenTokens.has(data.next_token))
-        throw new Error('HeyGen returned an invalid catalog cursor');
-      token = data.next_token;
-      seenTokens.add(token);
-    }
-    throw new Error('HeyGen catalog exceeded the pagination limit');
   }
 
   /**
-   * HeyGen Video (`heygen-video-1`) on `POST /v3/models/videos`.
-   * Polls until the signed `video_url` is ready. Prompt enhancement stays
-   * off so the compiled brief is not rewritten.
+   * Generate photo avatar video using HeyGen Photo Avatar API
+   * Supports external audio URLs and direct HeyGen voice IDs.
    */
-  public async generateModelVideo(params: {
-    apiKeyOverride?: string;
-    aspectRatio?: string;
-    duration?: number;
-    imageUrls?: readonly string[];
-    onProviderSubmissionStarted?: () => void;
-    prompt: string;
-    resolution?: string;
-    seed?: number;
-    videoUrls?: readonly string[];
-  }): Promise<{ videoUrl: string }> {
-    const apiKey = await this.resolveApiKey(params.apiKeyOverride);
-    const body = this.buildModelVideoBody(params);
-    const videoId = await this.submitModelVideo(
-      apiKey,
-      body,
-      params.onProviderSubmissionStarted,
-    );
-    return this.waitForModelVideo(videoId, apiKey);
-  }
-
-  private buildModelVideoBody(params: {
-    aspectRatio?: string;
-    duration?: number;
-    imageUrls?: readonly string[];
-    prompt: string;
-    resolution?: string;
-    seed?: number;
-    videoUrls?: readonly string[];
-  }): HeyGenVideoCreateBody {
-    try {
-      return buildHeyGenVideoCreateBody({
-        aspectRatio: params.aspectRatio,
-        duration: params.duration,
-        imageUrls: params.imageUrls ?? [],
-        prompt: params.prompt,
-        resolution: params.resolution,
-        seed: params.seed,
-        videoUrls: params.videoUrls ?? [],
-      });
-    } catch (error: unknown) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Invalid HeyGen Video request.';
-      throw new BadRequestException(message);
-    }
-  }
-
-  private async submitModelVideo(
-    apiKey: string,
-    body: HeyGenVideoCreateBody,
-    onProviderSubmissionStarted?: () => void,
+  public async generatePhotoAvatarVideo(
+    metadataId: string,
+    photoUrl: string,
+    voiceInput:
+      | string
+      | {
+          audioUrl?: string;
+          inputText?: string;
+          voiceId?: string;
+        },
+    _organizationId?: string,
+    _userId?: string,
+    apiKeyOverride?: string,
+    aspectRatio: AvatarVideoAspectRatio = '9:16',
   ): Promise<string> {
-    const caller = `${this.constructorName} ${CallerUtil.getCallerName()}`;
+    const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
+
     try {
-      onProviderSubmissionStarted?.();
-      const response = await firstValueFrom(
+      const normalizedVoiceInput =
+        typeof voiceInput === 'string' ? { audioUrl: voiceInput } : voiceInput;
+
+      this.loggerService.log(`${url} started`, {
+        audioUrl: normalizedVoiceInput.audioUrl,
+        photoUrl,
+        voiceId: normalizedVoiceInput.voiceId,
+      });
+
+      const apiKey = this.resolveApiKey(apiKeyOverride);
+
+      const dimensions = this.getAvatarDimensions(aspectRatio);
+
+      if (!normalizedVoiceInput.audioUrl && !normalizedVoiceInput.voiceId) {
+        throw new Error(
+          'Either audioUrl or voiceId is required for photo avatar generation',
+        );
+      }
+
+      const voicePayload = normalizedVoiceInput.audioUrl
+        ? {
+            audio_url: normalizedVoiceInput.audioUrl,
+            type: 'audio',
+          }
+        : {
+            emotion: 'Excited',
+            input_text: normalizedVoiceInput.inputText,
+            locale: 'en-US',
+            type: 'text',
+            voice_id: normalizedVoiceInput.voiceId,
+          };
+
+      const res = await firstValueFrom(
         this.httpService.post(
-          `${HEYGEN_API_ORIGIN}${HEYGEN_VIDEO_CREATE_PATH}`,
-          body,
+          `${this.endpoint}/video/generate`,
           {
-            headers: {
-              ...this.getHeaders(apiKey),
-              'Idempotency-Key': randomUUID(),
-            },
+            callback_id: metadataId,
+            caption: false,
+            dimension: dimensions,
+            video_inputs: [
+              {
+                character: {
+                  photo_url: photoUrl,
+                  type: 'photo_avatar',
+                },
+                voice: voicePayload,
+              },
+            ],
+          },
+          {
+            headers: this.getHeaders(apiKey),
           },
         ),
       );
-      const videoId = readHeyGenVideoId(response.data);
-      if (!videoId) {
-        throw new Error('HeyGen Video submission returned no video id.');
+
+      if (res.status === 402) throw new HeyGenSubmissionRejectedError();
+      if (res.status !== 200) {
+        throw new Error('HeyGen API returned non-200 status');
       }
-      this.loggerService.log(`${caller} submitted ${videoId}`);
-      return videoId;
+
+      const externalId: unknown =
+        res.data.data?.video_id || res.data.data?.task_id;
+      if (typeof externalId !== 'string' || !externalId.trim()) {
+        throw new Error('HeyGen submission returned no operation identity');
+      }
+      return externalId;
     } catch (error: unknown) {
+      this.loggerService.error(`${url} error`, error);
       if (isAxiosError(error) && error.response?.status === 402) {
         throw new HeyGenSubmissionRejectedError();
       }
-      if (error instanceof HeyGenSubmissionRejectedError) {
-        throw error;
-      }
-      this.loggerService.error(`${caller} error`, {
-        errorType: error instanceof Error ? error.name : 'Unknown',
+      throw error;
+    }
+  }
+
+  private getAvatarDimensions(aspectRatio: AvatarVideoAspectRatio): {
+    height: number;
+    width: number;
+  } {
+    if (aspectRatio === '16:9') {
+      return { height: 720, width: 1280 };
+    }
+
+    if (aspectRatio === '1:1') {
+      return { height: 1080, width: 1080 };
+    }
+
+    return { height: 1280, width: 720 };
+  }
+
+  public async createAvatar(
+    name: string,
+    videoUrl: string,
+    _organizationId?: string,
+    _userId?: string,
+    apiKeyOverride?: string,
+  ): Promise<string> {
+    const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
+
+    try {
+      this.loggerService.log(`${url} started`, {
+        name,
       });
-      throw error;
-    }
-  }
 
-  private async waitForModelVideo(
-    videoId: string,
-    apiKey: string,
-  ): Promise<{ videoUrl: string }> {
-    try {
-      const { value } = await this.pollUntilService.poll(
-        () => this.readModelVideo(videoId, apiKey),
-        (status) => isHeyGenVideoTerminal(status.status),
-        {
-          intervalMs: HEYGEN_VIDEO_POLL_INTERVAL_MS,
-          timeoutMs: HEYGEN_VIDEO_POLL_TIMEOUT_MS,
-        },
+      const apiKey = this.resolveApiKey(apiKeyOverride);
+
+      const res = await firstValueFrom(
+        this.httpService.post(
+          `${this.endpoint}/avatar/create`,
+          {
+            avatar_name: name,
+            test: process.env.NODE_ENV === 'development',
+            video_url: videoUrl,
+          },
+          {
+            headers: this.getHeaders(apiKey),
+          },
+        ),
       );
-      if (value.status === 'completed' && value.videoUrl) {
-        return { videoUrl: value.videoUrl };
+
+      if (res.status !== 200) {
+        throw new Error('HeyGen API returned non-200 status');
       }
-      throw new Error(
-        value.failureMessage ||
-          `HeyGen Video ${videoId} ended as ${value.status}.`,
-      );
+
+      return res.data.data?.avatar_id || res.data.data?.task_id;
     } catch (error: unknown) {
-      if (error instanceof PollTimeoutException) {
-        throw new Error(
-          `HeyGen Video ${videoId} timed out after ${error.timeoutMs}ms.`,
-        );
-      }
+      this.loggerService.error(`${url} error`, error);
       throw error;
     }
   }
 
-  private async readModelVideo(videoId: string, apiKey: string) {
+  public async getVoices(
+    _organizationId?: string,
+    _userId?: string,
+    apiKeyOverride?: string,
+  ): Promise<
+    Array<{ preview: string; name: string; index: number; voiceId: string }>
+  > {
+    const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
+
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(heyGenVideoStatusUrl(videoId), {
+      this.loggerService.log(`${url} started`);
+
+      const apiKey = this.resolveApiKey(apiKeyOverride);
+
+      const res = await firstValueFrom(
+        this.httpService.get(`${this.endpoint}/voices`, {
           headers: this.getHeaders(apiKey),
         }),
       );
-      return readHeyGenVideoStatus(response.data);
-    } catch (error: unknown) {
-      const statusCode = isAxiosError(error)
-        ? error.response?.status
-        : undefined;
-      if (statusCode !== undefined && statusCode < 500) {
-        throw error;
+
+      if (res.status !== 200) {
+        throw new Error('HeyGen API returned non-200 status');
       }
-      return { status: 'pending' };
+
+      const voices = res.data?.data?.voices || res.data?.data || [];
+      return voices.map((voice: unknown, index: number) => {
+        const voiceRecord = voice as HeyGenApiRecord;
+
+        return {
+          index,
+          name:
+            String(
+              voiceRecord.voice_name ??
+                voiceRecord.name ??
+                `Voice ${index + 1}`,
+            ) || `Voice ${index + 1}`,
+          preview: String(voiceRecord.preview_url ?? voiceRecord.preview ?? ''),
+          voiceId:
+            String(
+              voiceRecord.voice_id ?? voiceRecord.id ?? `voice_${index}`,
+            ) || `voice_${index}`,
+        };
+      });
+    } catch (error: unknown) {
+      this.loggerService.error(`${url} error`, error);
+      throw error;
+    }
+  }
+
+  public async getAvatars(
+    _organizationId?: string,
+    _userId?: string,
+    apiKeyOverride?: string,
+  ): Promise<
+    Array<{ preview: string; name: string; index: number; avatarId: string }>
+  > {
+    const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
+
+    try {
+      this.loggerService.log(`${url} started`);
+
+      const apiKey = this.resolveApiKey(apiKeyOverride);
+
+      const res = await firstValueFrom(
+        this.httpService.get(`${this.endpoint}/avatars`, {
+          headers: this.getHeaders(apiKey),
+        }),
+      );
+
+      if (res.status !== 200) {
+        throw new Error('HeyGen API returned non-200 status');
+      }
+
+      const avatars = res.data?.data?.avatars || res.data?.data || [];
+      return avatars.map((avatar: unknown, index: number) => {
+        const avatarRecord = avatar as HeyGenApiRecord;
+
+        return {
+          avatarId:
+            String(
+              avatarRecord.avatar_id ?? avatarRecord.id ?? `avatar_${index}`,
+            ) || `avatar_${index}`,
+          index,
+          name:
+            String(
+              avatarRecord.avatar_name ??
+                avatarRecord.name ??
+                `Avatar ${index + 1}`,
+            ) || `Avatar ${index + 1}`,
+          preview: String(
+            avatarRecord.preview_url ?? avatarRecord.preview ?? '',
+          ),
+        };
+      });
+    } catch (error: unknown) {
+      this.loggerService.error(`${url} error`, error);
+      throw error;
     }
   }
 }

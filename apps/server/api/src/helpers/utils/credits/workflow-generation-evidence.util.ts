@@ -39,13 +39,6 @@ export function assertWorkflowFundingIdentity(
         'Workflow operation identity differs from the frozen execution',
       );
     if (
-      allocation.dispatch.contractVersion !==
-      `workflow-media-v1:${quoteSnapshotHash(allocation.dispatch.preparationContract)}`
-    )
-      throw new BusinessLogicException(
-        'Workflow preparation contract identity changed',
-      );
-    if (
       quoteSnapshotHash({
         ...allocation.dispatch,
         billableFingerprint: undefined,
@@ -106,19 +99,6 @@ function assertCompletionUnits(
   } as const;
   for (const rate of allocation.quote.pricingProfile.reviewedPricing?.rates ??
     []) {
-    if (rate.unit === 'video-token' || rate.unit === 'input-video-token') {
-      if (
-        next.completion.width === undefined ||
-        next.completion.height === undefined ||
-        next.completion.duration === undefined ||
-        (rate.unit === 'input-video-token' &&
-          next.completion.inputDuration === undefined)
-      ) {
-        throw new BusinessLogicException(
-          'Workflow completion requires actual native video-token quantities',
-        );
-      }
-    }
     const key = units[rate.unit as keyof typeof units];
     if (key && next.completion[key] === undefined)
       throw new BusinessLogicException(

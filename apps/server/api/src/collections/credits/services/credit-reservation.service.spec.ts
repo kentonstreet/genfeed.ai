@@ -2,28 +2,15 @@ import { CreditBalanceService } from '@api/collections/credits/services/credit-b
 import { CreditReservationService } from '@api/collections/credits/services/credit-reservation.service';
 import { CreditTransactionsService } from '@api/collections/credits/services/credit-transactions.service';
 import { ReservationEvidenceChangedException } from '@api/collections/credits/services/reservation-evidence-changed.exception';
-import { runWithStrategyBudgetAttribution } from '@api/collections/credits/services/strategy-budget-attribution.context';
 import { BusinessLogicException } from '@api/exceptions/business-logic.exception';
-import { billableProfile } from '@api/helpers/utils/credits/model-billable-quote.fixture';
 import type { PrismaTransactionClient } from '@api/helpers/utils/transaction/transaction.util';
 import { TransactionUtil } from '@api/helpers/utils/transaction/transaction.util';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
-import { CreditReservationStatus, Platform } from '@genfeedai/contracts';
-import { quoteModelBillablePricing } from '@genfeedai/pricing';
+import { CreditReservationStatus } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
 
 describe('CreditReservationService', () => {
   const prisma = {
-    agentStrategy: {
-      findFirst: vi.fn(async () => ({
-        id: 'strategy-a',
-        platforms: ['twitter'],
-      })),
-    },
-    crunGenerationTask: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      findMany: vi.fn().mockResolvedValue([]),
-    },
     organization: { findMany: vi.fn() },
     creditReservation: {
       create: vi.fn(),
@@ -33,12 +20,7 @@ describe('CreditReservationService', () => {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     creditTransaction: { updateMany: vi.fn() },
-    ingredient: {
-      findFirst: vi.fn(),
-      findMany: vi
-        .fn()
-        .mockResolvedValue([{ id: 'image', s3Key: 'owned/image.png' }]),
-    },
+    ingredient: { findFirst: vi.fn() },
     liveSession: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
   };
   const logger = { error: vi.fn(), log: vi.fn(), warn: vi.fn() };
@@ -73,8 +55,6 @@ describe('CreditReservationService', () => {
   }
 
   beforeEach(() => {
-    prisma.crunGenerationTask.findFirst.mockReset().mockResolvedValue(null);
-    prisma.crunGenerationTask.findMany.mockReset().mockResolvedValue([]);
     prisma.organization.findMany
       .mockReset()
       .mockResolvedValue([{ id: 'org_1' }, { id: 'org_2' }]);
@@ -146,106 +126,6 @@ describe('CreditReservationService', () => {
       },
     });
     expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-  });
-
-  it('runs internal budget admission in the hold transaction and leaves no wallet hold after rejection', async () => {
-    prisma.creditReservation.findFirst.mockResolvedValue(null);
-    const admission = vi.fn(async (tx: PrismaTransactionClient) => {
-      expect(tx).toBe(txClient);
-      throw new Error('monthly_subbudget_exhausted');
-    });
-    await expect(
-      service.reserve(
-        {
-          organizationId: 'org_1',
-          actorUserId: 'user_1',
-          billingAccountId: 'ba_1',
-          amount: 20,
-          idempotencyKey: 'budget-a',
-        },
-        admission,
-      ),
-    ).rejects.toThrow('monthly_subbudget_exhausted');
-    expect(admission).toHaveBeenCalledOnce();
-    expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-    expect(prisma.creditReservation.create).not.toHaveBeenCalled();
-  });
-  it('applies the server breakout admission to an existing media credit producer before wallet mutation', async () => {
-    prisma.creditReservation.findFirst.mockResolvedValue(null);
-    const reject = vi.fn(async (tx: PrismaTransactionClient) => {
-      expect(tx).toBe(txClient);
-      throw new Error('breakout_current_budget_exhausted');
-    });
-    await expect(
-      runWithStrategyBudgetAttribution(
-        txClient,
-        {
-          version: 1,
-          organizationId: 'org_1',
-          brandId: 'brand-a',
-          strategyId: 'strategy-a',
-          platform: Platform.TWITTER,
-          format: 'video',
-        },
-        async () =>
-          service.reserve({
-            organizationId: 'org_1',
-            billingAccountId: 'ba_1',
-            brandId: 'brand-a',
-            actorUserId: 'user_1',
-            amount: 20,
-            idempotencyKey: 'media-a',
-          }),
-        reject,
-      ),
-    ).rejects.toThrow('breakout_current_budget_exhausted');
-    expect(reject).toHaveBeenCalledOnce();
-    expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-    expect(prisma.creditReservation.create).not.toHaveBeenCalled();
-  });
-
-  it('captures server strategy allocation on the actual hold and strips forged producer metadata', async () => {
-    const scope = {
-      version: 1 as const,
-      organizationId: 'org_1',
-      brandId: 'brand_1',
-      strategyId: 'strategy-a',
-      platform: Platform.TWITTER,
-      format: 'text' as const,
-    };
-    prisma.creditReservation.findFirst.mockResolvedValue(null);
-    prisma.creditReservation.create.mockImplementation(async ({ data }) => ({
-      ...data,
-      id: 'allocated-hold',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      settledAmount: null,
-      isDeleted: false,
-    }));
-    const admission = vi.fn(async () => undefined);
-    await runWithStrategyBudgetAttribution(txClient, scope, async () => {
-      await service.reserve(
-        {
-          organizationId: scope.organizationId,
-          actorUserId: 'user_1',
-          brandId: scope.brandId,
-          billingAccountId: 'ba_1',
-          amount: 20,
-          idempotencyKey: 'allocated-a',
-          metadata: {
-            assetId: 'output-a',
-            strategyBudgetAttribution: { forged: true },
-          },
-        },
-        admission,
-      );
-    });
-    expect(admission).toHaveBeenCalledWith(txClient);
-    expect(prisma.creditReservation.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        metadata: { assetId: 'output-a', strategyBudgetAttribution: scope },
-      }),
-    });
   });
 
   it.each(['40001', '40P01'])(
@@ -377,115 +257,6 @@ describe('CreditReservationService', () => {
       },
     });
     expect(creditBalanceService.applyDelta).toHaveBeenCalledTimes(1);
-  });
-
-  it('persists the brand on the hold when one is supplied', async () => {
-    prisma.creditReservation.findFirst.mockResolvedValue(null);
-    prisma.creditReservation.create.mockResolvedValue({
-      actorUserId: 'user_1',
-      amount: 20,
-      billingAccountId: 'ba_1',
-      brandId: 'brand_1',
-      createdAt: new Date(),
-      expiresAt: new Date(),
-      id: 'res_brand',
-      idempotencyKey: 'brand_1',
-      isDeleted: false,
-      organizationId: 'org_1',
-      settledAmount: null,
-      status: CreditReservationStatus.RESERVED,
-      updatedAt: new Date(),
-      workloadId: null,
-      workloadType: null,
-    });
-
-    const result = await service.reserve({
-      actorUserId: 'user_1',
-      amount: 20,
-      billingAccountId: 'ba_1',
-      brandId: 'brand_1',
-      idempotencyKey: 'brand_1',
-      organizationId: 'org_1',
-    });
-
-    expect(prisma.creditReservation.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ brandId: 'brand_1' }),
-    });
-    expect(result.brandId).toBe('brand_1');
-  });
-
-  it('copies the hold brand onto the settlement ledger row and its attribution update', async () => {
-    prisma.creditReservation.findFirst.mockResolvedValue({
-      amount: 20,
-      billingAccountId: 'ba_1',
-      brandId: 'brand_1',
-      id: 'res_1',
-      organizationId: 'org_1',
-      status: CreditReservationStatus.RESERVED,
-    });
-
-    await service.settle({
-      actualAmount: 15,
-      actorUserId: 'user_1',
-      description: 'complete',
-      organizationId: 'org_1',
-      reservationId: 'res_1',
-    });
-
-    expect(
-      creditTransactionsService.createTransactionEntry,
-    ).toHaveBeenCalledWith(
-      'org_1',
-      'deduct',
-      15,
-      expect.any(Number),
-      expect.any(Number),
-      expect.anything(),
-      'complete',
-      undefined,
-      txClient,
-      expect.objectContaining({ brandId: 'brand_1', reservationId: 'res_1' }),
-    );
-    expect(prisma.creditTransaction.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ brandId: 'brand_1' }),
-      }),
-    );
-  });
-
-  it('falls back to the settle input brand when the hold carries none', async () => {
-    prisma.creditReservation.findFirst.mockResolvedValue({
-      amount: 20,
-      billingAccountId: 'ba_1',
-      brandId: null,
-      id: 'res_1',
-      organizationId: 'org_1',
-      status: CreditReservationStatus.RESERVED,
-    });
-
-    await service.settle({
-      actualAmount: 15,
-      actorUserId: 'user_1',
-      brandId: 'brand_from_input',
-      description: 'complete',
-      organizationId: 'org_1',
-      reservationId: 'res_1',
-    });
-
-    expect(
-      creditTransactionsService.createTransactionEntry,
-    ).toHaveBeenCalledWith(
-      'org_1',
-      'deduct',
-      15,
-      expect.any(Number),
-      expect.any(Number),
-      expect.anything(),
-      'complete',
-      undefined,
-      txClient,
-      expect.objectContaining({ brandId: 'brand_from_input' }),
-    );
   });
 
   it.each([null, 'reserved-run'])(
@@ -1020,79 +791,6 @@ describe('CreditReservationService', () => {
       expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
     });
 
-    it('carves a text dispatch hold under its own workload type', async () => {
-      prisma.creditReservation.findFirst
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(pool({ amount: 6, workloadId: 'run_1' }));
-      prisma.creditReservation.create.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) =>
-          pool({ ...data, id: 'hold_text_1', metadata: data.metadata }),
-      );
-
-      await service.bindOutput({
-        ...bindInput,
-        amount: 2,
-        workloadId: 'run_1:0',
-        workloadType: 'text-generation',
-      });
-
-      expect(prisma.creditReservation.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          amount: 2,
-          idempotencyKey: 'text-generation:run_1:0',
-          workloadId: 'run_1:0',
-          workloadType: 'text-generation',
-        }),
-      });
-      expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-    });
-
-    it('retires float dust within tolerance onto the output hold', async () => {
-      const dust = 1e-12;
-      const poolAmount = 3 + dust;
-      prisma.creditReservation.findFirst
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(pool({ amount: poolAmount }));
-      prisma.creditReservation.create.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) =>
-          pool({ ...data, id: 'hold_1', metadata: data.metadata }),
-      );
-
-      const hold = await service.bindOutput(bindInput);
-
-      expect(prisma.creditReservation.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { amount: 0, status: CreditReservationStatus.RELEASED },
-        }),
-      );
-      expect(prisma.creditReservation.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ amount: poolAmount }),
-      });
-      expect(hold.amount).toBe(poolAmount);
-      expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-    });
-
-    it('keeps a remainder above the bind tolerance reserved on the pool', async () => {
-      const remainder = 1e-5;
-      const poolAmount = 3 + remainder;
-      prisma.creditReservation.findFirst
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(pool({ amount: poolAmount }));
-      prisma.creditReservation.create.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) =>
-          pool({ ...data, id: 'hold_1', metadata: data.metadata }),
-      );
-
-      await service.bindOutput(bindInput);
-
-      expect(prisma.creditReservation.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { amount: poolAmount - 3 } }),
-      );
-      expect(prisma.creditReservation.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ amount: 3 }),
-      });
-    });
-
     it('retires the pool when its last share is bound', async () => {
       prisma.creditReservation.findFirst
         .mockResolvedValueOnce(null)
@@ -1156,106 +854,4 @@ describe('CreditReservationService', () => {
       expect(prisma.creditReservation.create).not.toHaveBeenCalled();
     });
   });
-  it.each([
-    'pending',
-    'ambiguous',
-    'missing',
-    'mismatch',
-    'foreign',
-    'conflict',
-  ])(
-    'direct wallet settlement denies %s Crun proof before any financial write',
-    async (scenario) => {
-      const priced = quoteModelBillablePricing(
-        billableProfile({
-          key: 'crun/google/nano-banana-pro',
-          provider: 'crun',
-          cost: 3,
-        }),
-        {
-          modelKey: 'crun/google/nano-banana-pro',
-          provider: 'crun',
-          outputs: 1,
-          requests: 1,
-        },
-        1,
-        new Date().toISOString(),
-      );
-      if (priced.status !== 'priced') throw new Error('Invalid fixture');
-      const quote = {
-        ...priced.snapshot,
-        providerQuote: {
-          provider: 'crun',
-          estimated: false,
-          providerCreditsPerTask: '8',
-          quoteHash: 'a'.repeat(64),
-          inputHash: 'b'.repeat(64),
-          contractVersion: 'v1',
-          creditsPerUsd: '1000',
-          acquisitionRateVersion: 'fixture-rate',
-          credentialSource: 'hosted',
-          credentialId: null,
-          credentialFingerprint: 'c'.repeat(64),
-        },
-      };
-      const task = {
-        id: 'task',
-        ingredientId: 'image',
-        reservationId: 'res_1',
-        organizationId: 'org_1',
-        userId: scenario === 'foreign' ? 'foreign-user' : 'user_1',
-        modelKey: quote.modelKey,
-        inputHash: quote.providerQuote.inputHash,
-        contractVersion: 'v1',
-        credentialFingerprint: quote.providerQuote.credentialFingerprint,
-        credentialId: null,
-        credentialSource: 'hosted',
-        fundingBinding: { kind: 'reservation' },
-        quoteSnapshot: quote,
-        outputIndex: 0,
-        state:
-          scenario === 'pending'
-            ? 'pending'
-            : scenario === 'ambiguous'
-              ? 'submitting'
-              : 'provider-success',
-        providerTaskId: scenario === 'ambiguous' ? null : 'opaque',
-        terminalReceipt: {
-          status: 'success',
-          credits: scenario === 'mismatch' ? '9' : '8',
-        },
-        vendorCostRecordedAt: new Date(),
-        mediaPersistedAt: new Date(),
-        recoveryCode:
-          scenario === 'conflict' ? 'CRUN_TERMINAL_RECEIPT_CONFLICT' : null,
-      };
-      prisma.crunGenerationTask.findMany.mockResolvedValue(
-        scenario === 'missing' ? [] : [task],
-      );
-      prisma.creditReservation.findFirst.mockResolvedValue({
-        id: 'res_1',
-        organizationId: 'org_1',
-        actorUserId: 'user_1',
-        workloadId: 'image',
-        workloadType: 'media-generation',
-        amount: 3,
-        status: CreditReservationStatus.RESERVED,
-        metadata: { modelQuote: quote },
-      });
-      await expect(
-        service.settle({
-          organizationId: 'org_1',
-          reservationId: 'res_1',
-          actorUserId: 'user_1',
-          actualAmount: 3,
-          description: 'Fixture settlement',
-        }),
-      ).rejects.toThrow('Crun settlement proof is incomplete');
-      expect(prisma.creditReservation.updateMany).not.toHaveBeenCalled();
-      expect(creditBalanceService.applyDelta).not.toHaveBeenCalled();
-      expect(
-        creditTransactionsService.createTransactionEntry,
-      ).not.toHaveBeenCalled();
-    },
-  );
 });

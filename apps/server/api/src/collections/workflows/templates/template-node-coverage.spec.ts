@@ -7,7 +7,6 @@ import type { WorkflowEngineAdapterService } from '@api/collections/workflows/se
 import { WorkflowEngineConverterService } from '@api/collections/workflows/services/workflow-engine-converter.service';
 import { WorkflowEngineExecutorHelperService } from '@api/collections/workflows/services/workflow-engine-executor-helper.service';
 import { WorkflowEngineExecutorRegistryService } from '@api/collections/workflows/services/workflow-engine-executor-registry.service';
-import { WorkflowLipSyncExecutorRegistrarService } from '@api/collections/workflows/services/workflow-lip-sync-executor-registrar.service';
 import { WorkflowMediaGenerationExecutorRegistrarService } from '@api/collections/workflows/services/workflow-media-generation-executor-registrar.service';
 import { WorkflowMediaProcessingExecutorRegistrarService } from '@api/collections/workflows/services/workflow-media-processing-executor-registrar.service';
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
@@ -18,7 +17,6 @@ import { ENGINE_VERIFIED_TEMPLATE_IDS } from '@api/collections/workflows/templat
 import { WORKFLOW_TEMPLATES } from '@api/collections/workflows/templates/workflow-templates';
 import { isWorkflowInputNodeType } from '@api/collections/workflows/workflow-node-predicates';
 import { isKnowledgeWorkflowAction } from '@api/services/agent-orchestrator/tools/knowledge-workflow-execution.util';
-import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
 import {
   GENFEED_ACTION_NODE_TYPE,
   getActionDefinition,
@@ -172,7 +170,6 @@ function createProductionEngine(): WorkflowEngine {
       new WorkflowMediaProviderPlanService(
         helper,
         presentDependency(),
-        personasServiceStub(),
         presentDependency(),
         presentDependency(),
       ),
@@ -181,9 +178,12 @@ function createProductionEngine(): WorkflowEngine {
       presentDependency(),
       presentDependency(),
       presentDependency(),
+      presentDependency(),
     ),
     new WorkflowContentExecutorRegistrarService(
       helper,
+      presentDependency(),
+      presentDependency(),
       presentDependency(),
       presentDependency(),
       presentDependency(),
@@ -204,13 +204,6 @@ function createProductionEngine(): WorkflowEngine {
       presentDependency(),
     ),
     trendPublish,
-    new WorkflowLipSyncExecutorRegistrarService(
-      helper,
-      presentDependency(),
-      presentDependency(),
-      presentDependency(),
-      presentDependency(),
-    ),
   ).register(engine);
 
   const engineAdapter: Pick<
@@ -317,7 +310,7 @@ describe('workflow template wiring guard (#5533)', () => {
     );
     for (const unregistered of [
       'effect-text-overlay',
-      'generate_turbo_content',
+      'generate_content_batch',
       'output-webhook',
       'process-resize',
       'process-transform',

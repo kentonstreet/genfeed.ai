@@ -2,7 +2,6 @@ import type { WorkflowEngineExecutorHelperService } from '@api/collections/workf
 import { WorkflowMediaGenerationExecutorRegistrarService } from '@api/collections/workflows/services/workflow-media-generation-executor-registrar.service';
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
 import * as imageGenerationBriefRegistry from '@api/services/generation-brief/image-generation-brief-registry';
-import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
 import { ByokProvider, IngredientStatus } from '@genfeedai/contracts';
 import { QWEN_IMAGE_MODEL_KEY } from '@genfeedai/contracts/api-types/contracts/generation-capability-profile.contract';
 import { MODEL_KEYS } from '@genfeedai/contracts/constants';
@@ -26,6 +25,9 @@ vi.mock(
   '@api/services/integrations/elevenlabs/services/elevenlabs.service',
   () => ({ ElevenLabsService: class {} }),
 );
+vi.mock('@api/services/integrations/heygen/services/heygen.service', () => ({
+  HeyGenService: class {},
+}));
 vi.mock(
   '@api/services/integrations/replicate/services/replicate.service',
   () => ({ ReplicateService: class {} }),
@@ -71,58 +73,6 @@ function getActionExecutor(
 }
 
 describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
-  it('refuses a Fal preparation before creating output or resolving a Replicate credential', async () => {
-    const createAndLinkProcessingOutput = vi.fn();
-    const runModel = vi.fn();
-    const resolveApiKey = vi.fn();
-    const helper = {
-      createAndLinkProcessingOutput,
-      wrapEngineExecutor,
-    } as unknown as WorkflowEngineExecutorHelperService;
-    const plan = {
-      prepareVideo: vi
-        .fn()
-        .mockResolvedValue({ provider: 'fal', actionId: 'videoGen' }),
-      canPrepareImage: false,
-    } as unknown as WorkflowMediaProviderPlanService;
-    const engine = new WorkflowEngine();
-    new WorkflowMediaGenerationExecutorRegistrarService(
-      helper,
-      { log: vi.fn() } as never,
-      plan,
-      undefined,
-      { runModel } as never,
-      { resolveApiKey } as never,
-    ).register(engine);
-    const executor = getActionExecutor(engine, 'videoGen');
-    expect(executor).toBeDefined();
-    await expect(
-      executor?.(
-        {
-          id: 'fal-1',
-          type: 'videoGen',
-          label: 'Fal video',
-          config: {
-            model: 'fal/bytedance/seedance-2.5/text-to-video',
-            brandId: 'brand-1',
-            prompt: 'Continue',
-          },
-          inputs: [],
-        },
-        new Map(),
-        {
-          organizationId: 'org-1',
-          userId: 'user-1',
-          runId: 'run-1',
-          workflowId: 'workflow-1',
-          workflowVersionId: 'version-1',
-        },
-      ),
-    ).rejects.toThrow('funded native dispatch adapter');
-    expect(createAndLinkProcessingOutput).not.toHaveBeenCalled();
-    expect(runModel).not.toHaveBeenCalled();
-    expect(resolveApiKey).not.toHaveBeenCalled();
-  });
   it('persists native video extension lineage and dispatches the Seedance extension contract', async () => {
     const createAndLinkProcessingOutput = vi.fn(
       async (
@@ -141,7 +91,6 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       buildVideoIngredientUrl: (ingredientId: string) =>
         `https://api.test/videos/${ingredientId}`,
       createAndLinkProcessingOutput,
-      hasOrganizationAsset: async () => true,
       extractIngredientId: (value: unknown) =>
         typeof value === 'string'
           ? value.match(/\/videos\/([^/?#]+)/i)?.[1]
@@ -167,16 +116,17 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         { buildPrompt: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[3],
+        >[2],
         filesClientService as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[4],
+        >[3],
       ),
       undefined,
+      undefined,
       replicateService as never,
+      filesClientService as never,
     ).register(engine);
 
     await getActionExecutor(engine, 'videoGen')?.(
@@ -208,7 +158,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDANCE_2_5,
       expect.objectContaining({
         aspect_ratio: 'adaptive',
-        duration: 8,
+        duration: -1,
         reference_videos: ['https://s3.example.com/source-video-1?sig=signed'],
       }),
       undefined,
@@ -265,12 +215,12 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         promptBuilderService as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[3],
+        >[2],
         undefined,
       ),
+      undefined,
       undefined,
       replicateService as never,
     ).register(engine);
@@ -370,14 +320,15 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         promptBuilderService as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[3],
+        >[2],
         undefined,
       ),
       undefined,
+      undefined,
       replicateService as never,
+      undefined,
       byokService as never,
     ).register(engine);
 
@@ -437,8 +388,6 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       buildVideoIngredientUrl: (ingredientId: string) =>
         `https://api.test/videos/${ingredientId}`,
       createAndLinkProcessingOutput,
-      hasOrganizationAsset: async () => true,
-      extractIngredientId: () => undefined,
       requireBrandId: (brandId: unknown) => String(brandId),
       wrapEngineExecutor,
     } as unknown as WorkflowEngineExecutorHelperService;
@@ -458,14 +407,15 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         { buildPrompt: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[3],
+        >[2],
         undefined,
       ),
       undefined,
+      undefined,
       replicateService as never,
+      undefined,
       byokService as never,
     ).register(engine);
 
@@ -542,12 +492,12 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         { buildPrompt: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
-        >[3],
+        >[2],
         undefined,
       ),
+      undefined,
       undefined,
       replicateService as never,
     ).register(engine);
@@ -599,7 +549,6 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       buildVideoIngredientUrl: (ingredientId: string) =>
         `https://api.test/videos/${ingredientId}`,
       createAndLinkProcessingOutput,
-      hasOrganizationAsset: async () => true,
       extractIngredientId: (value: unknown) =>
         typeof value === 'string'
           ? value.match(/\/videos\/([^/?#]+)/i)?.[1]
@@ -620,10 +569,10 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         undefined,
         undefined,
       ),
+      undefined,
       undefined,
       replicateService as never,
     ).register(engine);
@@ -704,7 +653,6 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         buildVideoIngredientUrl: (ingredientId: string) =>
           `https://api.test/videos/${ingredientId}`,
         createAndLinkProcessingOutput,
-        hasOrganizationAsset: async () => true,
         extractIngredientId: (value: unknown) =>
           typeof value === 'string'
             ? value.match(/\/(?:images|videos)\/([^/?#]+)/i)?.[1]
@@ -726,10 +674,10 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
           logger as unknown as ConstructorParameters<
             typeof WorkflowMediaProviderPlanService
           >[1],
-          personasServiceStub(),
           undefined,
           undefined,
         ),
+        undefined,
         undefined,
         replicateService as never,
       ).register(engine);
@@ -950,6 +898,84 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
     });
   });
 
+  it('rejects lip-sync when the source media and audio belong to different brands', async () => {
+    const requireMediaAsset = vi.fn(async (value: unknown) => {
+      if (value === 'video-asset') {
+        return {
+          brandId: 'brand-1',
+          category: 'video',
+          id: 'video-asset',
+          storageKey: 'video-key',
+          storageType: 'videos',
+        };
+      }
+      if (value === 'audio-asset') {
+        return {
+          brandId: 'brand-2',
+          category: 'audio',
+          id: 'audio-asset',
+          storageKey: 'audio-key',
+          storageType: 'audios',
+        };
+      }
+      throw new Error(`Unexpected media reference: ${String(value)}`);
+    });
+    const helper = {
+      readConfigString: () => undefined,
+      requireMediaAsset,
+      wrapEngineExecutor,
+    } as unknown as WorkflowEngineExecutorHelperService;
+    const replicateService = { runModel: vi.fn() };
+    const filesClientService = { getPresignedDownloadUrl: vi.fn() };
+    const engine = new WorkflowEngine();
+
+    new WorkflowMediaGenerationExecutorRegistrarService(
+      helper,
+      { log: vi.fn() } as never,
+      new WorkflowMediaProviderPlanService(
+        helper,
+        { log: vi.fn() } as unknown as ConstructorParameters<
+          typeof WorkflowMediaProviderPlanService
+        >[1],
+        undefined,
+        filesClientService as unknown as ConstructorParameters<
+          typeof WorkflowMediaProviderPlanService
+        >[3],
+      ),
+      undefined,
+      undefined,
+      replicateService as never,
+      filesClientService as never,
+    ).register(engine);
+
+    await expect(
+      getActionExecutor(engine, 'lipSync')?.(
+        {
+          config: {},
+          id: 'lip-sync-1',
+          inputs: [],
+          label: 'Lip sync',
+          type: 'lipSync',
+        },
+        new Map([
+          ['video', 'video-asset'],
+          ['audio', 'audio-asset'],
+        ]),
+        {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          userId: 'user-1',
+          workflowId: 'workflow-1',
+          workflowVersionId: 'version-1',
+        },
+      ),
+    ).rejects.toThrow(
+      'Lip-sync source media and audio must belong to the same brand',
+    );
+
+    expect(filesClientService.getPresignedDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it('marks the pending text-to-speech ingredient failed when BYOK key resolution rejects', async () => {
     const patchIngredient = vi.fn();
     const createWorkflowOutputIngredient = vi.fn().mockResolvedValue({
@@ -977,11 +1003,12 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         { log: vi.fn() } as unknown as ConstructorParameters<
           typeof WorkflowMediaProviderPlanService
         >[1],
-        personasServiceStub(),
         undefined,
         undefined,
       ),
+      undefined,
       elevenLabsService as never,
+      undefined,
       undefined,
       byokService as never,
     ).register(engine);

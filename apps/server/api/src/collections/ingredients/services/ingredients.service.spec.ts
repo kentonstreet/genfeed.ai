@@ -1,31 +1,14 @@
-import { runWithActionOrigin } from '@api/action-origin/action-origin.context';
-import type { IngredientServerCreate } from '@api/collections/ingredients/dto/create-ingredient.dto';
+import { CreateIngredientDto } from '@api/collections/ingredients/dto/create-ingredient.dto';
 import { UpdateIngredientDto } from '@api/collections/ingredients/dto/update-ingredient.dto';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
-import { PersonaReferencesService } from '@api/collections/personas/services/persona-references.service';
-import { LibraryShelfUtil } from '@api/helpers/utils/library-shelf/library-shelf.util';
-import { CacheService } from '@api/services/cache/cache.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
-  ActionOrigin,
   AssetScope,
-  FleetReviewStatus,
   IngredientCategory,
-  IngredientOrigin,
   IngredientStatus,
-  LibraryShelf,
 } from '@genfeedai/contracts';
-import {
-  GenerationEntryAttribution,
-  GenerationEntryChannel,
-} from '@genfeedai/contracts/interfaces/content/generation-entry.interface';
 import { testId } from '@helpers/testing/test-id.helper';
 import { LoggerService } from '@libs/logger/logger.service';
-import {
-  crossOrgUnsafe,
-  runWithTenantContext,
-} from '@libs/prisma/tenant-context';
-import { assertTenantScopedQuery } from '@libs/prisma/tenant-guard';
 import { Test, TestingModule } from '@nestjs/testing';
 
 // Real, schema-derived getModelMeta/PRISMA_MODEL_METADATA.Ingredient (category/
@@ -53,8 +36,6 @@ describe('IngredientsService', () => {
     groupBy: ReturnType<typeof vi.fn>;
   };
   let prisma: PrismaService;
-  const invalidateByTags = vi.fn();
-  const personaReferences = { resyncForIngredients: vi.fn() };
 
   const brandId = testId('brand');
   const ingredientId = testId('ingredient');
@@ -73,10 +54,6 @@ describe('IngredientsService', () => {
   };
 
   beforeEach(async () => {
-    invalidateByTags.mockReset().mockResolvedValue(1);
-    personaReferences.resyncForIngredients
-      .mockReset()
-      .mockResolvedValue(undefined);
     ingredientDelegate = {
       count: vi.fn().mockResolvedValue(1),
       create: vi.fn().mockResolvedValue(mockIngredient),
@@ -92,8 +69,6 @@ describe('IngredientsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         IngredientsService,
-        { provide: CacheService, useValue: { invalidateByTags } },
-        { provide: PersonaReferencesService, useValue: personaReferences },
         { provide: PrismaService, useValue: prisma },
         {
           provide: LoggerService,
@@ -114,104 +89,11 @@ describe('IngredientsService', () => {
     expect(service).toBeDefined();
   });
 
-  it('persists server-captured entry with generated placeholders and preserves it through completion', async () => {
-    const generationEntry = {
-      channel: GenerationEntryChannel.MCP,
-      attribution: GenerationEntryAttribution.SERVER_VERIFIED,
-    };
-    await runWithActionOrigin(
-      { origin: ActionOrigin.MCP, generationEntry },
-      () =>
-        service.create({
-          brandId,
-          category: IngredientCategory.IMAGE,
-          origin: IngredientOrigin.GENERATED,
-          status: IngredientStatus.PROCESSING,
-          providerData: {
-            compiler: 'v1',
-            generationEntry: { channel: 'spoof' },
-          },
-        }),
-    );
-    expect(ingredientDelegate.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          providerData: { compiler: 'v1', generationEntry },
-        }),
-      }),
-    );
-    ingredientDelegate.findFirst.mockResolvedValue({
-      ...mockIngredient,
-      providerData: { generationEntry },
-    });
-    await service.patch(ingredientId, { providerData: { completed: true } });
-    expect(ingredientDelegate.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          providerData: { completed: true, generationEntry },
-        }),
-      }),
-    );
-  });
-
-  it('preserves each asset entry during bulk metadata replacement under its organization', async () => {
-    const web = {
-      channel: GenerationEntryChannel.WEB,
-      attribution: GenerationEntryAttribution.CLIENT_REPORTED,
-    };
-    const api = {
-      channel: GenerationEntryChannel.API,
-      attribution: GenerationEntryAttribution.SERVER_VERIFIED,
-    };
-    ingredientDelegate.findMany.mockResolvedValue([
-      {
-        ...mockIngredient,
-        id: 'asset-web',
-        providerData: { generationEntry: web },
-      },
-      {
-        ...mockIngredient,
-        id: 'asset-api',
-        providerData: { generationEntry: api },
-      },
-      { ...mockIngredient, id: 'asset-legacy', providerData: {} },
-    ]);
-    ingredientDelegate.updateMany.mockResolvedValue({ count: 1 });
-    const result = await runWithTenantContext({ organizationId }, () =>
-      service.patchAll(
-        { brandId },
-        { providerData: { completed: true, generationEntry: api } },
-      ),
-    );
-    expect(result).toEqual({ modifiedCount: 3 });
-    for (const [id, entry] of [
-      ['asset-web', web],
-      ['asset-api', api],
-      ['asset-legacy', undefined],
-    ] as const) {
-      expect(ingredientDelegate.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id,
-          organizationId,
-          isDeleted: false,
-          AND: [expect.objectContaining({ brandId })],
-        }),
-        data: expect.objectContaining({
-          providerData: {
-            completed: true,
-            ...(entry ? { generationEntry: entry } : {}),
-          },
-        }),
-      });
-    }
-  });
-
   describe('create', () => {
     it('should create an ingredient successfully', async () => {
-      const createDto: IngredientServerCreate = {
+      const createDto: CreateIngredientDto = {
         brandId,
         category: IngredientCategory.IMAGE,
-        origin: IngredientOrigin.GENERATED,
         status: IngredientStatus.PROCESSING,
       };
 
@@ -222,10 +104,9 @@ describe('IngredientsService', () => {
     });
 
     it('should handle creation errors', async () => {
-      const createDto: IngredientServerCreate = {
+      const createDto: CreateIngredientDto = {
         brandId,
         category: IngredientCategory.IMAGE,
-        origin: IngredientOrigin.GENERATED,
         status: IngredientStatus.PROCESSING,
       };
 
@@ -245,7 +126,6 @@ describe('IngredientsService', () => {
         generationPrompt: 'A boxer in a dark arena',
         generationSeed: 42,
         modelUsed: 'black-forest-labs/flux-schnell',
-        origin: IngredientOrigin.GENERATED,
         sources: [sourceId],
       });
 
@@ -262,91 +142,7 @@ describe('IngredientsService', () => {
     });
   });
 
-  describe('origin', () => {
-    it.each([
-      IngredientOrigin.UPLOADED,
-      IngredientOrigin.GENERATED,
-      IngredientOrigin.IMPORTED,
-    ])('persists %s on create', async (origin) => {
-      await service.create({
-        category: IngredientCategory.IMAGE,
-        origin,
-        status: IngredientStatus.PROCESSING,
-      });
-
-      expect(ingredientDelegate.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ origin }),
-        }),
-      );
-    });
-
-    it('never writes origin on a patch, even when asked', async () => {
-      await service.patch(ingredientId, {
-        origin: IngredientOrigin.IMPORTED,
-        status: IngredientStatus.VALIDATED,
-      } as Parameters<IngredientsService['patch']>[1]);
-
-      const [{ data }] = ingredientDelegate.update.mock.calls[0] as [
-        { data: Record<string, unknown> },
-      ];
-      expect(data).not.toHaveProperty('origin');
-      expect(data).toHaveProperty('status');
-    });
-  });
-
   describe('patch', () => {
-    it('clears cached Library lists and counts after committing a rejection', async () => {
-      await service.patch(ingredientId, { status: IngredientStatus.REJECTED });
-
-      expect(invalidateByTags).toHaveBeenCalledWith(['ingredients']);
-      expect(invalidateByTags.mock.invocationCallOrder[0]).toBeGreaterThan(
-        ingredientDelegate.update.mock.invocationCallOrder[0],
-      );
-    });
-
-    it('does not clear the Library cache when a rejection fails', async () => {
-      ingredientDelegate.update.mockRejectedValueOnce(
-        new Error('write failed'),
-      );
-
-      await expect(
-        service.patch(ingredientId, { status: IngredientStatus.REJECTED }),
-      ).rejects.toThrow('write failed');
-      expect(invalidateByTags).not.toHaveBeenCalled();
-    });
-
-    it('keeps a committed rejection successful when cache invalidation is unavailable', async () => {
-      invalidateByTags.mockRejectedValueOnce(new Error('redis unavailable'));
-
-      await expect(
-        service.patch(ingredientId, { status: IngredientStatus.REJECTED }),
-      ).resolves.toBeDefined();
-      expect(service.logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('could not invalidate the Library list cache'),
-        { error: expect.any(Error) },
-      );
-    });
-
-    it.each([
-      [IngredientStatus.VALIDATED, FleetReviewStatus.APPROVED],
-      [IngredientStatus.REJECTED, FleetReviewStatus.REJECTED],
-    ])(
-      'keeps fleet review state consistent with %s',
-      async (status, reviewStatus) => {
-        ingredientDelegate.findFirst.mockResolvedValue({
-          ...mockIngredient,
-          reviewStatus: FleetReviewStatus.PENDING,
-        });
-        await service.patch(ingredientId, { status });
-        expect(ingredientDelegate.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({ reviewStatus }),
-          }),
-        );
-      },
-    );
-
     it('should update an ingredient successfully', async () => {
       const id = 'test-id';
       const updateDto: UpdateIngredientDto = {
@@ -522,134 +318,6 @@ describe('IngredientsService', () => {
     });
   });
 
-  describe('request tenant scope (CLOUD tenant guard)', () => {
-    const guard =
-      (operation: string) =>
-      (args: unknown): void =>
-        assertTenantScopedQuery({
-          args,
-          isCloud: true,
-          model: 'Ingredient',
-          operation,
-          tenantModelNames: new Set(['Ingredient']),
-        });
-
-    beforeEach(() => {
-      ingredientDelegate.findFirst.mockImplementation(async (args) => {
-        guard('findFirst')(args);
-        return mockIngredient;
-      });
-      ingredientDelegate.findMany.mockImplementation(async (args) => {
-        guard('findMany')(args);
-        return [mockIngredient];
-      });
-      ingredientDelegate.update.mockImplementation(async (args) => {
-        guard('update')(args);
-        return mockIngredient;
-      });
-      ingredientDelegate.updateMany.mockImplementation(async (args) => {
-        guard('updateMany')(args);
-        return { count: 1 };
-      });
-    });
-
-    it('patches an ingredient under the request organization and re-reads it there', async () => {
-      await runWithTenantContext({ organizationId }, () =>
-        service.patch('ing-1', { status: IngredientStatus.PROCESSING }),
-      );
-
-      const lookups = ingredientDelegate.findFirst.mock.calls.map(
-        ([args]) => args.where,
-      );
-      expect(lookups).toHaveLength(2);
-      for (const where of lookups) {
-        expect(where).toMatchObject({ id: 'ing-1', organizationId });
-      }
-      expect(ingredientDelegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'ing-1', isDeleted: false, organizationId },
-        }),
-      );
-    });
-
-    it('does not reach a foreign organization row through patch', async () => {
-      ingredientDelegate.findFirst.mockImplementation(async (args) => {
-        guard('findFirst')(args);
-        return args.where.organizationId === organizationId
-          ? null
-          : mockIngredient;
-      });
-
-      await expect(
-        runWithTenantContext({ organizationId }, () =>
-          service.patch('ing-1', { status: IngredientStatus.PROCESSING }),
-        ),
-      ).rejects.toThrow('Ingredient');
-      expect(ingredientDelegate.update).not.toHaveBeenCalled();
-    });
-
-    it('keeps the id-keyed shape for workers that carry no tenant context', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(mockIngredient);
-
-      await service.patch('ing-1', { status: IngredientStatus.PROCESSING });
-
-      for (const [args] of ingredientDelegate.findFirst.mock.calls) {
-        expect(args.where).not.toHaveProperty('organizationId');
-      }
-    });
-
-    it('soft-deletes under the request organization', async () => {
-      await runWithTenantContext({ organizationId }, () =>
-        service.remove('ing-1'),
-      );
-
-      expect(ingredientDelegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { isDeleted: true },
-          where: { id: 'ing-1', isDeleted: false, organizationId },
-        }),
-      );
-    });
-
-    it('soft-deletes by id for workers and explicit cross-organization callers', async () => {
-      await service.remove('ing-1');
-      await runWithTenantContext({ organizationId }, () =>
-        crossOrgUnsafe(async () => await service.remove('ing-2')),
-      );
-
-      expect(ingredientDelegate.update).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ where: { id: 'ing-1' } }),
-      );
-      expect(ingredientDelegate.update).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ where: { id: 'ing-2' } }),
-      );
-    });
-
-    it('never writes platform rows from a request, only the tenant-owned ones', async () => {
-      ingredientDelegate.findMany.mockResolvedValue([
-        { ...mockIngredient, organizationId: null },
-        mockIngredient,
-      ]);
-
-      const result = await runWithTenantContext({ organizationId }, () =>
-        service.patchAll(
-          { category: IngredientCategory.IMAGE, organizationId },
-          { status: IngredientStatus.PROCESSING },
-        ),
-      );
-
-      expect(ingredientDelegate.updateMany).toHaveBeenCalledTimes(1);
-      expect(ingredientDelegate.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ organizationId }),
-        }),
-      );
-      expect(result.modifiedCount).toBe(1);
-    });
-  });
-
   describe('bulkSoftDeleteScoped', () => {
     let updateManyMock: ReturnType<typeof vi.fn>;
 
@@ -663,7 +331,7 @@ describe('IngredientsService', () => {
       const result = await service.bulkSoftDeleteScoped({
         ids: [],
         organizationId: 'org-1',
-        editor: { brandId: 'brand-1', userId: 'user-1' },
+        userId: 'user-1',
       });
 
       expect(result).toEqual({ deleted: [], failed: [] });
@@ -671,35 +339,25 @@ describe('IngredientsService', () => {
       expect(updateManyMock).not.toHaveBeenCalled();
     });
 
-    it('partitions editable ids within the active organization with one read and one write', async () => {
+    it('partitions owner-or-same-organization ids with one read and one write', async () => {
       ingredientDelegate.findMany.mockResolvedValue([
-        {
-          id: 'ing-1',
-          userId: 'user-1',
-          scope: AssetScope.USER,
-          brandId: 'brand-1',
-        },
-        {
-          id: 'ing-2',
-          userId: 'other-user',
-          scope: AssetScope.ORGANIZATION,
-          brandId: 'brand-1',
-        },
+        { id: 'ing-1' },
+        { id: 'ing-2' },
       ]);
 
       const result = await service.bulkSoftDeleteScoped({
         ids: ['ing-1', 'ing-2', 'ing-foreign'],
         organizationId: 'org-1',
-        editor: { brandId: 'brand-1', userId: 'user-1' },
+        userId: 'user-1',
       });
 
       expect(ingredientDelegate.findMany).toHaveBeenCalledTimes(1);
       expect(ingredientDelegate.findMany).toHaveBeenCalledWith({
-        select: { id: true, userId: true, scope: true, brandId: true },
+        select: { id: true },
         where: {
           id: { in: ['ing-1', 'ing-2', 'ing-foreign'] },
           isDeleted: false,
-          organizationId: 'org-1',
+          OR: [{ userId: 'user-1' }, { organizationId: 'org-1' }],
         },
       });
       expect(updateManyMock).toHaveBeenCalledTimes(1);
@@ -708,7 +366,7 @@ describe('IngredientsService', () => {
         where: {
           id: { in: ['ing-1', 'ing-2'] },
           isDeleted: false,
-          organizationId: 'org-1',
+          OR: [{ userId: 'user-1' }, { organizationId: 'org-1' }],
         },
       });
       expect(result).toEqual({
@@ -723,7 +381,7 @@ describe('IngredientsService', () => {
       const result = await service.bulkSoftDeleteScoped({
         ids: ['ing-foreign'],
         organizationId: 'org-1',
-        editor: { brandId: 'brand-1', userId: 'user-1' },
+        userId: 'user-1',
       });
 
       expect(updateManyMock).not.toHaveBeenCalled();
@@ -731,19 +389,12 @@ describe('IngredientsService', () => {
     });
 
     it('deduplicates writes but still reports every requested id', async () => {
-      ingredientDelegate.findMany.mockResolvedValue([
-        {
-          id: 'ing-1',
-          userId: 'user-1',
-          scope: AssetScope.USER,
-          brandId: 'brand-1',
-        },
-      ]);
+      ingredientDelegate.findMany.mockResolvedValue([{ id: 'ing-1' }]);
 
       const result = await service.bulkSoftDeleteScoped({
         ids: ['ing-1', 'ing-1'],
         organizationId: 'org-1',
-        editor: { brandId: 'brand-1', userId: 'user-1' },
+        userId: 'user-1',
       });
 
       expect(ingredientDelegate.findMany).toHaveBeenCalledWith(
@@ -756,241 +407,6 @@ describe('IngredientsService', () => {
         where: expect.objectContaining({ id: { in: ['ing-1'] } }),
       });
       expect(result.deleted).toEqual(['ing-1', 'ing-1']);
-    });
-    it('refuses private and other-brand assets while allowing shared assets', async () => {
-      ingredientDelegate.findMany.mockResolvedValue([
-        {
-          id: 'private',
-          userId: 'other-user',
-          scope: AssetScope.USER,
-          brandId: 'brand-1',
-        },
-        {
-          id: 'other-brand',
-          userId: 'other-user',
-          scope: AssetScope.BRAND,
-          brandId: 'brand-2',
-        },
-        {
-          id: 'brand',
-          userId: 'other-user',
-          scope: AssetScope.BRAND,
-          brandId: 'brand-1',
-        },
-        {
-          id: 'public',
-          userId: 'other-user',
-          scope: AssetScope.PUBLIC,
-          brandId: null,
-        },
-      ]);
-      const result = await service.bulkSoftDeleteScoped({
-        ids: ['private', 'other-brand', 'brand', 'public', 'missing'],
-        organizationId: 'org-1',
-        editor: { brandId: 'brand-1', userId: 'user-1' },
-      });
-      expect(result).toEqual({
-        deleted: ['brand', 'public'],
-        failed: ['private', 'other-brand', 'missing'],
-      });
-      runWithTenantContext({ organizationId: 'org-1' }, () => {
-        for (const mock of [ingredientDelegate.findMany, updateManyMock]) {
-          const args = mock.mock.calls[0][0];
-          expect(args.where).toMatchObject({
-            organizationId: 'org-1',
-            isDeleted: false,
-          });
-          expect(args.where).not.toHaveProperty('OR');
-          expect(() =>
-            assertTenantScopedQuery({
-              args,
-              isCloud: true,
-              model: 'Ingredient',
-              tenantModelNames: new Set(['Ingredient']),
-              operation: mock === updateManyMock ? 'updateMany' : 'findMany',
-            }),
-          ).not.toThrow();
-        }
-      });
-    });
-  });
-
-  describe('character reference re-sync on soft delete', () => {
-    const editor = { brandId: 'brand-1', userId: 'user-1' };
-    const editable = {
-      brandId: 'brand-1',
-      id: 'ing-1',
-      scope: AssetScope.USER,
-      userId: 'user-1',
-    };
-
-    it('re-mirrors the primary reference after a single soft delete', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(editable);
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-
-      await runWithTenantContext({ organizationId: 'org-1' }, () =>
-        service.softDeleteOneScoped({
-          editor,
-          id: 'ing-1',
-          organizationId: 'org-1',
-        }),
-      );
-
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        'org-1',
-        ['ing-1'],
-      );
-    });
-
-    it('re-mirrors only the ids a bulk soft delete actually removed', async () => {
-      ingredientDelegate.findMany.mockResolvedValue([
-        editable,
-        { ...editable, id: 'ing-2', userId: 'other-user' },
-      ]);
-
-      await service.bulkSoftDeleteScoped({
-        editor,
-        ids: ['ing-1', 'ing-2'],
-        organizationId: 'org-1',
-      });
-
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        'org-1',
-        ['ing-1'],
-      );
-    });
-
-    it('re-mirrors after remove() and a PATCH of isDeleted', async () => {
-      await runWithTenantContext({ organizationId }, () =>
-        service.remove(ingredientId),
-      );
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        organizationId,
-        [ingredientId],
-      );
-
-      personaReferences.resyncForIngredients.mockClear();
-      await service.patch(ingredientId, { isDeleted: true }).catch(() => null);
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        organizationId,
-        [ingredientId],
-      );
-    });
-
-    it('never fails the delete when the re-sync fails', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(editable);
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-      personaReferences.resyncForIngredients.mockRejectedValue(
-        new Error('db down'),
-      );
-
-      await expect(
-        runWithTenantContext({ organizationId: 'org-1' }, () =>
-          service.softDeleteOneScoped({
-            editor,
-            id: 'ing-1',
-            organizationId: 'org-1',
-          }),
-        ),
-      ).resolves.toMatchObject({ id: 'ing-1' });
-    });
-
-    it('skips the re-sync when nothing was deleted', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(null);
-
-      await service.softDeleteOneScoped({
-        editor,
-        id: 'missing',
-        organizationId: 'org-1',
-      });
-
-      expect(personaReferences.resyncForIngredients).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('softDeleteOneScoped', () => {
-    const editor = { brandId: 'brand-1', userId: 'user-1' };
-
-    it('soft-deletes an editable live row inside the organization', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue({
-        id: 'ing-1',
-        userId: 'user-1',
-        scope: AssetScope.USER,
-        brandId: 'brand-1',
-      });
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-
-      const result = await runWithTenantContext(
-        { organizationId: 'org-1' },
-        () =>
-          service.softDeleteOneScoped({
-            editor,
-            id: 'ing-1',
-            organizationId: 'org-1',
-          }),
-      );
-
-      expect(ingredientDelegate.findFirst).toHaveBeenCalledWith({
-        select: { id: true, userId: true, scope: true, brandId: true },
-        where: { id: 'ing-1', isDeleted: false, organizationId: 'org-1' },
-      });
-      expect(ingredientDelegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { isDeleted: true },
-          where: { id: 'ing-1', isDeleted: false, organizationId: 'org-1' },
-        }),
-      );
-      expect(result).toMatchObject({ id: 'ing-1', isDeleted: true });
-      const updateArgs = ingredientDelegate.update.mock.calls[0][0];
-      expect(() =>
-        assertTenantScopedQuery({
-          args: updateArgs,
-          isCloud: true,
-          model: 'Ingredient',
-          operation: 'update',
-          tenantModelNames: new Set(['Ingredient']),
-        }),
-      ).not.toThrow();
-    });
-
-    it('does not write when the asset is missing or not editable', async () => {
-      ingredientDelegate.findFirst.mockResolvedValueOnce(null);
-      await expect(
-        service.softDeleteOneScoped({
-          editor,
-          id: 'missing',
-          organizationId: 'org-1',
-        }),
-      ).resolves.toBeNull();
-
-      ingredientDelegate.findFirst.mockResolvedValueOnce({
-        id: 'private',
-        userId: 'other-user',
-        scope: AssetScope.USER,
-        brandId: 'brand-1',
-      });
-      await expect(
-        service.softDeleteOneScoped({
-          editor,
-          id: 'private',
-          organizationId: 'org-1',
-        }),
-      ).resolves.toBeNull();
-
-      expect(ingredientDelegate.update).not.toHaveBeenCalled();
-      expect(ingredientDelegate.updateMany).not.toHaveBeenCalled();
     });
   });
 
@@ -1015,195 +431,6 @@ describe('IngredientsService', () => {
       const result = await service.findOne({ id: 'test-id' });
 
       expect(result?.cdnUrl).toBe('https://cdn.argil.ai/video-1.mp4');
-    });
-  });
-
-  describe('getLibrarySummary', () => {
-    it('counts rejected assets separately from archived assets and usable inventory', async () => {
-      ingredientDelegate.groupBy.mockResolvedValue([
-        {
-          category: IngredientCategory.IMAGE,
-          status: IngredientStatus.GENERATED,
-          _count: { id: 3 },
-          _sum: { fileSize: 120 },
-        },
-        {
-          category: IngredientCategory.IMAGE,
-          status: IngredientStatus.REJECTED,
-          _count: { id: 2 },
-          _sum: { fileSize: 80 },
-        },
-        {
-          category: IngredientCategory.IMAGE,
-          status: IngredientStatus.ARCHIVED,
-          _count: { id: 1 },
-          _sum: { fileSize: 40 },
-        },
-      ]);
-
-      const summary = await service.getLibrarySummary(organizationId, {
-        brandId,
-      });
-
-      expect(summary.byShelf[LibraryShelf.REJECTED]).toBe(2);
-      expect(summary.byShelf[LibraryShelf.ARCHIVED]).toBe(1);
-      expect(summary.total).toBe(3);
-      expect(summary.storageBytes).toBe(120);
-      expect(ingredientDelegate.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { brandId, organizationId, isDeleted: false },
-        }),
-      );
-    });
-  });
-
-  describe('listLibraryAssets', () => {
-    it('always scopes by organizationId and isDeleted:false, newest first', async () => {
-      await service.listLibraryAssets({
-        category: IngredientCategory.IMAGE,
-        limit: 5,
-        offset: 10,
-        organizationId,
-        origin: IngredientOrigin.UPLOADED,
-      });
-
-      expect(ingredientDelegate.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orderBy: { createdAt: 'desc' },
-          skip: 10,
-          take: 5,
-          where: {
-            category: IngredientCategory.IMAGE,
-            isDeleted: false,
-            organizationId,
-            origin: IngredientOrigin.UPLOADED,
-            status: {
-              notIn: [
-                IngredientStatus.FAILED,
-                IngredientStatus.ARCHIVED,
-                IngredientStatus.REJECTED,
-              ],
-            },
-            trainingId: null,
-          },
-        }),
-      );
-    });
-
-    it('uses the Unsorted saved query with brand, origin and tenant filters', async () => {
-      await service.listLibraryAssets({
-        brandId: 'brand-1',
-        category: IngredientCategory.IMAGE,
-        limit: 10,
-        offset: 0,
-        organizationId,
-        origin: IngredientOrigin.GENERATED,
-        shelf: LibraryShelf.UNSORTED,
-      });
-      expect(ingredientDelegate.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            brandId: 'brand-1',
-            category: IngredientCategory.IMAGE,
-            organizationId,
-            isDeleted: false,
-            origin: IngredientOrigin.GENERATED,
-            AND: [LibraryShelfUtil.buildShelfFilter(LibraryShelf.UNSORTED)],
-          }),
-        }),
-      );
-    });
-
-    it('intersects shelf and all-tags filters without overwriting either AND', async () => {
-      const tagFilter = {
-        AND: [
-          { tags: { some: { id: 'tag-1', isDeleted: false } } },
-          { tags: { some: { id: 'tag-2', isDeleted: false } } },
-        ],
-      };
-      await service.listLibraryAssets({
-        brandId: 'brand-1',
-        category: IngredientCategory.IMAGE,
-        limit: 10,
-        offset: 0,
-        organizationId,
-        origin: IngredientOrigin.UPLOADED,
-        shelf: LibraryShelf.UNSORTED,
-        tagFilter,
-      });
-      expect(ingredientDelegate.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            organizationId,
-            isDeleted: false,
-            origin: IngredientOrigin.UPLOADED,
-            AND: [
-              LibraryShelfUtil.buildShelfFilter(LibraryShelf.UNSORTED),
-              tagFilter,
-            ],
-          }),
-        }),
-      );
-    });
-
-    it('adds the brand filter for a brand-scoped caller', async () => {
-      await service.listLibraryAssets({
-        brandId: 'brand-1',
-        category: IngredientCategory.IMAGE,
-        limit: 10,
-        offset: 0,
-        organizationId,
-      });
-
-      const arg = ingredientDelegate.findMany.mock.calls.at(-1)?.[0] as {
-        where: Record<string, unknown>;
-      };
-      expect(arg.where).toMatchObject({
-        brandId: 'brand-1',
-        isDeleted: false,
-        organizationId,
-      });
-    });
-
-    it('applies a tag filter inside the tenant scope and loads each asset’s tags', async () => {
-      const tagFilter = { tags: { some: { id: 'tag-1', isDeleted: false } } };
-
-      await service.listLibraryAssets({
-        category: IngredientCategory.IMAGE,
-        limit: 10,
-        offset: 0,
-        organizationId,
-        tagFilter,
-      });
-
-      const arg = ingredientDelegate.findMany.mock.calls.at(-1)?.[0] as {
-        include: Record<string, unknown>;
-        where: Record<string, unknown>;
-      };
-      expect(arg.where).toMatchObject({
-        ...tagFilter,
-        isDeleted: false,
-        organizationId,
-      });
-      expect(arg.include).toMatchObject({
-        metadata: { select: { result: true } },
-        tags: { where: { isDeleted: false } },
-      });
-    });
-
-    it('omits the origin filter when none is given', async () => {
-      await service.listLibraryAssets({
-        category: IngredientCategory.VIDEO,
-        limit: 10,
-        offset: 0,
-        organizationId,
-      });
-
-      const arg = ingredientDelegate.findMany.mock.calls.at(-1)?.[0] as {
-        where: Record<string, unknown>;
-      };
-      expect(arg.where).not.toHaveProperty('origin');
-      expect(arg.where).toMatchObject({ isDeleted: false, organizationId });
     });
   });
 
@@ -1315,6 +542,29 @@ describe('IngredientsService', () => {
           where?: Record<string, unknown>;
         };
         expect(callArg.where).not.toHaveProperty('category');
+      });
+    });
+
+    describe('getKPIMetrics', () => {
+      it('passes Prisma-form UPPERCASE category to prisma.ingredient.count when app-form VIDEO supplied', async () => {
+        // getKPIMetrics calls count multiple times; verify all calls carry UPPERCASE
+        await service.getKPIMetrics('org-1', IngredientCategory.VIDEO);
+
+        for (const [callArg] of countMock.mock.calls as Array<
+          [{ where?: Record<string, unknown> }]
+        >) {
+          expect(callArg.where).toHaveProperty('category', 'VIDEO');
+        }
+      });
+
+      it('omits category from where when no category is given', async () => {
+        await service.getKPIMetrics('org-1');
+
+        for (const [callArg] of countMock.mock.calls as Array<
+          [{ where?: Record<string, unknown> }]
+        >) {
+          expect(callArg.where).not.toHaveProperty('category');
+        }
       });
     });
   });

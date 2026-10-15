@@ -1,7 +1,6 @@
 import { isCreditTransactionConflict } from '@api/collections/credits/services/credit-transaction-conflict';
 import { CreditsUtilsService } from '@api/collections/credits/services/credits.utils.service';
 import { ReservationEvidenceChangedException } from '@api/collections/credits/services/reservation-evidence-changed.exception';
-import { readWorkflowFalCompletionEvidence } from '@api/collections/credits/services/workflow-fal-completion-evidence.util';
 import { BusinessLogicException } from '@api/exceptions/business-logic.exception';
 import { quoteSnapshotHash } from '@api/helpers/utils/credits/quote-snapshot.util';
 import {
@@ -17,7 +16,6 @@ import {
   assertWorkflowFundingIdentity,
   closeWorkflowDispatch,
   parseWorkflowGenerationProviderEvidence,
-  workflowGenerationOperationId,
 } from '@api/helpers/utils/credits/workflow-generation-evidence.util';
 import { lockWorkflowFundingRecoveryExecution } from '@api/helpers/utils/credits/workflow-generation-recovery.util';
 import {
@@ -201,23 +199,19 @@ export class WorkflowGenerationBillingService {
         where: { id: executionId, organizationId, isDeleted: false },
         select: { status: true },
       });
-      if (
+      const expiredOrRetired =
         !execution ||
         (execution.status !== WorkflowExecutionStatus.PENDING &&
-          execution.status !== WorkflowExecutionStatus.RUNNING)
-      )
-        throw new BusinessLogicException(
-          'Workflow funding execution identity is unavailable',
-        );
+          execution.status !== WorkflowExecutionStatus.RUNNING) ||
+        new Date(current.expiresAt) <= new Date();
       const attached = {
         ...current,
         state: 'funded' as const,
         reservationId: reservation?.id ?? null,
       };
-      const updated =
-        new Date(current.expiresAt) <= new Date()
-          ? closeWorkflowDispatch(attached)
-          : attached;
+      const updated = expiredOrRetired
+        ? closeWorkflowDispatch(attached)
+        : attached;
       await this.persist(tx, updated);
       return updated;
     }).catch(async (error: unknown) => {
@@ -228,28 +222,6 @@ export class WorkflowGenerationBillingService {
     if (funded.dispatchClosed)
       await this.settleExecution(executionId, organizationId);
     return funded;
-  }
-
-  /** Legacy and hidden-mirror runs have no source or funding and stay unfenced. */
-  async admitClaimedNode(
-    tx: Prisma.TransactionClient,
-    executionId: string,
-    organizationId: string,
-    nodeId: string,
-    claimId: string,
-  ): Promise<void> {
-    const execution = await tx.workflowExecution.findFirst({
-      select: {
-        generationAdmissionSource: true,
-        generationBilling: true,
-      },
-      where: { id: executionId, isDeleted: false, organizationId },
-    });
-    if (!execution)
-      throw new BusinessLogicException('Workflow execution is unavailable');
-    if (!execution.generationAdmissionSource && !execution.generationBilling)
-      return;
-    await this.admitNode(tx, executionId, organizationId, nodeId, claimId);
   }
 
   /** Same transaction as initial/reclaimed durable claims, for every side-effect node. */
@@ -287,7 +259,7 @@ export class WorkflowGenerationBillingService {
     executionId: string,
     organizationId: string,
     operationId: string,
-    dispatchFingerprint: string | undefined,
+    dispatchFingerprint: string,
     claimId: string,
   ): Promise<void> {
     const plan = await assertWorkflowExecutionAdmission(
@@ -298,9 +270,6 @@ export class WorkflowGenerationBillingService {
     const allocation = plan.manifest.allocations.find(
       (item) => item.operationId === operationId,
     );
-    // An operation outside the frozen manifest (lip-sync, avatar video) funds
-    // its own output hold; only a manifest operation is fenced here.
-    if (!allocation && dispatchFingerprint === undefined) return;
     if (
       !allocation ||
       allocation.dispatch.billableFingerprint !== dispatchFingerprint
@@ -323,125 +292,6 @@ export class WorkflowGenerationBillingService {
         intentId: operationId,
         observedAt: new Date().toISOString(),
       }),
-    );
-  }
-
-  async recordContinuationProof(
-    tx: Prisma.TransactionClient,
-    continuation: {
-      id?: string;
-      actionId: string;
-      executionId: string;
-      ingredientId: string;
-      nodeId: string;
-      organizationId: string;
-      provider: string;
-    },
-    evidence:
-      | {
-          kind: 'accepted';
-          providerJobId: string;
-        }
-      | { kind: 'submission-rejected' }
-      | {
-          kind: 'provider-terminal' | 'local-job-terminal';
-          providerJobId?: string;
-        }
-      | {
-          kind: 'completed';
-          providerJobId?: string;
-        },
-  ): Promise<void> {
-    const plan = await lockWorkflowExecutionFunding(
-      tx,
-      continuation.executionId,
-      continuation.organizationId,
-    );
-    if (!plan) return;
-    const operationId = workflowGenerationOperationId(
-      continuation.executionId,
-      continuation.nodeId,
-      continuation.actionId,
-    );
-    const allocation = plan.manifest.allocations.find(
-      (item) => item.operationId === operationId,
-    );
-    if (!allocation) return;
-    const observedAt = new Date().toISOString();
-    if (evidence.kind === 'accepted') {
-      await this.recordOperationProof(
-        tx,
-        continuation.executionId,
-        continuation.organizationId,
-        {
-          intentId: operationId,
-          observedAt,
-          operationId,
-          phase: 'accepted',
-          providerJobId: evidence.providerJobId,
-        },
-      );
-      return;
-    }
-    if (evidence.kind === 'completed') {
-      const fal =
-        continuation.provider === 'fal'
-          ? await readWorkflowFalCompletionEvidence(
-              tx,
-              { ...continuation, id: continuation.id ?? '' },
-              allocation,
-            )
-          : undefined;
-      await this.recordOperationProof(
-        tx,
-        continuation.executionId,
-        continuation.organizationId,
-        {
-          artifacts: [
-            {
-              assetKey:
-                fal?.assetKey ??
-                `workflow-generation/${continuation.ingredientId}`,
-              ingredientId: continuation.ingredientId,
-              role: 'primary',
-            },
-          ],
-          completion: fal?.completion ?? {
-            ...allocation.dispatch.quantities,
-            completedOutputs: 1,
-            successfulRequests: 1,
-          },
-          intentId: operationId,
-          observedAt,
-          operationId,
-          phase: 'completed',
-          proofId: continuation.ingredientId,
-          ...(evidence.providerJobId
-            ? { providerJobId: evidence.providerJobId }
-            : {}),
-        },
-      );
-      return;
-    }
-    await this.recordOperationProof(
-      tx,
-      continuation.executionId,
-      continuation.organizationId,
-      {
-        intentId: operationId,
-        kind:
-          evidence.kind === 'submission-rejected'
-            ? 'submission-rejected'
-            : evidence.kind,
-        observedAt,
-        operationId,
-        phase: 'failed',
-        provider: continuation.provider,
-        proofId: continuation.ingredientId,
-        ...(evidence.kind !== 'submission-rejected' && evidence.providerJobId
-          ? { providerJobId: evidence.providerJobId }
-          : {}),
-      },
     );
   }
 

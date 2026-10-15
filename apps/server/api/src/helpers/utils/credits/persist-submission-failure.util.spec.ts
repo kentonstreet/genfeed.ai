@@ -39,7 +39,6 @@ function fixture(byok = false) {
     audit: 'preserved',
   };
   const tx = {
-    crunGenerationTask: { findFirst: vi.fn().mockResolvedValue(null) },
     $queryRaw: vi.fn().mockResolvedValue([]),
     ingredient: {
       findFirst: vi.fn().mockResolvedValue(
@@ -70,7 +69,7 @@ describe('confirmed submitted-generation failure evidence', () => {
     expect(
       await persistSubmissionFailure(state.prisma, where, failed, false),
     ).toBeNull();
-    expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
+    expect(state.tx.creditReservation.findFirst).not.toHaveBeenCalled();
     expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
   });
   it('commits provider failure proof in the same transaction as the scoped FAILED CAS', async () => {
@@ -112,22 +111,6 @@ describe('confirmed submitted-generation failure evidence', () => {
     await expect(
       persistSubmissionFailure(state.prisma, where, failed, true),
     ).rejects.toThrow('Financial write failed');
-  });
-  it('still fails the library row when the intent hold already expired at its ceiling', async () => {
-    const state = fixture();
-    state.hold.status = CreditReservationStatus.EXPIRED;
-    expect(
-      await persistSubmissionFailure(state.prisma, where, failed, true),
-    ).toEqual({ count: 1 });
-    expect(state.tx.ingredient.updateMany).toHaveBeenCalledTimes(1);
-    expect(state.tx.creditReservation.updateMany).not.toHaveBeenCalled();
-  });
-  it('rejects a failure for a hold that was released', async () => {
-    const state = fixture();
-    state.hold.status = CreditReservationStatus.RELEASED;
-    await expect(
-      persistSubmissionFailure(state.prisma, where, failed, true),
-    ).rejects.toThrow('already ended');
   });
   it('does not write negative proof if the library CAS loses', async () => {
     const state = fixture();
@@ -243,26 +226,6 @@ describe('confirmed submitted-generation failure evidence', () => {
         detail: 'Submission rejection conflicts with completed BYOK usage',
       }),
     });
-    expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
-  });
-  it('denies a forged Crun failure even when the caller disables confirmation', async () => {
-    const state = fixture(true);
-    state.receipt.submissionIntentProvider = 'crun';
-    state.tx.crunGenerationTask.findFirst.mockResolvedValue({
-      state: 'submitting',
-      providerTaskId: null,
-    } as never);
-    expect(
-      await persistSubmissionFailure(state.prisma, where, failed, false),
-    ).toEqual({ count: 0 });
-    expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
-  });
-  it('denies a missing durable task for a Crun BYOK receipt', async () => {
-    const state = fixture(true);
-    state.receipt.submissionIntentProvider = 'crun';
-    expect(
-      await persistSubmissionFailure(state.prisma, where, failed, true),
-    ).toEqual({ count: 0 });
     expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
   });
 });

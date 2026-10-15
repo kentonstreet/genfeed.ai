@@ -4,29 +4,23 @@ import type {
   AvatarVideoGenerationContext,
   AvatarVideoGenerationParams,
   AvatarVideoGenerationResult,
-  AvatarVideoSpeechInput,
   ResolvableVoiceDocument,
   ResolvedAudioSource,
   ResolvedIdentity,
 } from '@api/collections/videos/services/avatar-video-generation.types';
-import { resolveAvatarIdentityInputs } from '@api/collections/videos/services/avatar-video-identity.util';
-import type {
-  AvatarGenerationQuote,
-  HeyGenGenerationProvider,
-} from '@genfeedai/contracts/interfaces';
-import { toPrismaJson } from '@genfeedai/prisma';
 
 export type { AvatarGenerationPrice } from '@api/collections/videos/services/avatar-video-generation.types';
 
 import { randomUUID } from 'node:crypto';
 import { type BrandDocument } from '@api/collections/brands/schemas/brand.schema';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
+import { resolveEffectiveBrandAgentConfig } from '@api/collections/brands/utils/brand-agent-config-resolution.util';
 import { type GenerationBillingRequest } from '@api/collections/credits/services/generation-billing.service';
+import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { MetadataEntity } from '@api/collections/metadata/entities/metadata.entity';
 import { MetadataService } from '@api/collections/metadata/services/metadata.service';
 import { OrganizationSettingsService } from '@api/collections/organization-settings/services/organization-settings.service';
 import { AvatarVideoBillingService } from '@api/collections/videos/services/avatar-video-billing.service';
-import { AvatarVideoReferenceService } from '@api/collections/videos/services/avatar-video-reference.service';
 import { isMaterializableSavedVoice } from '@api/collections/videos/services/saved-voice-materialization';
 import { VideosService } from '@api/collections/videos/services/videos.service';
 import { type VoiceDocument } from '@api/collections/voices/schemas/voice.schema';
@@ -35,7 +29,9 @@ import type {
   GenerationPlaceholderCreatedCallback,
   GenerationPlaceholderScope,
 } from '@api/common/interfaces/generation-placeholder-lifecycle.interface';
+import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { WebSocketPaths } from '@api/helpers/utils/websocket/websocket.util';
+import { ByokService } from '@api/services/byok/byok.service';
 import { ElevenLabsService } from '@api/services/integrations/elevenlabs/services/elevenlabs.service';
 import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
 import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
@@ -48,12 +44,14 @@ import {
   ActivitySource,
   ByokProvider,
   IngredientCategory,
-  IngredientOrigin,
   IngredientStatus,
   MetadataExtension,
   VoiceProvider,
 } from '@genfeedai/contracts';
+import { MODEL_KEYS } from '@genfeedai/contracts/constants';
+import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
+import { readIngredientMediaUrl } from '@libs/media/media-url.util';
 import { CallerUtil } from '@libs/utils/caller/caller.util';
 import { getUserRoomName } from '@libs/websockets/room-name.util';
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
@@ -65,11 +63,14 @@ export class AvatarVideoGenerationService {
 
   constructor(
     private readonly brandsService: BrandsService,
+    private readonly configService: ConfigService,
+    private readonly byokService: ByokService,
     private readonly avatarBilling: AvatarVideoBillingService,
     private readonly elevenlabsService: ElevenLabsService,
     private readonly failedGenerationService: FailedGenerationService,
     private readonly managedInferenceRuntimeService: ManagedInferenceRuntimeService,
     private readonly heygenService: HeyGenService,
+    private readonly ingredientsService: IngredientsService,
     private readonly loggerService: LoggerService,
     private readonly metadataService: MetadataService,
     private readonly orgSettingsService: OrganizationSettingsService,
@@ -77,7 +78,6 @@ export class AvatarVideoGenerationService {
     private readonly videosService: VideosService,
     private readonly voicesService: VoicesService,
     private readonly lifecycleService: AvatarVideoLifecycleService,
-    private readonly referenceService: AvatarVideoReferenceService,
   ) {}
 
   /** Quote the same resolved identity and funding sources generation will use. */
@@ -85,91 +85,50 @@ export class AvatarVideoGenerationService {
     params: AvatarVideoGenerationParams,
     context: AvatarVideoGenerationContext,
   ): Promise<AvatarGenerationPrice> {
-    const { billingMode, credits, modelKey } = await this.quote(
-      params,
-      context,
-    );
-    return { billingMode, credits, modelKey };
-  }
-
-  /**
-   * The read-only Studio quote: the price {@link quoteCredits} holds plus the
-   * clip length a per-second hold is estimated at.
-   */
-  async quote(
-    params: AvatarVideoGenerationParams,
-    context: AvatarVideoGenerationContext,
-  ): Promise<AvatarGenerationQuote> {
     const brand = await this.findBrandForContext(context);
     const identity = await this.resolveIdentityInputs(params, context, brand);
-    await this.admitCharacter(identity, brand.id, context);
     this.assertUsableVoiceSource(params, identity);
-    await this.admitIdentity(params, identity, context);
-    const { billingMode, credits, durationQuote, modelKey } =
-      await this.resolveFunding(params, identity, context);
-    return {
-      billingMode,
-      credits,
-      estimatedSeconds: durationQuote?.estimatedSeconds ?? null,
-      modelKey,
-    };
-  }
-
-  /**
-   * The photo an avatar renders from may be a character's reference image.
-   * A character the brand can no longer use is refused before funding (#6040).
-   */
-  private admitCharacter(
-    identity: ResolvedIdentity,
-    brandId: string,
-    context: AvatarVideoGenerationContext,
-  ): Promise<string | null> {
-    return this.referenceService.admitCharacter(
-      identity.photoIngredientId,
-      brandId,
-      context.organizationId,
+    const { billingMode, credits } = await this.resolveFunding(
+      identity,
+      context,
     );
+    return { billingMode, credits };
   }
 
-  /**
-   * The price a run-level caller accepted, without the pinned keys. The frozen
-   * per-second quote rides along so the caller's own hold settles to the clip
-   * length HeyGen returns.
-   */
-  private acceptedPrice({
-    billingMode,
-    credits,
-    durationQuote,
-    modelKey,
-  }: AvatarGenerationFunding): AvatarGenerationPrice {
-    return {
-      billingMode,
-      credits,
-      modelKey,
-      ...(durationQuote ? { durationQuote } : {}),
-    };
-  }
-
-  /** Pin provider keys and the engine row before reserving. */
-  private resolveFunding(
-    params: AvatarVideoGenerationParams,
+  /** Pin provider keys before reserving, so a BYOK change cannot change who pays. */
+  private async resolveFunding(
     identity: ResolvedIdentity,
     context: AvatarVideoGenerationContext,
   ): Promise<AvatarGenerationFunding> {
-    return this.avatarBilling.resolveFunding(
-      params,
-      identity,
+    const heygenKey = await this.byokService.resolveApiKey(
       context.organizationId,
+      ByokProvider.HEYGEN,
     );
+    const elevenLabsKey = identity.elevenlabsVoiceId
+      ? await this.byokService.resolveApiKey(
+          context.organizationId,
+          ByokProvider.ELEVENLABS,
+        )
+      : null;
+    const usesPlatformSpeech =
+      Boolean(identity.savedVoice) ||
+      (Boolean(identity.elevenlabsVoiceId) && !elevenLabsKey);
+    const isByok = Boolean(heygenKey) && !usesPlatformSpeech;
+    return {
+      billingMode: isByok ? 'byok' : 'platform',
+      credits: isByok ? 0 : await this.quotePlatformCredits(),
+      heygenApiKey: heygenKey?.apiKey,
+      elevenLabsApiKey: elevenLabsKey?.apiKey,
+    };
   }
 
   /**
-   * The photo-animation price of a script from the per-second `heygen/avatar`
-   * row. A row that resolves to no price fails closed: with no fallback
-   * constant, zero would mean a free render.
+   * The platform price comes from the `heygen/avatar` model row, the same row
+   * the credits guard reserves from. A row that resolves to no price fails
+   * closed: with no fallback constant, zero would mean a free render.
    */
-  async quotePlatformCredits(script: string): Promise<number> {
-    return this.avatarBilling.quotePlatformCredits(script);
+  async quotePlatformCredits(): Promise<number> {
+    return this.avatarBilling.quotePlatformCredits();
   }
 
   async generateAvatarVideo(
@@ -193,18 +152,8 @@ export class AvatarVideoGenerationService {
         context,
         brand,
       );
-      const personaId = await this.admitCharacter(
-        resolvedIdentity,
-        brand.id,
-        context,
-      );
       this.assertUsableVoiceSource(params, resolvedIdentity);
-      await this.admitIdentity(params, resolvedIdentity, context);
-      const funding = await this.resolveFunding(
-        params,
-        resolvedIdentity,
-        context,
-      );
+      const funding = await this.resolveFunding(resolvedIdentity, context);
       billing =
         funding.billingMode === 'byok'
           ? context.request
@@ -219,9 +168,7 @@ export class AvatarVideoGenerationService {
         brand.id,
         resolvedIdentity,
         context,
-        funding.modelKey,
         placeholderScope,
-        personaId,
       );
 
       ingredientId = String(ingredientData.id);
@@ -237,8 +184,17 @@ export class AvatarVideoGenerationService {
         funding.credits,
         placeholderScope,
       );
-      await onCreditsPrepared?.(this.acceptedPrice(funding));
+      await onCreditsPrepared?.({
+        billingMode: funding.billingMode,
+        credits: funding.credits,
+      });
 
+      const photoUrl = await this.resolvePhotoUrl(
+        params,
+        context,
+        resolvedIdentity.photoIngredientId,
+        resolvedIdentity.photoUrl,
+      );
       await this.metadataService.patch(
         metadataData.id,
         new MetadataEntity({ externalProvider: ByokProvider.HEYGEN }),
@@ -258,31 +214,27 @@ export class AvatarVideoGenerationService {
 
       // Bind the render to its hold before its provider id is
       // persisted, so a webhook that races this request always finds it.
-      if (billing)
-        await this.avatarBilling.bindRender(billing, funding, ingredientId);
+      if (billing) {
+        await this.avatarBilling.bindOutput(billing, {
+          credits: billing.creditsConfig?.amount ?? funding.credits,
+          ingredientId,
+          submissionIntentProvider: ByokProvider.HEYGEN,
+        });
+      }
 
-      await this.freezeSubmission(
-        resolvedIdentity,
-        context,
-        ingredientId,
-        audioUrl,
-        heygenVoiceId,
-      );
-      const connection = resolvedIdentity.heygenConnection;
-      if (!connection)
-        throw new Error('HeyGen admission did not resolve a connection');
-      const speech = audioUrl
-        ? { audioUrl }
-        : { inputText: params.text, voiceId: heygenVoiceId };
       providerSubmissionStarted = true;
-      const externalId = await this.submitResolvedAvatar(
-        resolvedIdentity,
-        context,
-        params,
+      const externalId = await this.heygenService.generatePhotoAvatarVideo(
         ingredientId,
-        speech,
-        connection.apiKey,
-        funding,
+        photoUrl,
+        {
+          audioUrl,
+          inputText: params.text,
+          voiceId: heygenVoiceId,
+        },
+        context.organizationId,
+        context.userId,
+        funding.heygenApiKey,
+        params.aspectRatio ?? '9:16',
       );
 
       providerAccepted = true;
@@ -319,84 +271,6 @@ export class AvatarVideoGenerationService {
         await this.avatarBilling.releasePool(billing);
       }
     }
-  }
-
-  private submitResolvedAvatar(
-    identity: ResolvedIdentity,
-    context: AvatarVideoGenerationContext,
-    params: AvatarVideoGenerationParams,
-    ingredientId: string,
-    speech: AvatarVideoSpeechInput,
-    apiKey: string,
-    funding: AvatarGenerationFunding,
-  ): Promise<string> {
-    return identity.avatarRef
-      ? this.heygenService.generateNativeAvatarVideo(
-          ingredientId,
-          identity.avatarRef,
-          speech,
-          apiKey,
-          params.aspectRatio ?? '9:16',
-          funding.engine,
-        )
-      : this.heygenService.generatePhotoAvatarVideo(
-          ingredientId,
-          identity.photoUrl ?? '',
-          speech,
-          context.organizationId,
-          context.userId,
-          apiKey,
-          params.aspectRatio ?? '9:16',
-        );
-  }
-
-  private async freezeSubmission(
-    resolvedIdentity: ResolvedIdentity,
-    context: AvatarVideoGenerationContext,
-    ingredientId: string,
-    audioUrl?: string,
-    heygenVoiceId?: string,
-  ): Promise<void> {
-    const connection = resolvedIdentity.heygenConnection;
-    if (!connection)
-      throw new Error('HeyGen admission did not resolve a connection');
-    const receipt: HeyGenGenerationProvider = {
-      version: 1,
-      provider: 'heygen',
-      organizationId: context.organizationId,
-      connection: connection.binding,
-      avatar: resolvedIdentity.avatarRef ?? {
-        source: 'photo',
-        ingredientId: resolvedIdentity.photoIngredientId,
-      },
-      speech: {
-        provider: audioUrl
-          ? resolvedIdentity.elevenlabsVoiceId
-            ? 'elevenlabs'
-            : 'audio'
-          : 'heygen',
-        externalVoiceId: heygenVoiceId ?? resolvedIdentity.elevenlabsVoiceId,
-        audioIngredientId: resolvedIdentity.audioIngredientId,
-      },
-      submissionId: ingredientId,
-    };
-    await this.videosService.prisma.ingredient.update({
-      where: {
-        id: ingredientId,
-        organizationId: context.organizationId,
-        isDeleted: false,
-      },
-      data: {
-        generationProvider: toPrismaJson(receipt),
-        ...(resolvedIdentity.audioIngredientId
-          ? {
-              sources: {
-                connect: { id: resolvedIdentity.audioIngredientId },
-              },
-            }
-          : {}),
-      },
-    });
   }
 
   private async failUnsubmittedOrRejectedAvatar(
@@ -452,24 +326,20 @@ export class AvatarVideoGenerationService {
     brandId: string,
     identity: ResolvedIdentity,
     context: AvatarVideoGenerationContext,
-    modelKey: string,
     placeholderScope?: GenerationPlaceholderScope,
-    personaId?: string | null,
   ): ReturnType<SharedService['createMediaDocumentsInternal']> {
     return this.sharedService.createMediaDocumentsInternal({
-      origin: IngredientOrigin.GENERATED,
       brandId,
       category: IngredientCategory.AVATAR,
       extension: MetadataExtension.MP4,
       groupId: placeholderScope?.groupId,
       groupIndex: placeholderScope?.groupIndex,
-      model: modelKey,
+      model: MODEL_KEYS.HEYGEN_AVATAR,
       organizationId: context.organizationId,
       parentId:
         identity.photoIngredientId != null
           ? identity.photoIngredientId
           : undefined,
-      personaId,
       status: IngredientStatus.PROCESSING,
       userId: context.userId,
     });
@@ -517,27 +387,203 @@ export class AvatarVideoGenerationService {
     }
   }
 
-  private resolveIdentityInputs(
+  private async resolveIdentityInputs(
     params: AvatarVideoGenerationParams,
     context: AvatarVideoGenerationContext,
     brand: BrandDocument | null,
   ): Promise<ResolvedIdentity> {
-    return resolveAvatarIdentityInputs(params, context, brand, {
-      orgSettingsService: this.orgSettingsService,
-      findVoiceById: (id, organizationId) =>
-        this.findVoiceById(id, organizationId),
-      resolveSavedVoiceRef: (...args) => this.resolveSavedVoiceRef(...args),
-      resolveVoiceLookup: (voice) => this.resolveVoiceLookup(voice),
-      hasUsableVoiceSource: (identity) => this.hasUsableVoiceSource(identity),
-      invalidSavedVoiceException: () => this.invalidSavedVoiceException(),
+    const resolved: ResolvedIdentity = {
+      audioUrl: params.audioUrl,
+      elevenlabsVoiceId: params.elevenlabsVoiceId,
+      heygenVoiceId: params.heygenVoiceId,
+      photoIngredientId: params.photoIngredientId,
+      photoUrl: params.photoUrl,
+    };
+
+    if (
+      params.clonedVoiceId &&
+      !resolved.audioUrl &&
+      !resolved.elevenlabsVoiceId &&
+      !resolved.heygenVoiceId &&
+      !resolved.savedVoice
+    ) {
+      const savedVoice = await this.findVoiceById(
+        params.clonedVoiceId,
+        context.organizationId,
+      );
+      if (!savedVoice) {
+        throw this.invalidSavedVoiceException();
+      }
+
+      const resolvedSavedVoice = this.resolveVoiceLookup({
+        ...savedVoice,
+        provider: params.voiceProvider ?? savedVoice.provider,
+      });
+      if (!this.hasUsableVoiceSource(resolvedSavedVoice)) {
+        throw this.invalidSavedVoiceException();
+      }
+
+      resolved.audioUrl = resolvedSavedVoice.audioUrl;
+      resolved.elevenlabsVoiceId =
+        resolvedSavedVoice.elevenlabsVoiceId ?? resolved.elevenlabsVoiceId;
+      resolved.heygenVoiceId =
+        resolvedSavedVoice.heygenVoiceId ?? resolved.heygenVoiceId;
+      resolved.savedVoice =
+        resolvedSavedVoice.savedVoice ?? resolved.savedVoice;
+    }
+
+    if (!params.useIdentity) {
+      return resolved;
+    }
+
+    const organizationSettings = await this.orgSettingsService.findOne({
+      organizationId: context.organizationId,
     });
+    const effectiveBrandAgentConfig = resolveEffectiveBrandAgentConfig({
+      brand,
+      organizationSettings,
+    });
+    const brandIdentityDefaults =
+      effectiveBrandAgentConfig.identityDefaults.brand;
+    const organizationIdentityDefaults =
+      effectiveBrandAgentConfig.identityDefaults.organization;
+
+    if (
+      !resolved.photoUrl &&
+      !resolved.photoIngredientId &&
+      brandIdentityDefaults.defaultAvatarIngredientId
+    ) {
+      resolved.photoIngredientId = String(
+        brandIdentityDefaults.defaultAvatarIngredientId,
+      );
+    }
+
+    if (
+      !resolved.photoUrl &&
+      !resolved.photoIngredientId &&
+      brandIdentityDefaults.defaultAvatarPhotoUrl
+    ) {
+      resolved.photoUrl = brandIdentityDefaults.defaultAvatarPhotoUrl;
+    }
+
+    if (
+      !resolved.audioUrl &&
+      !resolved.elevenlabsVoiceId &&
+      !resolved.heygenVoiceId &&
+      !resolved.savedVoice &&
+      brandIdentityDefaults.defaultVoiceRef
+    ) {
+      const resolvedBrandDefaultVoice = await this.resolveSavedVoiceRef(
+        brandIdentityDefaults.defaultVoiceRef,
+        context.organizationId,
+        params.text,
+      );
+      resolved.audioUrl = resolvedBrandDefaultVoice.audioUrl;
+      resolved.elevenlabsVoiceId =
+        resolvedBrandDefaultVoice.elevenlabsVoiceId ??
+        resolved.elevenlabsVoiceId;
+      resolved.heygenVoiceId =
+        resolvedBrandDefaultVoice.heygenVoiceId ?? resolved.heygenVoiceId;
+      resolved.savedVoice =
+        resolvedBrandDefaultVoice.savedVoice ?? resolved.savedVoice;
+    }
+
+    if (
+      !resolved.audioUrl &&
+      !resolved.elevenlabsVoiceId &&
+      !resolved.heygenVoiceId &&
+      !resolved.savedVoice &&
+      brandIdentityDefaults.defaultVoiceId
+    ) {
+      const brandVoice = await this.findVoiceById(
+        brandIdentityDefaults.defaultVoiceId.toString(),
+        context.organizationId,
+      );
+      if (brandVoice) {
+        const resolvedBrandVoice = this.resolveVoiceLookup(brandVoice);
+        resolved.audioUrl = resolvedBrandVoice.audioUrl;
+        resolved.elevenlabsVoiceId =
+          resolvedBrandVoice.elevenlabsVoiceId ?? resolved.elevenlabsVoiceId;
+        resolved.heygenVoiceId =
+          resolvedBrandVoice.heygenVoiceId ?? resolved.heygenVoiceId;
+        resolved.savedVoice =
+          resolvedBrandVoice.savedVoice ?? resolved.savedVoice;
+      }
+    }
+
+    if (
+      !resolved.photoUrl &&
+      !resolved.photoIngredientId &&
+      organizationIdentityDefaults.defaultAvatarIngredientId
+    ) {
+      resolved.photoIngredientId = String(
+        organizationIdentityDefaults.defaultAvatarIngredientId,
+      );
+    }
+
+    if (
+      !resolved.photoUrl &&
+      !resolved.photoIngredientId &&
+      organizationIdentityDefaults.defaultAvatarPhotoUrl
+    ) {
+      resolved.photoUrl = organizationIdentityDefaults.defaultAvatarPhotoUrl;
+    }
+
+    if (
+      !resolved.audioUrl &&
+      !resolved.elevenlabsVoiceId &&
+      !resolved.heygenVoiceId &&
+      !resolved.savedVoice &&
+      organizationIdentityDefaults.defaultVoiceRef
+    ) {
+      const resolvedOrganizationDefaultVoice = await this.resolveSavedVoiceRef(
+        organizationIdentityDefaults.defaultVoiceRef,
+        context.organizationId,
+        params.text,
+      );
+      resolved.audioUrl = resolvedOrganizationDefaultVoice.audioUrl;
+      resolved.elevenlabsVoiceId =
+        resolvedOrganizationDefaultVoice.elevenlabsVoiceId ??
+        resolved.elevenlabsVoiceId;
+      resolved.heygenVoiceId =
+        resolvedOrganizationDefaultVoice.heygenVoiceId ??
+        resolved.heygenVoiceId;
+      resolved.savedVoice =
+        resolvedOrganizationDefaultVoice.savedVoice ?? resolved.savedVoice;
+    }
+
+    if (
+      !resolved.audioUrl &&
+      !resolved.elevenlabsVoiceId &&
+      !resolved.heygenVoiceId &&
+      !resolved.savedVoice &&
+      organizationIdentityDefaults.defaultVoiceId
+    ) {
+      const organizationVoice = await this.findVoiceById(
+        organizationIdentityDefaults.defaultVoiceId.toString(),
+        context.organizationId,
+      );
+      if (organizationVoice) {
+        const resolvedOrganizationVoice =
+          this.resolveVoiceLookup(organizationVoice);
+        resolved.audioUrl = resolvedOrganizationVoice.audioUrl;
+        resolved.elevenlabsVoiceId =
+          resolvedOrganizationVoice.elevenlabsVoiceId ??
+          resolved.elevenlabsVoiceId;
+        resolved.heygenVoiceId =
+          resolvedOrganizationVoice.heygenVoiceId ?? resolved.heygenVoiceId;
+        resolved.savedVoice =
+          resolvedOrganizationVoice.savedVoice ?? resolved.savedVoice;
+      }
+    }
+
+    return resolved;
   }
 
   private async resolveSavedVoiceRef(
     defaultVoiceRef: DefaultVoiceRef,
     organizationId: string,
     _text: string,
-    freshSelection = false,
   ): Promise<ResolvedIdentity> {
     if (
       defaultVoiceRef.source === 'cloned' &&
@@ -570,129 +616,10 @@ export class AvatarVideoGenerationService {
       defaultVoiceRef.provider === VoiceProvider.HEYGEN &&
       defaultVoiceRef.externalVoiceId
     ) {
-      if (!defaultVoiceRef.connection && !freshSelection)
-        throw new HttpException(
-          'Reselect this voice to verify its connection.',
-          HttpStatus.BAD_REQUEST,
-        );
-      if (
-        defaultVoiceRef.connection &&
-        defaultVoiceRef.connection.organizationId !== organizationId
-      )
-        throw new HttpException(
-          'This voice belongs to another organization.',
-          HttpStatus.BAD_REQUEST,
-        );
-      return {
-        heygenVoiceId: defaultVoiceRef.externalVoiceId,
-        voiceRef: defaultVoiceRef,
-      };
+      return { heygenVoiceId: defaultVoiceRef.externalVoiceId };
     }
 
     return {};
-  }
-
-  private async admitIdentity(
-    params: AvatarVideoGenerationParams,
-    identity: ResolvedIdentity,
-    context: AvatarVideoGenerationContext,
-  ): Promise<void> {
-    if (
-      (params.avatarId || params.avatarRef) &&
-      (params.photoUrl || params.photoIngredientId)
-    )
-      throw new HttpException(
-        'Choose a trained avatar or an image source, not both.',
-        HttpStatus.BAD_REQUEST,
-      );
-    if (
-      (params.audioUrl || params.audioIngredientId) &&
-      (params.heygenVoiceId || params.elevenlabsVoiceId || params.clonedVoiceId)
-    )
-      throw new HttpException(
-        'Choose audio or a voice, not both.',
-        HttpStatus.BAD_REQUEST,
-      );
-    if (
-      params.avatarRef &&
-      params.avatarId &&
-      params.avatarRef.lookId !== params.avatarId
-    )
-      throw new HttpException(
-        'Conflicting avatar selections.',
-        HttpStatus.BAD_REQUEST,
-      );
-    if (params.audioIngredientId)
-      identity.audioUrl = await this.referenceService.resolveAudioIngredient(
-        params.audioIngredientId,
-        context.organizationId,
-      );
-    if (
-      (params.avatarRef || params.avatarId || identity.avatarRef) &&
-      params.audioUrl &&
-      !params.audioIngredientId
-    )
-      throw new HttpException(
-        'Select a saved narration asset for native avatar audio.',
-        HttpStatus.BAD_REQUEST,
-      );
-    let candidate = params.avatarRef ?? identity.avatarRef;
-    if (!candidate && params.avatarId) {
-      const catalog = await this.heygenService.getAvatars(
-        context.organizationId,
-      );
-      candidate = catalog.find(
-        (item) => item.avatarId === params.avatarId,
-      )?.avatarRef;
-      if (!candidate)
-        throw new HttpException(
-          'The selected avatar is unavailable. Reselect an avatar.',
-          HttpStatus.BAD_REQUEST,
-        );
-    }
-    if (candidate) {
-      const admitted = await this.heygenService.resolveAvatarSelection(
-        candidate,
-        context.organizationId,
-      );
-      identity.avatarRef = admitted.avatarRef;
-      identity.heygenConnection = admitted.connection;
-    } else {
-      identity.photoUrl = await this.resolvePhotoUrl(
-        params,
-        context,
-        identity.photoIngredientId,
-        identity.photoUrl,
-      );
-      identity.heygenConnection =
-        await this.heygenService.resolveOrganizationConnection(
-          context.organizationId,
-          identity.voiceRef?.connection?.kind,
-        );
-    }
-    if (identity.heygenVoiceId) {
-      if (
-        identity.voiceRef?.connection &&
-        identity.voiceRef.connection.organizationId !== context.organizationId
-      )
-        throw new HttpException(
-          'This voice belongs to another organization.',
-          HttpStatus.BAD_REQUEST,
-        );
-      if (
-        identity.voiceRef?.ownership === 'private' &&
-        identity.heygenConnection.binding.kind !== 'byok'
-      )
-        throw new HttpException(
-          'Choose the personal connection for this private voice.',
-          HttpStatus.BAD_REQUEST,
-        );
-      await this.heygenService.validateVoiceSelection(
-        identity.heygenVoiceId,
-        identity.heygenConnection,
-        identity.voiceRef?.ownership,
-      );
-    }
   }
 
   private async resolvePhotoUrl(
@@ -701,12 +628,65 @@ export class AvatarVideoGenerationService {
     resolvedPhotoIngredientId?: string,
     resolvedPhotoUrl?: string,
   ): Promise<string> {
-    return this.referenceService.resolvePhotoUrl(
-      params,
-      context,
-      resolvedPhotoIngredientId,
-      resolvedPhotoUrl,
+    if (resolvedPhotoUrl) {
+      return resolvedPhotoUrl;
+    }
+
+    if (resolvedPhotoIngredientId) {
+      const avatarIngredient =
+        await this.ingredientsService.findAvatarImageById(
+          resolvedPhotoIngredientId,
+          context.organizationId,
+        );
+
+      if (!avatarIngredient) {
+        throw new HttpException(
+          {
+            detail:
+              'Configured default avatar must reference an avatar image ingredient in this organization',
+            title: 'Validation failed',
+          },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const avatarUrl = readIngredientMediaUrl(avatarIngredient);
+      if (avatarUrl) {
+        return avatarUrl;
+      }
+
+      return `${this.configService.ingredientsEndpoint}/avatars/${avatarIngredient.id}`;
+    }
+
+    if (!params.avatarId) {
+      throw new HttpException(
+        {
+          detail:
+            'Either photoUrl must be provided or identity defaults must resolve a default avatar image',
+          title: 'Validation failed',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const heygenByokKey = await this.byokService.resolveApiKey(
+      context.organizationId,
+      ByokProvider.HEYGEN,
     );
+    const avatars = await this.heygenService.getAvatars(
+      context.organizationId,
+      undefined,
+      heygenByokKey?.apiKey,
+    );
+    const avatar = avatars.find(
+      (candidate) => candidate.avatarId === params.avatarId,
+    );
+
+    if (!avatar) {
+      throw new NotFoundException('Avatar', params.avatarId);
+    }
+
+    return avatar.preview;
   }
 
   private async resolveAudioSource(
@@ -747,7 +727,6 @@ export class AvatarVideoGenerationService {
         context.organizationId,
         context.userId,
         funding.elevenLabsApiKey,
-        ...(funding.speechModelId ? [{ modelId: funding.speechModelId }] : []),
       );
 
       return {
@@ -890,7 +869,6 @@ export class AvatarVideoGenerationService {
   private hasUsableVoiceSource(identity: ResolvedIdentity): boolean {
     return Boolean(
       identity.audioUrl ||
-        identity.audioIngredientId ||
         identity.elevenlabsVoiceId ||
         identity.heygenVoiceId ||
         isMaterializableSavedVoice(identity.savedVoice),

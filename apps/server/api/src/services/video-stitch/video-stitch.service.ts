@@ -15,23 +15,15 @@ import type {
   VideoStitchPlan,
   VideoStitchRef,
   VideoStitchRequest,
+  VideoStitchState,
 } from '@api/services/video-stitch/video-stitch.types';
 import {
   buildVideoStitchJobParams,
-  captionsResult,
   isMuteDeferredToCaptions,
-  isUniqueConstraintViolation,
-  type PersistedStitchResult,
-  persistedStitchResult,
   readVideoMergeSettings,
-  readVideoStitchCallerKind,
   resolveStitchClipStorageKey,
   stitchRequestError,
-  toVideoStitchState,
   validateVideoStitchRequest,
-  videoStitchActivityValue,
-  videoStitchHandle,
-  videoStitchOutcome,
 } from '@api/services/video-stitch/video-stitch.util';
 import { WhisperService } from '@api/services/whisper/whisper.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
@@ -43,7 +35,6 @@ import {
   CaptionFormat,
   CaptionLanguage,
   IngredientCategory,
-  IngredientOrigin,
   IngredientStatus,
   JobState,
   MetadataExtension,
@@ -52,27 +43,21 @@ import {
   WebSocketEventType,
 } from '@genfeedai/contracts';
 import {
+  VIDEO_STITCH_CALLER_KINDS,
   VIDEO_STITCH_GENERATION_SOURCE_PREFIX,
+  type VideoStitchCallerKind,
   videoStitchGenerationSource,
   videoStitchJobId,
 } from '@genfeedai/contracts/interfaces';
 import { FILE_JOB_TYPES } from '@genfeedai/contracts/queue';
-import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
 import { assertSafeObjectKey } from '@libs/security';
-import { assertStoredObjectKey } from '@libs/security/stored-object-key';
 import { getErrorMessage } from '@libs/utils/error/get-error-message.util';
 import { getUserRoomName } from '@libs/websockets/room-name.util';
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { z } from 'zod';
 
 const STITCH_JOB_TIMEOUT_MS = 300_000;
-/**
- * How long a background tracker follows a queued or running merge job. A
- * transition merge re-encodes every clip, so it can outlast a waiting
- * caller's timeout; past this the output fails instead of staying processing.
- */
-const STITCH_TRACKING_TIMEOUT_MS = 20 * 60_000;
-const STITCH_TRACKING_POLL_MS = 2_000;
 /** `generationStage` a completer claims before captioning and persisting. */
 const STITCH_COMPLETION_STAGE = 'stitch-completing';
 /** A claim older than this belongs to a completer that died mid-way. */
@@ -83,7 +68,6 @@ const OUTPUT_SELECT = {
   brandId: true,
   generationError: true,
   generationSource: true,
-  generationStage: true,
   id: true,
   mergeSettings: true,
   metadataId: true,
@@ -91,6 +75,58 @@ const OUTPUT_SELECT = {
   status: true,
   userId: true,
 } as const;
+
+const persistedStitchResult = z.object({
+  duration: z.number().positive().optional(),
+  height: z.number().positive().optional(),
+  s3Key: z
+    .string()
+    .min(1)
+    .refine((key) => key.startsWith('ingredients/videos/')),
+  size: z.number().positive().optional(),
+  success: z.literal(true),
+  width: z.number().positive().optional(),
+});
+
+const captionsResult = z.object({
+  s3Key: z
+    .string()
+    .min(1)
+    .refine((key) => key.startsWith('ingredients/videos/')),
+  size: z.number().positive().optional(),
+});
+
+type PersistedStitchResult = z.infer<typeof persistedStitchResult>;
+
+/** Postgres reports a unique-index collision as Prisma error P2002. */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 'P2002'
+  );
+}
+
+function toState(status: string): VideoStitchState {
+  if (status === IngredientStatus.FAILED) return 'failed';
+  if (
+    status === IngredientStatus.GENERATED ||
+    status === IngredientStatus.VALIDATED
+  )
+    return 'generated';
+  return 'processing';
+}
+
+function readCallerKind(
+  generationSource: string | null,
+): VideoStitchCallerKind | undefined {
+  const kind = generationSource?.startsWith(
+    VIDEO_STITCH_GENERATION_SOURCE_PREFIX,
+  )
+    ? generationSource.slice(VIDEO_STITCH_GENERATION_SOURCE_PREFIX.length)
+    : undefined;
+  return VIDEO_STITCH_CALLER_KINDS.find((candidate) => candidate === kind);
+}
 
 /**
  * The single path that joins clips into one video (#5460). Storyboard and
@@ -117,7 +153,6 @@ export class VideoStitchService {
     private readonly sharedService: SharedService,
     private readonly websocketService: NotificationsPublisherService,
     private readonly whisperService: WhisperService,
-    @Optional() private readonly configService?: ConfigService,
   ) {}
 
   /**
@@ -131,7 +166,7 @@ export class VideoStitchService {
       request.idempotencyKey,
     );
     if (existing) {
-      return videoStitchHandle(request.organizationId, existing, true);
+      return this.toHandle(request.organizationId, existing, true);
     }
 
     const plan = await this.plan(request);
@@ -139,7 +174,6 @@ export class VideoStitchService {
     try {
       const { ingredientData } =
         await this.sharedService.createMediaDocumentsInternal({
-          origin: IngredientOrigin.GENERATED,
           brandId: request.brandId,
           category: IngredientCategory.VIDEO,
           extension: MetadataExtension.MP4,
@@ -175,7 +209,7 @@ export class VideoStitchService {
       if (!winner) {
         throw error;
       }
-      return videoStitchHandle(request.organizationId, winner, true);
+      return this.toHandle(request.organizationId, winner, true);
     }
 
     const context = this.contextFromRequest(request, outputId, plan);
@@ -219,7 +253,7 @@ export class VideoStitchService {
     );
     if (reopened.count !== 1) {
       const current = {
-        ...videoStitchHandle(handle.organizationId, output, true),
+        ...this.toHandle(handle.organizationId, output, true),
         ...(handle.roomUserId ? { roomUserId: handle.roomUserId } : {}),
       };
       if (current.state !== 'processing') {
@@ -249,18 +283,9 @@ export class VideoStitchService {
     };
   }
 
-  /**
-   * Follows the merge job until the output settles. HTTP and webhook callers
-   * have no other completer, so tracking never ends with the output still
-   * processing: a lost job, a job still unfinished at the deadline, or a job
-   * status that stays unreadable until then fails it with the reason.
-   */
-  trackInBackground(
-    handle: VideoStitchRef,
-    timeoutMs: number = STITCH_TRACKING_TIMEOUT_MS,
-    pollMs: number = STITCH_TRACKING_POLL_MS,
-  ): Promise<void> {
-    return this.track(handle, timeoutMs, pollMs).catch((error: unknown) => {
+  /** Tracks completion; unresolved transport errors remain recoverable. */
+  trackInBackground(handle: VideoStitchRef): void {
+    void this.waitForCompletion(handle).catch((error: unknown) => {
       this.loggerService.error(`${this.logContext} tracking failed`, {
         error: getErrorMessage(error),
         jobId: handle.jobId,
@@ -279,8 +304,8 @@ export class VideoStitchService {
       handle.organizationId,
       handle.outputId,
     );
-    if (toVideoStitchState(output.status) !== 'processing') {
-      return videoStitchOutcome(handle.jobId, output);
+    if (toState(output.status) !== 'processing') {
+      return this.toOutcome(handle.jobId, output);
     }
     const context = this.contextFromOutput(output, handle);
     const deadline = Date.now() + timeoutMs;
@@ -320,33 +345,18 @@ export class VideoStitchService {
 
   /**
    * Reads the merge job once without waiting and settles the output when the
-   * job has finished, or when the queue no longer holds it.
+   * job has finished.
    */
   async settle(handle: VideoStitchRef): Promise<VideoStitchOutcome> {
     const output = await this.requireOutput(
       handle.organizationId,
       handle.outputId,
     );
-    if (toVideoStitchState(output.status) !== 'processing') {
-      return videoStitchOutcome(handle.jobId, output);
+    if (toState(output.status) !== 'processing') {
+      return this.toOutcome(handle.jobId, output);
     }
     const context = this.contextFromOutput(output, handle);
-    const status = await this.fileQueueService.findJobStatus(handle.jobId);
-    if (!status) {
-      // A completer that already claimed the output finishes it from the
-      // result it read; otherwise nothing can ever settle this output.
-      if (output.generationStage === STITCH_COMPLETION_STAGE) {
-        return {
-          jobId: handle.jobId,
-          outputId: output.id,
-          state: 'processing',
-        };
-      }
-      return this.fail(
-        context,
-        new Error('Video merge job is no longer queued; retry the merge'),
-      );
-    }
+    const status = await this.fileQueueService.getJobStatus(handle.jobId);
     if (status.state === JobState.FAILED) {
       return this.fail(context, new Error(status.failedReason || 'Job failed'));
     }
@@ -354,71 +364,6 @@ export class VideoStitchService {
       return { jobId: handle.jobId, outputId: output.id, state: 'processing' };
     }
     return this.complete(context, status.result);
-  }
-
-  private async track(
-    handle: VideoStitchRef,
-    timeoutMs: number,
-    pollMs: number,
-  ): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    let lastError: unknown;
-    try {
-      await this.waitForCompletion(
-        handle,
-        Math.min(STITCH_JOB_TIMEOUT_MS, timeoutMs),
-      );
-      return;
-    } catch (error: unknown) {
-      // The wait timed out or lost the queue; keep polling below.
-      lastError = error;
-    }
-    for (;;) {
-      try {
-        const outcome = await this.settle(handle);
-        if (outcome.state !== 'processing') {
-          return;
-        }
-        lastError = undefined;
-      } catch (error: unknown) {
-        // A transport error or an interrupted completion is retried until
-        // the deadline; the output stays processing meanwhile.
-        lastError = error;
-        this.loggerService.warn(`${this.logContext} tracking read failed`, {
-          error: getErrorMessage(error),
-          jobId: handle.jobId,
-          organizationId: handle.organizationId,
-          outputId: handle.outputId,
-        });
-      }
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        const reason =
-          lastError === undefined
-            ? `Video merge did not finish within ${Math.ceil(timeoutMs / 60_000)} minutes`
-            : `Lost track of the video merge: ${getErrorMessage(lastError)}`;
-        await this.failProcessing(handle, reason);
-        return;
-      }
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(pollMs, remaining)),
-      );
-    }
-  }
-
-  /** Fails the output with `reason` if it is still processing. */
-  private async failProcessing(
-    handle: VideoStitchRef,
-    reason: string,
-  ): Promise<void> {
-    const output = await this.requireOutput(
-      handle.organizationId,
-      handle.outputId,
-    );
-    if (toVideoStitchState(output.status) !== 'processing') {
-      return;
-    }
-    await this.fail(this.contextFromOutput(output, handle), new Error(reason));
   }
 
   private async plan(request: VideoStitchRequest): Promise<VideoStitchPlan> {
@@ -458,12 +403,11 @@ export class VideoStitchService {
     }
 
     const { settings } = request;
-    let musicStorageKey: string | undefined;
     if (settings.music) {
       // Same scope as the Music API: the organization's own tracks or a
       // global default track.
       const music = await this.prisma.ingredient.findFirst({
-        select: { id: true, s3Key: true },
+        select: { id: true },
         where: {
           category: CategoryPrismaUtil.toIngredientCategory(
             IngredientCategory.MUSIC,
@@ -479,26 +423,11 @@ export class VideoStitchService {
       if (!music) {
         throw stitchRequestError('music', 'Music asset is not available');
       }
-      if (this.configService?.isAuthorizedMediaDeliveryEnabled) {
-        if (
-          !music.s3Key ||
-          !/^ingredients\/(musics|audio|audios)\/.+/.test(music.s3Key)
-        ) {
-          throw stitchRequestError(
-            'music',
-            'Music asset has no valid stored media key',
-          );
-        }
-        musicStorageKey = assertStoredObjectKey(music.s3Key, (message) =>
-          stitchRequestError('music', message),
-        );
-      }
     }
 
     const byId = new Map(clips.map((clip) => [clip.id, clip]));
     return {
       clipIds: request.clipIds,
-      ...(musicStorageKey ? { musicStorageKey } : {}),
       ...(request.output ? { output: request.output } : {}),
       settings,
       sourceStorageKeys: request.clipIds.map((id) => {
@@ -506,10 +435,7 @@ export class VideoStitchService {
         if (!clip) {
           throw stitchRequestError('clipIds', 'Clip is not available');
         }
-        return resolveStitchClipStorageKey(
-          clip,
-          this.configService?.isAuthorizedMediaDeliveryEnabled,
-        );
+        return resolveStitchClipStorageKey(clip);
       }),
     };
   }
@@ -549,11 +475,7 @@ export class VideoStitchService {
   ): Promise<VideoStitchOutcome> {
     const parsed = persistedStitchResult.safeParse(rawResult);
     if (!parsed.success) {
-      // The job finished and will not report anything else.
-      return this.fail(
-        context,
-        new Error('Video merge did not return a persisted video'),
-      );
+      throw new Error('Video merge did not return a persisted video');
     }
     const result = parsed.data;
     assertSafeObjectKey(result.s3Key, (message) => new Error(message));
@@ -582,7 +504,7 @@ export class VideoStitchService {
         context.organizationId,
         context.outputId,
       );
-      return videoStitchOutcome(context.jobId, output);
+      return this.toOutcome(context.jobId, output);
     }
 
     const finalFile = await this.addCaptionsIfEnabled(context, {
@@ -610,7 +532,7 @@ export class VideoStitchService {
         context.organizationId,
         context.outputId,
       );
-      return videoStitchOutcome(context.jobId, output);
+      return this.toOutcome(context.jobId, output);
     }
 
     // Completion bypasses IngredientsService.patch, so unlock the
@@ -640,7 +562,7 @@ export class VideoStitchService {
         },
         {
           key: ActivityKey.VIDEO_COMPLETED,
-          value: videoStitchActivityValue(context, label, {
+          value: this.activityValue(context, label, {
             progress: 100,
             resultId: context.outputId,
             resultType: 'VIDEO',
@@ -730,9 +652,7 @@ export class VideoStitchService {
       },
       {
         key: ActivityKey.VIDEO_FAILED,
-        value: videoStitchActivityValue(context, 'Merge failed', {
-          error: message,
-        }),
+        value: this.activityValue(context, 'Merge failed', { error: message }),
       },
     );
     await this.websocketService.publishBackgroundTaskUpdate({
@@ -759,7 +679,7 @@ export class VideoStitchService {
         { id: activityId, organizationId: context.organizationId },
         {
           key: ActivityKey.VIDEO_PROCESSING,
-          value: videoStitchActivityValue(context, label),
+          value: this.activityValue(context, label),
         },
       );
     } else {
@@ -775,7 +695,7 @@ export class VideoStitchService {
             ? ActivitySource.WORKFLOW_EXECUTION
             : ActivitySource.WEB,
         userId: context.userId,
-        value: videoStitchActivityValue(context, label),
+        value: this.activityValue(context, label),
       });
     }
     await this.websocketService.publishBackgroundTaskUpdate({
@@ -801,8 +721,6 @@ export class VideoStitchService {
     try {
       const captionContent = await this.whisperService.generateCaptions(
         context.outputId,
-        undefined,
-        context.organizationId,
       );
       // Same caption row the merge flow has always written; ownership and
       // soft-delete columns pass through the collection's create.
@@ -964,7 +882,7 @@ export class VideoStitchService {
     const userId = output.userId ?? '';
     return {
       brandId: output.brandId,
-      callerKind: readVideoStitchCallerKind(output.generationSource),
+      callerKind: readCallerKind(output.generationSource),
       clipCount: output._count.sources,
       jobId: handle.jobId,
       organizationId: handle.organizationId,
@@ -975,7 +893,52 @@ export class VideoStitchService {
     };
   }
 
+  private toHandle(
+    organizationId: string,
+    output: VideoStitchOutputRow,
+    isExisting: boolean,
+  ): VideoStitchHandle {
+    return {
+      isExisting,
+      jobId: videoStitchJobId(output.id),
+      organizationId,
+      outputId: output.id,
+      state: toState(output.status),
+    };
+  }
+
+  private toOutcome(
+    jobId: string,
+    output: VideoStitchOutputRow,
+  ): VideoStitchOutcome {
+    const state = toState(output.status);
+    return {
+      ...(state === 'failed' && output.generationError
+        ? { error: output.generationError }
+        : {}),
+      jobId,
+      outputId: output.id,
+      ...(state === 'generated' && output.s3Key ? { s3Key: output.s3Key } : {}),
+      state,
+    };
+  }
+
   private activityId(outputId: string): string {
     return `video-stitch:${outputId}`;
+  }
+
+  private activityValue(
+    context: VideoStitchContext,
+    label: string,
+    extra: Record<string, unknown> = {},
+  ): string {
+    return JSON.stringify({
+      callerKind: context.callerKind,
+      frameCount: context.clipCount,
+      ingredientId: context.outputId,
+      label,
+      ...extra,
+      type: 'merge',
+    });
   }
 }

@@ -1,4 +1,4 @@
-import type { ExecutableNode } from '../../types';
+import type { ExecutableNode } from '@genfeedai/workflows/engine';
 
 export interface MediaGenerationResolverRequest {
   model: string;
@@ -64,13 +64,6 @@ export function buildVideoGenerationResolverRequest(
     references: image ? [image] : undefined,
     seed: config.seed ?? undefined,
     videoReferences: videoReference ? [videoReference] : undefined,
-    task: config.task ?? undefined,
-    resolution: config.resolution ?? undefined,
-    aspect_ratio: config.aspect_ratio ?? undefined,
-    generate_audio: config.generate_audio ?? undefined,
-    draft: config.draft ?? undefined,
-    sourceEvidence: config.sourceEvidence ?? undefined,
-    frameIngredientId: config.frameIngredientId ?? undefined,
     width: config.width ?? 1920,
   });
 }

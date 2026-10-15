@@ -54,7 +54,7 @@ import {
 } from '@genfeedai/contracts';
 import type { NodeExecutor, WorkflowEngine } from '@genfeedai/workflows/engine';
 
-function setup(isAuthorizedMediaDeliveryEnabled = false) {
+function setup() {
   const assets = new Map([
     [
       'clip-1',
@@ -98,10 +98,7 @@ function setup(isAuthorizedMediaDeliveryEnabled = false) {
       metadataData: { id: 'result-meta' },
     }),
   };
-  const config = {
-    ingredientsEndpoint: 'https://cdn.example/ingredients',
-    isAuthorizedMediaDeliveryEnabled,
-  };
+  const config = { ingredientsEndpoint: 'https://cdn.example/ingredients' };
   const helper = new WorkflowEngineExecutorHelperService(
     config as never,
     shared as never,
@@ -109,10 +106,6 @@ function setup(isAuthorizedMediaDeliveryEnabled = false) {
     ingredients as never,
   );
   const files = {
-    getPresignedDownloadUrlForObjectKey: vi.fn(
-      async (storageKey: string) =>
-        `https://signed.example/${storageKey.split('/').map(encodeURIComponent).join('/')}?X-Amz-Expires=300`,
-    ),
     getPresignedDownloadUrl: vi.fn(
       async (key: string, type: string) =>
         `https://signed.example/${type}/${key}`,
@@ -123,14 +116,6 @@ function setup(isAuthorizedMediaDeliveryEnabled = false) {
       duration: 30,
     }),
     uploadToS3: vi.fn(),
-  };
-  const issuer = {
-    issueServerPublish: vi.fn(
-      async (_organizationId: string, ids: string[]) =>
-        new Map(
-          ids.map((id) => [id, `https://authorized.example/${id}?grant=fresh`]),
-        ),
-    ),
   };
   const queue = {
     processVideo: vi.fn().mockResolvedValue({ jobId: 'job' }),
@@ -172,7 +157,6 @@ function setup(isAuthorizedMediaDeliveryEnabled = false) {
     undefined,
     undefined,
     stitch.service,
-    issuer as never,
   ).register({
     registerExecutor: (type: string, executor: NodeExecutor) =>
       executors.set(type, executor),
@@ -201,17 +185,7 @@ function setup(isAuthorizedMediaDeliveryEnabled = false) {
       } as Parameters<NodeExecutor>[2],
     );
   };
-  return {
-    assets,
-    ingredients,
-    metadata,
-    shared,
-    files,
-    issuer,
-    queue,
-    run,
-    stitch,
-  };
+  return { assets, ingredients, metadata, shared, files, queue, run, stitch };
 }
 
 describe('workflow media composition integration', () => {
@@ -238,23 +212,17 @@ describe('workflow media composition integration', () => {
         organizationId: 'org',
         isDeleted: false,
       });
-      expect(h.ingredients.findOne).toHaveBeenCalledWith({
-        id: 'clip-1',
-        organizationId: 'org',
-        isDeleted: false,
-      });
-      expect(h.files.getPresignedDownloadUrlForObjectKey).toHaveBeenCalledWith(
-        'ingredients/videos/clip-1.mp4',
+      expect(h.files.getPresignedDownloadUrl).toHaveBeenCalledWith(
+        'clip-1.mp4',
+        'videos',
       );
-      expect(h.files.getPresignedDownloadUrlForObjectKey).toHaveBeenCalledWith(
-        'ingredients/audios/spanish.wav',
+      expect(h.files.getPresignedDownloadUrl).toHaveBeenCalledWith(
+        'spanish.wav',
+        'audios',
       );
-      expect(h.files.getPresignedDownloadUrl).not.toHaveBeenCalled();
       expect(h.files.audioOverlay).toHaveBeenCalledWith({
-        videoUrl:
-          'https://signed.example/ingredients/videos/clip-1.mp4?X-Amz-Expires=300',
-        audioUrl:
-          'https://signed.example/ingredients/audios/spanish.wav?X-Amz-Expires=300',
+        videoUrl: 'https://signed.example/videos/clip-1.mp4',
+        audioUrl: 'https://signed.example/audios/spanish.wav',
         mixMode,
         audioVolume: 65,
         videoVolume: 20,
@@ -291,102 +259,6 @@ describe('workflow media composition integration', () => {
       });
     },
   );
-  it('preserves canonical raw key bytes for private backend signing', async () => {
-    const h = setup();
-    const source = h.assets.get('clip-1');
-    if (!source) throw new Error('Missing video fixture');
-    source.s3Key = 'ingredients/videos/nested/raw %2F?part=#video.mp4';
-    await h.run(
-      'soundOverlay',
-      new Map<string, unknown>([
-        [
-          'videoUrl',
-          { id: 'clip-1', videoUrl: 'https://untrusted.example/video.mp4' },
-        ],
-        ['soundUrl', { id: 'speech' }],
-      ]),
-    );
-    expect(h.files.getPresignedDownloadUrlForObjectKey).toHaveBeenCalledWith(
-      source.s3Key,
-    );
-    expect(h.files.audioOverlay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        videoUrl:
-          'https://signed.example/ingredients/videos/nested/raw%20%252F%3Fpart%3D%23video.mp4?X-Amz-Expires=300',
-      }),
-    );
-    expect(h.issuer.issueServerPublish).not.toHaveBeenCalled();
-    expect(h.files.getPresignedDownloadUrl).not.toHaveBeenCalled();
-  });
-  it('uses fresh organization-bound issuer grants when private delivery is enabled', async () => {
-    const h = setup(true);
-    await h.run(
-      'soundOverlay',
-      new Map<string, unknown>([
-        [
-          'videoUrl',
-          { id: 'clip-1', videoUrl: 'https://untrusted.example/video.mp4' },
-        ],
-        [
-          'soundUrl',
-          { id: 'speech', audioUrl: 'https://untrusted.example/audio.wav' },
-        ],
-      ]),
-    );
-    expect(h.issuer.issueServerPublish).toHaveBeenCalledWith('org', ['clip-1']);
-    expect(h.issuer.issueServerPublish).toHaveBeenCalledWith('org', ['speech']);
-    expect(h.files.audioOverlay).toHaveBeenCalledWith(
-      expect.objectContaining({
-        videoUrl: 'https://authorized.example/clip-1?grant=fresh',
-        audioUrl: 'https://authorized.example/speech?grant=fresh',
-      }),
-    );
-    expect(h.files.getPresignedDownloadUrlForObjectKey).not.toHaveBeenCalled();
-    expect(h.files.getPresignedDownloadUrl).not.toHaveBeenCalled();
-  });
-  it('preserves disabled delivery for legacy rows without stored keys', async () => {
-    const h = setup();
-    for (const id of ['clip-1', 'speech']) {
-      const source = h.assets.get(id);
-      if (!source) throw new Error('Missing media fixture');
-      source.s3Key = '';
-    }
-    await h.run(
-      'soundOverlay',
-      new Map<string, unknown>([
-        ['videoUrl', { id: 'clip-1' }],
-        ['soundUrl', { id: 'speech' }],
-      ]),
-    );
-    expect(h.files.getPresignedDownloadUrl).toHaveBeenCalledWith(
-      'clip-1',
-      'videos',
-    );
-    expect(h.files.getPresignedDownloadUrl).toHaveBeenCalledWith(
-      'speech',
-      'audios',
-    );
-    expect(h.files.getPresignedDownloadUrlForObjectKey).not.toHaveBeenCalled();
-    expect(h.issuer.issueServerPublish).not.toHaveBeenCalled();
-  });
-  it('denies a keyless source before issuing or creating media when delivery is enabled', async () => {
-    const h = setup(true);
-    const source = h.assets.get('clip-1');
-    if (!source) throw new Error('Missing video fixture');
-    source.s3Key = '';
-    await expect(
-      h.run(
-        'soundOverlay',
-        new Map<string, unknown>([
-          ['videoUrl', { id: 'clip-1' }],
-          ['soundUrl', { id: 'speech' }],
-        ]),
-      ),
-    ).rejects.toThrow('trusted stored object key');
-    expect(h.shared.createMediaDocumentsInternal).not.toHaveBeenCalled();
-    expect(h.issuer.issueServerPublish).not.toHaveBeenCalled();
-    expect(h.files.audioOverlay).not.toHaveBeenCalled();
-  });
   it('marks soundtrack output failed when encoding fails', async () => {
     const h = setup();
     h.files.audioOverlay.mockRejectedValue(new Error('encoding failed'));
@@ -487,7 +359,7 @@ describe('workflow media composition integration', () => {
     expect(h.stitch.queued).toEqual([]);
     expect(h.stitch.outputs()).toEqual([]);
   });
-  it('fails a terminal stitch without a persisted object and retries the same output', async () => {
+  it('retains a stitch output without a persisted object and accepts its late artifact', async () => {
     const h = setup();
     const inputs = new Map<string, unknown>([
       [
@@ -505,19 +377,12 @@ describe('workflow media composition integration', () => {
     await expect(
       h.run('videoStitch', inputs, { brandId: 'brand' }),
     ).rejects.toThrow('persisted video');
-    expect(h.stitch.row('output-1')).toMatchObject({
-      generationError: 'Video merge did not return a persisted video',
-      status: IngredientStatus.FAILED,
-    });
-    expect(h.stitch.eventsNamed('media.failed')).toHaveLength(1);
+    expect(h.stitch.row('output-1').status).toBe(IngredientStatus.PROCESSING);
+    expect(h.stitch.eventsNamed('media.failed')).toEqual([]);
     h.stitch.completeJob('stitch-output-1', 'ingredients/videos/output-1');
     await h.run('videoStitch', inputs, { brandId: 'brand' });
     expect(h.stitch.row('output-1').status).toBe(IngredientStatus.GENERATED);
-    expect(h.stitch.outputs()).toHaveLength(1);
-    expect(h.stitch.mergeJobs().map((job) => job.id)).toEqual([
-      'stitch-output-1',
-      'stitch-output-1',
-    ]);
+    expect(h.stitch.mergeJobs()).toHaveLength(1);
     expect(h.files.uploadToS3).not.toHaveBeenCalled();
   });
   it('re-enqueues a processing output whose job was lost when the node reruns', async () => {

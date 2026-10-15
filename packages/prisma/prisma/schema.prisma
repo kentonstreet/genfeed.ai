@@ -69,16 +69,6 @@ enum IngredientStatus {
   REJECTED
 }
 
-/// Where a Library asset came from. Decided once at creation and immutable:
-/// `ingredients_origin_immutable` rejects any later change. `UNKNOWN` is only
-/// ever assigned by the one-time backfill to legacy rows it cannot classify.
-enum IngredientOrigin {
-  UPLOADED
-  GENERATED
-  IMPORTED
-  UNKNOWN
-}
-
 enum TransformationCategory {
   UPSCALED
   RESIZED
@@ -204,7 +194,6 @@ enum PostCategory {
 enum PostEntityModel {
   INGREDIENT
   ARTICLE
-  NEWSLETTER
 }
 
 enum CredentialPlatform {
@@ -250,7 +239,6 @@ enum AssetCategory {
   LOGO
   BANNER
   REFERENCE
-  FONT
 }
 
 enum ReferenceImageCategory {
@@ -408,15 +396,6 @@ enum PersonaStatus {
   ARCHIVED
 }
 
-/// Which brands of the owning organization can use a character (#6009).
-/// OWNING_BRAND is the default; SELECTED_BRANDS lists the brands in
-/// Persona.availableBrandIds, always including the owning brand.
-enum PersonaAvailabilityMode {
-  OWNING_BRAND
-  ALL_BRANDS
-  SELECTED_BRANDS
-}
-
 enum AgentTransferDeliveryMode {
   SEND
   SEND_AND_RUN
@@ -501,7 +480,7 @@ enum LeadStatus {
   LOST
 }
 
-enum TurboRunStatus {
+enum BatchStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -510,7 +489,7 @@ enum TurboRunStatus {
   CANCELLED
 }
 
-enum TurboRunItemStatus {
+enum BatchItemStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -518,12 +497,12 @@ enum TurboRunItemStatus {
   SKIPPED
 }
 
-enum TurboProjectKind {
+enum BatchProjectKind {
   IDEAS
   WORKFLOW
 }
 
-enum TurboProjectStatus {
+enum BatchProjectStatus {
   DRAFT
   GENERATING
   REVIEWING
@@ -533,7 +512,7 @@ enum TurboProjectStatus {
   CANCELLED
 }
 
-enum TurboProjectItemStatus {
+enum BatchProjectItemStatus {
   PENDING
   GENERATING
   READY
@@ -596,16 +575,6 @@ enum SocialWarmupSignalSource {
 // ═══════════════════════════════════════════════════════════════
 
 model User {
-  brandedGenerationReceipts BrandedGenerationReceipt[] @relation("branded_generation_receipt_actor")
-  brandedGenerationReceiptEvents BrandedGenerationReceiptEvent[] @relation("branded_generation_receipt_event_actor")
-contentLearningExperiments ContentLearningExperiment[]
-
-contentLearningConsents ContentLearningConsent[]
-contentLearningDatasets ContentLearningDataset[]
-contentLearningOperations ContentLearningOperation[]
-
-  visualProjects VisualProject[]
-  visualRevisions VisualRevision[]
   approvedBrandOsRevisions BrandOsRevision[] @relation("BrandOsApprover")
   publishedBrandOsPublications BrandOsPublication[] @relation("BrandOsPublisher")
   revokedBrandOsPublications BrandOsPublication[] @relation("BrandOsRevoker")
@@ -714,7 +683,6 @@ contentLearningOperations ContentLearningOperation[]
   monitoredAccounts         MonitoredAccount[]
   socialSources             SocialSource[]
   sourcePosts               SourcePost[]
-  nativeSourceActions SourcePostNativeAction[]
   listeningTopics           ListeningTopic[]
   listeningThemeReviews     ListeningTheme[]          @relation("listening_theme_reviewed_by")
   socialWarmupEnrollments   SocialWarmupEnrollment[]
@@ -734,8 +702,8 @@ contentLearningOperations ContentLearningOperation[]
   contentPlans              ContentPlan[]
   evaluations               Evaluation[]
   editorProjects            EditorProject[]
-  turboRuns                   TurboRun[]
-  assignedTurboRunItems        TurboRunItem[]               @relation("turbo_run_item_assignee")
+  batches                   Batch[]
+  assignedBatchItems        BatchItem[]               @relation("batch_item_assignee")
   assets                    Asset[]
   subscriptions             Subscription[]
   userSubscription          UserSubscription?
@@ -757,7 +725,6 @@ contentLearningOperations ContentLearningOperation[]
   warmupAccountsCustomer    WarmupAccount[]           @relation("warmup_account_customer")
   lifecycleEmailPreference  LifecycleEmailPreference?
   lifecycleEmailDeliveries  LifecycleEmailDelivery[]
-  workspaceInboxReads       WorkspaceInboxRead[]
   notificationInboxItems    NotificationInboxItem[]
   notificationPreferences   NotificationPreference[]
   notificationDeliveries    NotificationDelivery[]
@@ -773,29 +740,9 @@ contentLearningOperations ContentLearningOperation[]
   @@index([appSource])
   @@index([stripeCustomerId])
   @@map("users")
-  botAccountLinks BotAccountLink[]
 }
 
 model Organization {
-  postExposureObservations PostExposureObservation[]
-  brandedGenerationReceipts BrandedGenerationReceipt[]
-contentLearningScopeStates ContentLearningScopeState[]
-contentLearningExperiments ContentLearningExperiment[]
-contentLearningEnrollments ContentLearningEnrollment[]
-contentLearningOpportunitys ContentLearningOpportunity[]
-contentLearningExperimentEvents ContentLearningExperimentEvent[]
-
-contentLearningAccounts ContentLearningAccount[]
-contentLearningConsents ContentLearningConsent[]
-contentLearningDecisions ContentLearningDecision[]
-contentLearningCheckpoints ContentLearningCheckpoint[]
-contentLearningBaselines ContentLearningBaseline[]
-contentLearningRewards ContentLearningReward[]
-contentLearningPolicyVersions ContentLearningPolicyVersion[]
-contentLearningBrandPreferences ContentLearningBrandPreference[]
-
-  visualProjects VisualProject[]
-  visualRevisions VisualRevision[]
   brandOsRevisions BrandOsRevision[]
   brandOsPublications BrandOsPublication[]
   knowledgeSources KnowledgeSource[]
@@ -834,9 +781,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   campaignPaidActivations       CampaignPaidActivation[]
   posts                         Post[]
   postPublishFinalizations      PostPublishFinalization[]
-  postProviderPublishReceipts   PostProviderPublishReceipt[]
-  postIngredientLinks           PostIngredient[]
-  personaReferences             PersonaReference[]
   postGroups                    PostGroup[]
   postingCadences               PostingCadence[]
   slotReservations              SlotReservation[]
@@ -873,7 +817,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   workflowArtifacts             WorkflowArtifact[]
   workflowNodeContinuations     WorkflowNodeContinuation[]
   notificationEvents            NotificationEvent[]
-  workspaceInboxReads           WorkspaceInboxRead[]
   notificationInboxItems        NotificationInboxItem[]
   notificationDeliveries        NotificationDelivery[]
   contentRuns                   ContentRun[]
@@ -948,8 +891,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   billingAccountLinks           BillingAccountOrganization[]
   creditReservations            CreditReservation[]
   liveSessions                  LiveSession[]
-  turboProjects                 TurboProject[]
-  turboProjectItems             TurboProjectItem[]
+  batchProjects                 BatchProject[]
+  batchProjectItems             BatchProjectItem[]
   referralCodesRewardTarget     ReferralCode[]                 @relation("referral_code_reward_organization")
   referralsAsReferrer           Referral[]                     @relation("referral_referrer_organization")
   referralsAsReferred           Referral[]                     @relation("referral_referred_organization")
@@ -968,16 +911,14 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   contextEntries                ContextEntry[]
   skills                        Skill[]
   receivedSkillGrants           SkillGrant[]              @relation("skill_grant_recipient_org")
-  ownedPersonaGrants            PersonaGrant[]            @relation("persona_grant_owner_org")
-  receivedPersonaGrants         PersonaGrant[]            @relation("persona_grant_recipient_org")
   skillAssignments              SkillAssignment[]
   skillResolutions              SkillResolution[]
   generationPromptSnapshots     GenerationPromptSnapshot[]
   skillReceipts                 SkillReceipt[]
   templates                     Template[]
   templateUsages                TemplateUsage[]
-  turboRuns                       TurboRun[]
-  turboRunItems                    TurboRunItem[]
+  batches                       Batch[]
+  batchItems                    BatchItem[]
   profiles                      Profile[]
   activities                    Activity[]
   apiKeys                       ApiKey[]
@@ -997,7 +938,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   @@index([accountType])
   @@index([billingAccountId])
   @@map("organizations")
-  botAccountLinks BotAccountLink[]
 }
 
 enum McpApprovalStatus {
@@ -1017,8 +957,6 @@ model McpApproval {
   user               User              @relation(fields: [userId], references: [id])
   toolName           String
   arguments          Json              @default("{}")
-  /// Server-prepared generation quote bound to this consent identity.
-  pricingQuote       Json?
   status             McpApprovalStatus @default(PENDING)
   result             Json?
   resolvedAt         DateTime?
@@ -1036,25 +974,6 @@ model McpApproval {
 }
 
 model Brand {
-  postExposureObservations PostExposureObservation[]
-  brandedGenerationReceipts BrandedGenerationReceipt[] @relation("branded_generation_receipt_brand")
-contentLearningScopeStates ContentLearningScopeState[]
-contentLearningExperiments ContentLearningExperiment[]
-contentLearningEnrollments ContentLearningEnrollment[]
-contentLearningOpportunitys ContentLearningOpportunity[]
-contentLearningExperimentEvents ContentLearningExperimentEvent[]
-
-contentLearningAccounts ContentLearningAccount[]
-contentLearningConsents ContentLearningConsent[]
-contentLearningDecisions ContentLearningDecision[]
-contentLearningCheckpoints ContentLearningCheckpoint[]
-contentLearningBaselines ContentLearningBaseline[]
-contentLearningRewards ContentLearningReward[]
-contentLearningPolicyVersions ContentLearningPolicyVersion[]
-contentLearningBrandPreferences ContentLearningBrandPreference[]
-
-  visualProjects VisualProject[]
-  visualRevisions VisualRevision[]
   brandOsRevisionVersion Int @default(0)
   brandOsRevisions BrandOsRevision[]
   brandOsPublications BrandOsPublication[]
@@ -1062,6 +981,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   watermarkLogoId          String?
   watermarkOpacity         Float        @default(0.35)
   watermarkPosition        String       @default("bottom-right")
+  /// Deprecated (#5485): no longer read or written; dropped next release (#5495).
+  isSocialHistoryImportEnabled Boolean  @default(true)
   knowledgeSources KnowledgeSource[]
   knowledgeSpaces KnowledgeSpace[]
   id                       String       @id @default(cuid())
@@ -1166,8 +1087,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   trackedLinks               TrackedLink[]
   proactiveLeads             Lead[]                     @relation("lead_proactive_brand")
   contentPlans               ContentPlan[]
-  turboRuns                    TurboRun[]
-  turboRunItems                 TurboRunItem[]
+  batches                    Batch[]
+  batchItems                 BatchItem[]
   activities                 Activity[]
   contextBases               ContextBase[]              @relation("context_base_source_brand")
   schedules                  Schedule[]
@@ -1203,7 +1124,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   @@index([organizationId, isDeleted, label], map: "brands_org_deleted_label_idx")
   @@index([organizationId, updatedAt, id], map: "brands_org_updated_at_id_idx")
   @@map("brands")
-  executionReadDependencies WorkflowExecutionReadBrandDependency[]
 }
 
 enum BrandInterviewStatus {
@@ -1486,10 +1406,6 @@ model Member {
   // MembersService), and BrandRelocationService reassigns affected members'
   // currentBrandId to a same-org brand before a brand's org changes.
   currentBrand             Brand        @relation("member_current_brand", fields: [currentBrandId], references: [id])
-  // #5502 native secondary apps this member installed into their own setup in
-  // this organization, in install order. A presentation preference only:
-  // organization, subscription and release access are checked separately.
-  installedAppIds          String[]     @default([])
   isActive                 Boolean      @default(true)
   isDeleted                Boolean      @default(false)
   createdAt                DateTime     @default(now())
@@ -1699,7 +1615,7 @@ model Setting {
   isMenuCollapsed                  Boolean                    @default(false)
   isSidebarProgressVisible         Boolean                    @default(true)
   isSidebarProgressCollapsed       Boolean                    @default(false)
-  isAdvancedMode                   Boolean                    @default(false)
+  isAdvancedMode                   Boolean                    @default(true)
   isTrendNotificationsInApp        Boolean                    @default(true)
   isTrendNotificationsTelegram     Boolean                    @default(false)
   isTrendNotificationsEmail        Boolean                    @default(false)
@@ -1713,9 +1629,6 @@ model Setting {
   // #5510 per-user favorite workflows; ids are validated against the
   // caller's organization on write and pruned of deleted workflows on read.
   favoriteWorkflowIds              String[]                   @default([])
-  // #5502 native secondary apps pinned onto the rail, in pin order. User-wide;
-  // a pin shows only where the app is installed and available.
-  pinnedAppIds                     String[]                   @default([])
   isAgentAssetsPanelOpen          Boolean                    @default(false)
   generationPriority               GenerationPriority         @default(QUALITY)
   // #4672 saved default agent mode ('auto' | 'manual' | 'plan') applied to
@@ -1772,10 +1685,10 @@ model OrganizationSetting {
   hasGeneratedFirstAsset         Boolean           @default(false)
   onboardingJourneyMissions      Json              @default("[]")
   onboardingJourneyCompletedAt   DateTime?
+  isAdvancedMode                 Boolean           @default(false)
   agentReplyStyle                AgentReplyStyle   @default(CONCISE)
   byokOpenrouterApiKey           String?
   defaultAvatarPhotoUrl          String?
-  defaultAvatarRef               Json?
   defaultAvatarIngredientId      String?
   defaultVoiceId                 String?
   defaultVoiceRef                Json?
@@ -1789,17 +1702,6 @@ model OrganizationSetting {
   defaultImageToVideoModel       String?
   defaultMusicModel              String?
   agentPolicy                    Json              @default("{}")
-  moduleOverrides                Json              @default("{}")
-  // #5502 founder release preview. Only platform admins set it; on cloud,
-  // founder-only modules admit new work only in organizations with it on.
-  isReleasePreviewEnabled        Boolean           @default(false)
-  // #6526 / #6727. Owner/admin opt-ins, off until an organization chooses them.
-  // Breakout responses spend credits on a detected own-account breakout; auto-publish
-  // lets a response that passed every check schedule itself; vision checks pay a
-  // provider to read branded visuals. Platform switches stay the master kill switches.
-  isBreakoutResponsesEnabled     Boolean           @default(false)
-  isBreakoutAutoPublishEnabled   Boolean           @default(false)
-  isBrandVisionChecksEnabled     Boolean           @default(false)
   fleetEvaluationPolicy          Json              @default("{}")
   byokKeys                       Json              @default("{}")
   createdAt                      DateTime          @default(now())
@@ -1831,34 +1733,6 @@ model PlatformSetting {
   // migration on the operator's critical path.
   typedDecisionProvider String @default("none")
 
-  imageCompressionQuality Int @default(50)
-  paygFallbackCredits Int @default(1000)
-  linkedinTrendSourceUrls String?
-  agentContextCompressionModel String?
-  agentContextWindowSize Int @default(5)
-  generationMaxTokens Int @default(4000)
-  typedDecisionTimeoutMs Int @default(800)
-  trainingCreditsCost Float @default(500)
-  customModelCreditsCost Float @default(5)
-  replicateModelHardware String @default("gpu-t4")
-  replicateModelVisibility String @default("private")
-  replicateTrainerModel String @default("replicate/fast-flux-trainer:f463fbfc97389e10a2f443a8a84b6953b1058eafbf0c9af4d84457ff07cb04db")
-  replicateTargetFps Int @default(30)
-  replicateTargetResolution String @default("1080p")
-  klingModel String @default("kling-v2")
-  elevenlabsModel String?
-  murekaModel String @default("mureka-9")
-  discordChannelIdDeployments String?
-  discordChannelIdPosts String?
-  discordChannelIdStudio String?
-  discordChannelIdUsers String?
-  discordChannelIdModels String?
-  discordBotAvatarUrl String?
-  discordWebhookNamePrefix String?
-  discordWebhookReason String?
-  emailFromAddress String?
-  emailReplyToAddress String?
-
   // Product feature switches (#5407). Operator decisions live here, not in
   // env, so changing one is an admin click rather than a deploy. Defaults
   // equal the retired env defaults. Mode columns are plain strings for the
@@ -1887,17 +1761,11 @@ model PlatformSetting {
   untrustedContentMinConfidence    Float     @default(0.95)
   isAgentContextCompressionEnabled Boolean   @default(true)
   isAgentTokenStreamingEnabled     Boolean   @default(false)
-  isBrandVisualAnalysisEnabled     Boolean   @default(false)
-  // Catalog models (`models.key`) that read text from and detect logo or product
-  // regions in branded visuals (#6727). Null leaves the analysis unavailable.
-  brandVisionOcrModelKey           String?   @default("lucataco/florence-2-large")
-  brandVisionDetectModelKey        String?   @default("adirik/owlvit-base-patch32")
   // Signup and billing system-event recording starts here; null = disabled.
   systemEventsEnabledAt            DateTime?
   isEmailVerificationRequired      Boolean   @default(false)
   // Module and feature flags (#5468), e.g. {"studio":false}. Only an explicit
-  // false turns one off; missing keys are on. Release flags
-  // ({"release_motion":true}) are the exception: missing means preview-only.
+  // false turns one off; missing keys are on.
   flags                            Json      @default("{}")
   // Workflows pinned to every organization's templates Featured row (#5511),
   // in display order. Written only by the superadmin pin endpoints; only the
@@ -1916,22 +1784,6 @@ model PlatformSetting {
 // ═══════════════════════════════════════════════════════════════
 
 model Credential {
-  postExposureObservations PostExposureObservation[]
-  @@unique([id, organizationId, brandId], map: "credentials_id_exposure_scope_key")
-contentLearningScopeStates ContentLearningScopeState[]
-contentLearningExperiments ContentLearningExperiment[]
-contentLearningEnrollments ContentLearningEnrollment[]
-contentLearningOpportunitys ContentLearningOpportunity[]
-contentLearningExperimentEvents ContentLearningExperimentEvent[]
-
-contentLearningAccounts ContentLearningAccount[]
-contentLearningConsents ContentLearningConsent[]
-contentLearningDecisions ContentLearningDecision[]
-contentLearningCheckpoints ContentLearningCheckpoint[]
-contentLearningBaselines ContentLearningBaseline[]
-contentLearningRewards ContentLearningReward[]
-contentLearningPolicyVersions ContentLearningPolicyVersion[]
-
   connectedAt DateTime?
   @@index([organizationId, userId, connectedAt])
   id                              String             @id @default(cuid())
@@ -1993,7 +1845,6 @@ contentLearningPolicyVersions ContentLearningPolicyVersion[]
   adWatchedAdvertisers    AdWatchedAdvertiser[]
   monitoredAccounts       MonitoredAccount[]
   socialSources           SocialSource[]
-  nativeSourceActions SourcePostNativeAction[]
   socialConversations     SocialConversation[]
   socialMessages          SocialMessage[]
   personas                Persona[]                @relation("persona_credentials")
@@ -2130,7 +1981,6 @@ model ApiKey {
   @@index([keyFingerprint])
   @@index([defaultBrandId])
   @@map("api_keys")
-  botAccountLinks BotAccountLink[]
 }
 
 model DesktopAuthCode {
@@ -2263,8 +2113,6 @@ model OrgIntegration {
 
   @@index([organizationId, isDeleted])
   @@map("org_integrations")
-  botAccountLinks BotAccountLink[]
-  @@unique([id, organizationId], map: "org_integrations_id_organizationId_key")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2303,8 +2151,6 @@ model Ingredient {
   // Discriminator: single table for Image, Video, Music, GIF, Avatar, Voice, etc.
   category              IngredientCategory       @default(IMAGE)
   status                IngredientStatus         @default(DRAFT)
-  // Permanent origin (#6010). Unlike `status`, never changes after creation.
-  origin                IngredientOrigin         @default(UNKNOWN)
   transformations       TransformationCategory[] @default([])
   order                 Int                      @default(0)
   version               Int                      @default(1)
@@ -2338,8 +2184,6 @@ model Ingredient {
   negativePrompt        String?
   /// Server-owned BYOK completion receipt, excluded from public serializers.
   generationBilling     Json?
-  /// Server-owned provider identity and connection receipt; excluded from serializers.
-  generationProvider    Json?
   generationSeed        Int?
   cfgScale              Float?
   generationSteps       Int?
@@ -2361,10 +2205,7 @@ model Ingredient {
   qualityFeedback       String[]                 @default([])
   qualityStatus         QualityStatus            @default(UNRATED)
 
-  // Voice discriminator fields (only populated when category = VOICE).
-  // Imported account voices (voiceSource 'imported') are unique on
-  // (organizationId, voiceProvider, externalVoiceId) via the partial index
-  // `ingredients_org_imported_voice_uidx`.
+  // Voice discriminator fields (only populated when category = VOICE)
   voiceSource         String?
   voiceProvider       VoiceProvider?
   externalVoiceId     String?
@@ -2397,13 +2238,12 @@ model Ingredient {
   brandVoices               Brand[]                    @relation("brand_voice")
   brandMusics               Brand[]                    @relation("brand_music")
   postEntities              Post[]                     @relation("post_entity_ingredient")
-  postLinks                 PostIngredient[]           @relation("ingredient_post_links")
+  postIngredients           Post[]                     @relation("post_ingredients")
   postAnalyticsIngredients  PostAnalytics[]            @relation("post_analytics_ingredients")
   bookmarkExtracted         Bookmark[]                 @relation("bookmark_extracted")
   bookmarkGenerated         Bookmark[]                 @relation("bookmark_generated")
   trainingSources           Training[]                 @relation("training_sources")
   personaAvatars            Persona[]                  @relation("persona_avatar")
-  personaReferences         PersonaReference[]         @relation("ingredient_persona_references")
   personaVoices             Persona[]                  @relation("persona_voice")
   captions                  Caption[]
   editorProjectVideos       EditorProject[]            @relation("editor_project_video")
@@ -2430,12 +2270,6 @@ model Ingredient {
   @@index([isDeleted, category, createdAt(sort: Desc)], map: "ingredients_deleted_category_created_at_idx")
   @@index([isDeleted, organizationId, createdAt(sort: Desc)], map: "ingredients_deleted_org_created_at_idx")
   @@index([organizationId, updatedAt, id], map: "ingredients_org_updated_at_id_idx")
-  @@index([organizationId, origin, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_origin_created_at_idx")
-  @@index([organizationId, personaId, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_persona_created_at_idx")
-  // Brand Library list (offset and keyset pages) + its count. `id` desc matches
-  // the (createdAt, id) keyset order; trailing status/category keep the count
-  // index-only (no heap visit per row).
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc), id(sort: Desc), status, category], map: "ingredients_org_brand_library_idx")
   @@map("ingredients")
 }
 
@@ -2783,24 +2617,12 @@ model LinkClick {
 // ═══════════════════════════════════════════════════════════════
 
 model Post {
-  exposureObservations PostExposureObservation[]
-  breakoutResponses BreakoutResponse[] @relation("breakout_source_post")
-  breakoutOutputId String? @unique
-  breakoutOutput BreakoutResponseOutput? @relation(fields: [breakoutOutputId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "posts_breakout_output_scope_fkey")
-  @@unique([breakoutOutputId, organizationId, brandId], map: "posts_breakout_output_scope_key")
-  @@unique([id, organizationId, brandId], map: "posts_id_exposure_scope_key")
-learningDecisionId String? @unique
-learningDecision ContentLearningDecision? @relation(fields: [learningDecisionId], references: [id])
-learningCheckpoints ContentLearningCheckpoint[]
-
   id                  String             @id @default(cuid())
   // Polymorphic entity: either an Ingredient or an Article
   entityIngredientId  String?
   entityIngredient    Ingredient?        @relation("post_entity_ingredient", fields: [entityIngredientId], references: [id])
   entityArticleId     String?
   entityArticle       Article?           @relation("post_entity_article", fields: [entityArticleId], references: [id])
-  entityNewsletterId  String?
-  entityNewsletter    Newsletter?        @relation("post_entity_newsletter", fields: [entityNewsletterId], references: [id])
   entityModel         PostEntityModel?
   credentialId        String?
   credential          Credential?        @relation(fields: [credentialId], references: [id])
@@ -2898,12 +2720,7 @@ learningCheckpoints ContentLearningCheckpoint[]
   promptUsed                     String?
   // Knowledge source versions whose passages shaped this post's generation.
   knowledgeReceipts              Json               @default("[]")
-  // Branded generation receipt that produced this post's text and the state it
-  // reached when the dispatch finished (#5786). Plain ids: the receipt itself
-  // stays the authority and is never a foreign key of the post.
-  brandedReceiptId               String?
-  brandedReceiptState            String?
-  reviewTurboRunId                  String?
+  reviewBatchId                  String?
   reviewItemId                   String?
   reviewDecision                 ReviewDecision?
   reviewVersionPinId             String?
@@ -2931,7 +2748,7 @@ learningCheckpoints ContentLearningCheckpoint[]
   updatedAt                      DateTime           @updatedAt
 
   // Many-to-many
-  ingredientLinks     PostIngredient[]     @relation("post_ingredient_links")
+  ingredients         Ingredient[]         @relation("post_ingredients")
   tags                Tag[]                @relation("post_tags")
   socialConversations SocialConversation[]
   socialMessages      SocialMessage[]
@@ -2939,7 +2756,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   // Reverse relations
   postAnalytics            PostAnalytics[]
   publishFinalizations     PostPublishFinalization[]
-  providerPublishReceipts  PostProviderPublishReceipt[]
   contentPerformances      ContentPerformance[]
   trendRemixLineages       TrendRemixLineage[]
   subscriptionAttributions SubscriptionAttribution[] @relation("attribution_content")
@@ -2948,8 +2764,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   @@index([externalId])
   @@index([originalPostId])
   @@index([groupId])
-  @@index([organizationId, entityArticleId], map: "posts_org_entity_article_idx")
-  @@index([organizationId, entityNewsletterId], map: "posts_org_entity_newsletter_idx")
   @@index([contentRunId])
   @@index([variantId])
   @@index([generationId])
@@ -2976,29 +2790,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   @@map("posts")
 }
 
-/// Ordered link between a Post and one of its media ingredients. `position` is
-/// the slide order the user arranged (0-based, contiguous per post); delivery
-/// and every read order by it. Replaces the implicit `_post_ingredients`
-/// many-to-many, which had no order of its own (#6740).
-model PostIngredient {
-  id             String       @id @default(cuid())
-  postId         String
-  post           Post         @relation("post_ingredient_links", fields: [postId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ingredientId   String
-  ingredient     Ingredient   @relation("ingredient_post_links", fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  /// The post's organization; follows the post when its brand changes tenant.
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  position       Int
-  createdAt      DateTime     @default(now())
-
-  @@unique([postId, ingredientId], map: "post_ingredients_post_ingredient_key")
-  @@index([postId, position], map: "post_ingredients_post_position_idx")
-  @@index([ingredientId], map: "post_ingredients_ingredient_idx")
-  @@index([organizationId], map: "post_ingredients_organization_idx")
-  @@map("post_ingredients")
-}
-
 /// Durable, retryable side effects owed after a provider confirms that a post
 /// is publicly visible. The provider transition and this record commit in one
 /// transaction; workers advance each idempotent stage independently.
@@ -3021,37 +2812,6 @@ model PostPublishFinalization {
   @@unique([organizationId, postId], map: "post_publish_finalizations_org_post_key")
   @@index([completedAt, updatedAt], map: "post_publish_finalizations_pending_idx")
   @@map("post_publish_finalizations")
-}
-
-/// Durable provider publish attempt for one post occurrence. Reserved before
-/// the provider call and resolved after it, so a failed state transition
-/// replays an accepted result and concurrent deliveries never both publish.
-model PostProviderPublishReceipt {
-  id                  String       @id @default(cuid())
-  organizationId      String
-  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  postId              String
-  post                Post         @relation(fields: [postId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  /// Digest of the post id, active approval, approved version pin, schedule and content.
-  occurrenceKey       String
-  /// attempting | accepted | uncertain | released
-  status              String
-  workflowExecutionId String
-  /// Fresh per reservation; every takeover and settlement compares it.
-  attemptToken        String
-  /// When the current provider call began; provider verification searches from it.
-  attemptStartedAt    DateTime
-  /// Renewed while the holder is alive; takeovers wait for it to expire.
-  leaseRenewedAt      DateTime
-  externalId          String?
-  result              Json?
-  persistedAt         DateTime?
-  isDeleted           Boolean      @default(false)
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-
-  @@unique([organizationId, postId, occurrenceKey], map: "post_provider_publish_receipts_occurrence_key")
-  @@map("post_provider_publish_receipts")
 }
 
 /// Explicit typed authority for publishing one exact canonical Post version.
@@ -3625,8 +3385,6 @@ model CreditTransaction {
   billingAccountId     String?
   billingAccount       BillingAccount?    @relation(fields: [billingAccountId], references: [id])
   actorUserId          String?
-  /// Brand the spend is attributed to. Null for org-level (brandless) spend.
-  brandId              String?
   reservationId        String?
   reservation          CreditReservation? @relation(fields: [reservationId], references: [id])
   idempotencyKey       String?
@@ -3649,7 +3407,6 @@ model CreditTransaction {
   @@index([isDeleted, category, createdAt(sort: Desc)], map: "credit_transactions_deleted_category_created_at_idx")
   @@index([billingAccountId, isDeleted, createdAt(sort: Desc)])
   @@index([reservationId])
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)], map: "credit_transactions_org_brand_deleted_created_at_idx")
   @@map("credit_transactions")
   @@index([organizationId, workflowExecutionId, workflowNodeId, isDeleted], map: "credit_transactions_workflow_accounting_idx")
 }
@@ -3817,8 +3574,6 @@ model CreditReservation {
   organizationId   String
   organization     Organization            @relation(fields: [organizationId], references: [id])
   actorUserId      String?
-  /// Brand the hold is attributed to; settlement copies it onto the ledger rows.
-  brandId          String?
   amount           Float
   settledAmount    Float?
   status           CreditReservationStatus @default(RESERVED)
@@ -3831,10 +3586,6 @@ model CreditReservation {
   source           String?
   metadata         Json?
   expiresAt        DateTime
-  /// Provider-recovery backoff for holds whose provider status stayed unknown
-  /// at the ceiling (#6168): the sweep skips the hold until this time.
-  recoveryNextAttemptAt DateTime?
-  recoveryAttempts      Int                     @default(0)
   isDeleted        Boolean                 @default(false)
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
@@ -3882,7 +3633,6 @@ model LiveSession {
 /// store tokens/latency with vendorCostMicros = 0. Never stores prompt or
 /// completion content.
 model LlmVendorCost {
-  learningAttemptId String? @unique
   pricingSnapshot Json?
   costEvidence String?
   workflowExecutionId String?
@@ -4046,7 +3796,6 @@ model MediaTextDecision {
 /// units (seconds / megapixels / runs). BYOK rows store units with
 /// vendorCostMicros = 0. Never stores prompt content.
 model MediaVendorCost {
-  learningAttemptId String? @unique
   pricingSnapshot Json?
   costEvidence String?
   workflowExecutionId String?
@@ -4109,18 +3858,12 @@ model Article {
   // The columns were `title`/`excerpt` until #2767; nothing outside Prisma ever
   // used those spellings, so persistence now matches the rest of the stack.
   label          String
-  // Public slugs are one global namespace (`/articles/:slug`). At most one live
-  // published article per slug is enforced by the partial SQL index
-  // articles_public_slug_uidx (WHERE slug IS NOT NULL AND status = 'PUBLISHED'
-  // AND isDeleted = false); Prisma cannot represent its WHERE clause.
   slug           String?
   content        String?
   summary        String?
   coverImageUrl  String?
   status         ArticleStatus @default(DRAFT)
   publishedAt    DateTime?
-  // Live URL recorded when the article was published outside Genfeed (#6753).
-  externalUrl    String?
   isDeleted      Boolean       @default(false)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -4198,14 +3941,11 @@ model Newsletter {
   approvedAt           DateTime?
   publishedAt          DateTime?
   scheduledFor         DateTime?
-  // Live URL recorded when the issue was sent outside Genfeed (#6753).
-  externalUrl          String?
   isDeleted            Boolean            @default(false)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
   articles           Article[]    @relation("newsletter_articles")
-  postEntities       Post[]       @relation("post_entity_newsletter")
   contextNewsletters Newsletter[] @relation("newsletter_context")
   contextOf          Newsletter[] @relation("newsletter_context")
 
@@ -4428,15 +4168,10 @@ model Persona {
   isAutopilotEnabled Boolean       @default(false)
   isFleetCharacter   Boolean       @default(false)
   nextAutopilotRunAt DateTime?
-  availabilityMode   PersonaAvailabilityMode @default(OWNING_BRAND)
-  availableBrandIds  String[]      @default([])
   isDeleted          Boolean       @default(false)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
-  availabilityAudits PersonaAvailabilityAudit[]
-  grants             PersonaGrant[]
-  references         PersonaReference[]
   tags            Tag[]        @relation("persona_tags")
   credentials     Credential[] @relation("persona_credentials")
   assignedMembers User[]       @relation("persona_assigned_members")
@@ -4448,109 +4183,11 @@ model Persona {
   @@index([brandId, organizationId, isDeleted])
   @@index([organizationId, isDeleted, isAutopilotEnabled, nextAutopilotRunAt])
   @@index([organizationId, isDeleted, isFleetCharacter])
-  // Brand lookup (#6009): owned OR availabilityMode = ALL_BRANDS OR brand in availableBrandIds.
-  @@index([organizationId, isDeleted, availabilityMode])
-  @@index([availableBrandIds], type: Gin, map: "personas_available_brand_ids_idx")
   // Prefix lookup for @-mention suggestions (handle/label).
   @@index([organizationId, brandId, isDeleted, status, handle], map: "personas_mention_suggest_idx")
   // Partial unique (organizationId, brandId, handle) WHERE handle IS NOT NULL
   // AND isDeleted = false lives in 20260824120000_persona_handle_brand_unique.
   @@map("personas")
-}
-
-/// Ordered reference images of a character. Position 0 is the primary
-/// reference and is mirrored to `Persona.avatarIngredientId` for readers that
-/// need a single image (remix identity, avatar video, thumbnails). @mentions
-/// send the references in position order, capped by the model's reference
-/// limit. Rows are hard-deleted on removal (like `PostIngredient`); a
-/// soft-deleted ingredient is skipped by every reader and returns on restore.
-model PersonaReference {
-  id             String       @id @default(cuid())
-  personaId      String
-  persona        Persona      @relation(fields: [personaId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ingredientId   String
-  ingredient     Ingredient   @relation("ingredient_persona_references", fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  position       Int
-  createdAt      DateTime     @default(now())
-
-  @@unique([personaId, ingredientId], map: "persona_references_persona_ingredient_key")
-  @@index([personaId, position], map: "persona_references_persona_position_idx")
-  @@index([ingredientId], map: "persona_references_ingredient_idx")
-  @@index([organizationId], map: "persona_references_organization_idx")
-  @@map("persona_references")
-}
-
-/// Use-only grant of a character to another organization (#6037). Only one
-/// active grant exists per character and recipient (partial unique index in
-/// the migration); a revoked grant is kept and a re-grant is a new row.
-model PersonaGrant {
-  id                      String                  @id @default(cuid())
-  personaId               String
-  persona                 Persona                 @relation(fields: [personaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  ownerOrganizationId     String
-  ownerOrganization       Organization            @relation("persona_grant_owner_org", fields: [ownerOrganizationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  recipientOrganizationId String
-  recipientOrganization   Organization            @relation("persona_grant_recipient_org", fields: [recipientOrganizationId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  /// Availability inside the receiving organization (#6009 contract).
-  availabilityMode        PersonaAvailabilityMode @default(ALL_BRANDS)
-  availableBrandIds       String[]                @default([])
-  /// Always "use": the receiving organization can generate, never edit.
-  access                  String                  @default("use")
-  grantedByUserId         String
-  revokedByUserId         String?
-  revokedAt               DateTime?
-  createdAt               DateTime                @default(now())
-  updatedAt               DateTime                @updatedAt
-
-  @@index([recipientOrganizationId, revokedAt])
-  @@index([personaId, revokedAt])
-  @@index([ownerOrganizationId, revokedAt])
-  @@map("persona_grants")
-}
-
-/// Append-only audit of grant changes (#6037): actor, time, previous and new state.
-model PersonaGrantAudit {
-  id                      String                   @id @default(cuid())
-  grantId                 String
-  personaId               String
-  ownerOrganizationId     String
-  recipientOrganizationId String
-  actorUserId             String
-  /// granted, updated or revoked.
-  action                  String
-  previousMode            PersonaAvailabilityMode?
-  previousBrandIds        String[]                 @default([])
-  newMode                 PersonaAvailabilityMode?
-  newBrandIds             String[]                 @default([])
-  createdAt               DateTime                 @default(now())
-
-  @@index([grantId, createdAt(sort: Desc)])
-  @@index([ownerOrganizationId, createdAt(sort: Desc)])
-  @@map("persona_grant_audits")
-}
-
-/// Append-only audit of character availability changes (#6009): actor, time,
-/// previous and new availability.
-model PersonaAvailabilityAudit {
-  id               String                  @id @default(cuid())
-  personaId        String
-  persona          Persona                 @relation(fields: [personaId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  organizationId   String
-  actorUserId      String
-  previousMode     PersonaAvailabilityMode
-  previousBrandIds String[]                @default([])
-  newMode          PersonaAvailabilityMode
-  newBrandIds      String[]                @default([])
-  /// Set only when the change moved the owning brand (#6040).
-  previousOwningBrand String?
-  newOwningBrand      String?
-  createdAt        DateTime                @default(now())
-
-  @@index([personaId, createdAt(sort: Desc)])
-  @@index([organizationId, createdAt(sort: Desc)])
-  @@map("persona_availability_audits")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4605,8 +4242,6 @@ model AgentThread {
   @@index([organizationId, isDeleted, updatedAt(sort: Desc)])
   @@index([organizationId, brandId, isDeleted, updatedAt(sort: Desc)], map: "agent_threads_org_brand_deleted_updated_at_idx")
   @@map("agent_threads")
-  executionReadScopes WorkflowExecutionReadScope[]
-  @@unique([id, organizationId], map: "agent_threads_id_organizationId_key")
 }
 
 model AgentMessage {
@@ -4917,23 +4552,15 @@ model AgentStrategy {
   reports       AgentStrategyReport[]
   campaigns     AgentCampaign[]            @relation("campaign_agents")
   campaignLeads AgentCampaign[]            @relation("campaign_lead")
-  turboRuns       TurboRun[]
+  batches       Batch[]
 
   agentType String?
   platforms String[] @default([])
-
-  // Server-written authenticated actor (WorkflowInitiatingActor JSON) that this strategy's
-  // autonomous turns bind to the schedules they save. Persisted only when an authenticated user
-  // or API key saves or enables the strategy; cleared when it is disabled. Never read from input
-  // and never copied between strategies.
-  scheduleInitiatingActor Json?
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
   @@index([organizationId, preferredWorkflowId])
   @@index([organizationId, preferredWorkflowTemplateId])
   @@map("agent_strategies")
-  executionReadScopes WorkflowExecutionReadScope[]
-  @@unique([id, organizationId], map: "agent_strategies_id_organizationId_key")
 }
 
 model AgentStrategyOpportunity {
@@ -5150,8 +4777,6 @@ model Workflow {
   organization      Organization    @relation(fields: [organizationId], references: [id])
   brandId           String?
   brand             Brand?          @relation(fields: [brandId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade)
-  templateInstantiationKey String?
-  templateInstantiationRequestHash String?
   label             String?
   description       String?
   currentVersionId  String          @unique
@@ -5198,17 +4823,7 @@ model Workflow {
   @@index([organizationId, brandId, isDeleted])
   // Supporting index for the partial unique constraint lookup.
   @@index([defaultRecurringBrandId, organizationId])
-  @@unique([organizationId, userId, templateInstantiationKey], map: "workflows_template_instantiation_scope_key")
   @@map("workflows")
-  /// Server-written configuring principal; never accepted from workflow DTO metadata.
-  scheduleInitiatingActor Json?
-  /// Server-only platform-authority marker: the canonical seeded template id this row was seeded
-  /// from, written only by WorkflowTemplateSeederService. A marked row whose current version still
-  /// matches that template runs its schedule without a bound actor in Cloud. Never accepted from
-  /// request input, never copied by clone or install, and cleared when a tenant edits the
-  /// definition. At most one live row per (organizationId, platformSeedKey) via the partial unique
-  /// index workflows_platform_seed_key_org_uidx (migration 20261011120000; Prisma cannot express it).
-  platformSeedKey String?
 }
 
 /// Immutable executable workflow definition. A version is append-only: edits
@@ -5234,8 +4849,6 @@ model WorkflowVersion {
   @@unique([workflowId, version])
   @@index([organizationId, workflowId, version(sort: Desc)])
   @@map("workflow_versions")
-  batchReadScopes WorkflowExecutionReadScope[]
-  @@unique([id, organizationId], map: "workflow_versions_id_organizationId_key")
 }
 
 enum AgentFailureReason {
@@ -5257,7 +4870,6 @@ enum AgentFailureReason {
 }
 
 model WorkflowExecution {
-  generationAdmissionSource Json?
   generationBilling Json?
   costEstimate Json?
   id                String                  @id @default(cuid())
@@ -5328,9 +4940,6 @@ model WorkflowExecution {
   @@index([status, isDeleted, failureReason, completedAt(sort: Desc), id], map: "workflow_executions_failure_feed_idx")
   @@map("workflow_executions")
   @@unique([id, organizationId])
-  readScope WorkflowExecutionReadScope?
-  readParentEdges WorkflowExecutionReadLineage[] @relation("read_lineage_child_execution")
-  readChildEdges WorkflowExecutionReadLineage[] @relation("read_lineage_parent_execution")
 }
 
 /// Per-node execution results, unique on (executionId, nodeId). One upsert
@@ -5513,7 +5122,6 @@ model Task {
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 
-  inboxReads       WorkspaceInboxRead[]
   comments         TaskComment[]
   linkedExecutions WorkflowExecution[] @relation("task_linked_executions")
   linkedOutputs    Ingredient[]        @relation("task_linked_outputs")
@@ -5528,42 +5136,9 @@ model Task {
   checkoutRunId   String?
   checkedOutAt    DateTime?
 
-  /// Execution rollup lease: the holder may run the rollup for this task until
-  /// rollupLeaseExpiresAt; an expired lease can be re-claimed.
-  rollupLeaseOwner     String?
-  rollupLeaseExpiresAt DateTime?
-  /// When the current execution cycle was rolled up; cleared when executions
-  /// are (re)linked. A reopened task keeps it, so its old output is not
-  /// rolled up again.
-  rolledUpAt           DateTime?
-  /// Lease acquisitions in the current execution cycle; capped so a task whose
-  /// final write keeps failing is not retried forever. Reset with rolledUpAt.
-  rollupAttempts       Int       @default(0)
-
-  @@unique([id, organizationId], map: "tasks_id_organizationId_key")
   @@unique([organizationId, identifier])
   @@index([organizationId, checkoutAgentId])
-  @@index([status, rollupLeaseExpiresAt])
   @@map("tasks")
-}
-
-/// Per-recipient task versions acknowledged in the workspace inbox.
-model WorkspaceInboxRead {
-  id             String       @id @default(cuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
-  userId         String
-  user           User         @relation(fields: [userId], references: [id])
-  taskId         String
-  task           Task         @relation(fields: [taskId, organizationId], references: [id, organizationId])
-  seenUpdatedAt  DateTime
-  isDeleted      Boolean      @default(false)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  @@unique([organizationId, userId, taskId])
-  @@index([organizationId, userId, isDeleted])
-  @@map("workspace_inbox_reads")
 }
 
 model TaskComment {
@@ -5766,9 +5341,6 @@ model SourcePost {
   updatedAt            DateTime     @updatedAt
 
   listeningEvidence ListeningEvidence[]
-  nativeActions SourcePostNativeAction[]
-  exposureObservations PostExposureObservation[]
-  breakoutSourceResponses BreakoutResponse[]
 
   @@unique([id, organizationId, brandId], map: "source_posts_id_scope_key")
   @@unique([sourceId, externalId], map: "source_posts_source_external_key")
@@ -6215,8 +5787,6 @@ model Evaluation {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, isDeleted, updatedAt(sort: Desc)])
-  // Latest evaluation per content row, attached to every content list page.
-  @@index([organizationId, contentType, contentId, isDeleted, updatedAt(sort: Desc)], map: "evaluations_org_content_target_idx")
   @@map("evaluations")
 }
 
@@ -6711,141 +6281,117 @@ model ElementBlacklist {
 
 model ElementCamera {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_cameras_scope_idx")
   @@map("elements_cameras")
 }
 
 model ElementCameraMovement {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_camera_movements_scope_idx")
   @@map("elements_camera_movements")
 }
 
 model ElementLens {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_lenses_scope_idx")
   @@map("elements_lenses")
 }
 
 model ElementLighting {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_lightings_scope_idx")
   @@map("elements_lightings")
 }
 
 model ElementMood {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_moods_scope_idx")
   @@map("elements_moods")
 }
 
 model ElementScene {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   isFavorite Boolean @default(false)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_scenes_scope_idx")
   @@map("elements_scenes")
 }
 
 model ElementSound {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   isFavorite Boolean @default(false)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_sounds_scope_idx")
   @@map("elements_sounds")
 }
 
 model ElementStyle {
   id             String   @id @default(cuid())
-  organizationId String?
+  organizationId String
   key            String?
   label          String?
   description    String?
   isDeleted      Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  isActive       Boolean  @default(true)
-  sortOrder      Int      @default(0)
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
-  @@index([organizationId, isDeleted, isActive, sortOrder], map: "elements_styles_scope_idx")
   @@map("elements_styles")
 }
 
@@ -6948,7 +6494,6 @@ model ClipResult {
   ingredientId   String?
   ingredient     Ingredient?  @relation("clip_result_ingredient", fields: [ingredientId], references: [id], onDelete: SetNull)
   providerJobId  String?
-  generationProvider Json?
   viralityScore  Float?
   status         String       @default("pending")
   mode           String       @default("avatar")
@@ -7271,13 +6816,6 @@ model GenerationPromptSnapshot {
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
   @@index([organizationId, userId, isDeleted])
   @@map("generation_prompt_snapshots")
-  brandedGenerationReceiptId String?
-  brandedGenerationReceiptRevision Int?
-  brandedGenerationReceiptStage String?
-  brandedGenerationReceipt BrandedGenerationReceipt? @relation(fields: [brandedGenerationReceiptId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Restrict, map: "generation_prompt_snapshots_receipt_fkey")
-  @@index([brandedGenerationReceiptId, isDeleted], map: "generation_prompt_snapshots_receipt_idx")
-  @@unique([brandedGenerationReceiptId, brandedGenerationReceiptRevision, brandedGenerationReceiptStage], map: "generation_prompt_snapshots_receipt_revision_stage_key")
-
 }
 
 /// Duplicate-slug and capture findings recorded when a uniqueness index cannot be enforced yet.
@@ -7392,9 +6930,6 @@ model Vote {
   // in agent-tool-executor + votes.controller remove). entityId leads so the
   // same index also serves per-entity vote counts on cache miss. Never queried
   // by organizationId.
-  // One active vote per (entityId, userId) is enforced by the partial SQL
-  // index `votes_entity_user_active_uidx` (WHERE isDeleted = false); removal
-  // soft-deletes and re-adding revives, so historic rows are never constrained.
   @@index([entityId, userId, isDeleted], map: "votes_entity_user_deleted_idx")
   @@map("votes")
 }
@@ -7502,7 +7037,7 @@ model Profile {
   @@map("profiles")
 }
 
-model TurboRun {
+model Batch {
   id                     String         @id @default(cuid())
   organizationId         String
   organization           Organization   @relation(fields: [organizationId], references: [id])
@@ -7513,7 +7048,7 @@ model TurboRun {
   agentStrategyId        String?
   agentStrategy          AgentStrategy? @relation(fields: [agentStrategyId], references: [id])
   items                  Json           @default("[]")
-  status                 TurboRunStatus    @default(PENDING)
+  status                 BatchStatus    @default(PENDING)
   config                 Json           @default("{}")
   settlementShortfall    Float?
   settlementShortfallSeq Int?
@@ -7521,85 +7056,85 @@ model TurboRun {
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
 
-  turboRunItems TurboRunItem[]
+  batchItems BatchItem[]
 
-  @@index([organizationId, isDeleted, createdAt(sort: Desc)], map: "turbo_runs_org_deleted_created_at_idx")
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)], map: "turbo_runs_org_brand_deleted_created_at_idx")
-  @@index([organizationId, isDeleted, status, createdAt(sort: Desc)], map: "turbo_runs_org_deleted_status_created_at_idx")
-  @@index([isDeleted, settlementShortfall], map: "turbo_runs_deleted_settlement_shortfall_idx")
-  @@map("turbo_runs")
+  @@index([organizationId, isDeleted, createdAt(sort: Desc)], map: "batches_org_deleted_created_at_idx")
+  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)], map: "batches_org_brand_deleted_created_at_idx")
+  @@index([organizationId, isDeleted, status, createdAt(sort: Desc)], map: "batches_org_deleted_status_created_at_idx")
+  @@index([isDeleted, settlementShortfall], map: "batches_deleted_settlement_shortfall_idx")
+  @@map("batches")
 }
 
-model TurboRunItem {
+model BatchItem {
   id             String          @id
   organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id])
   brandId        String?
   brand          Brand?          @relation(fields: [brandId], references: [id])
-  turboRunId        String
-  turboRun          TurboRun           @relation(fields: [turboRunId], references: [id])
-  status         TurboRunItemStatus @default(PENDING)
+  batchId        String
+  batch          Batch           @relation(fields: [batchId], references: [id])
+  status         BatchItemStatus @default(PENDING)
   reviewDecision ReviewDecision?
   assigneeId     String?
-  assignee       User?           @relation("turbo_run_item_assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assignee       User?           @relation("batch_item_assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   isDeleted      Boolean         @default(false)
   data           Json            @default("{}")
 
-  @@index([organizationId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "turbo_run_items_org_status_review_created_idx")
-  @@index([organizationId, brandId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "turbo_run_items_org_brand_status_review_created_idx")
-  @@index([turboRunId, isDeleted, createdAt], map: "turbo_run_items_turbo_run_created_idx")
-  @@index([organizationId, assigneeId, isDeleted], map: "turbo_run_items_org_assignee_deleted_idx")
-  @@map("turbo_run_items")
+  @@index([organizationId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "batch_items_org_status_review_created_idx")
+  @@index([organizationId, brandId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "batch_items_org_brand_status_review_created_idx")
+  @@index([batchId, isDeleted, createdAt], map: "batch_items_batch_created_idx")
+  @@index([organizationId, assigneeId, isDeleted], map: "batch_items_org_assignee_deleted_idx")
+  @@map("batch_items")
 }
 
-/// A saved Studio Turbo project (#5463): ideas or a workflow applied to many
+/// A saved Studio Batch run (#5463): ideas or a workflow applied to many
 /// inputs. Every step, input and per-item state persists here so a reload
 /// restores the run. Outputs reach publishing through the review inbox
-/// (`reviewTurboRunId` links the manual-review Turbo run the items are appended to).
-model TurboProject {
+/// (`reviewBatchId` links the manual-review Batch the items are appended to).
+model BatchProject {
   id             String                @id @default(cuid())
   organizationId String
   organization   Organization          @relation(fields: [organizationId], references: [id])
   brandId        String
   userId         String
-  kind           TurboProjectKind
+  kind           BatchProjectKind
   name           String
-  status         TurboProjectStatus    @default(DRAFT)
-  /// Wizard step, lowercase product vocabulary (`TurboProjectStep`).
+  status         BatchProjectStatus    @default(DRAFT)
+  /// Wizard step, lowercase product vocabulary (`BatchProjectStep`).
   step           String
   workflowId     String?
   /// Idea inputs (formats, count, angle) and schedule choices (targets,
-  /// posting set, timezone). Shape: `ITurboProjectSettings`.
+  /// posting set, timezone). Shape: `IBatchProjectSettings`.
   settings       Json                  @default("{}")
   /// Bumped by every change that affects cost (inputs, ideas, workflow); an
   /// accepted quote is bound to the revision it priced.
   revision       Int                   @default(0)
-  /// Latest credit quote for idea generation. Shape: `ITurboProjectQuote`.
+  /// Latest credit quote for idea generation. Shape: `IBatchProjectQuote`.
   quote          Json?
-  reviewTurboRunId  String?
+  reviewBatchId  String?
   isDeleted      Boolean               @default(false)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
-  items          TurboProjectItem[]
+  items          BatchProjectItem[]
 
   @@index([organizationId, brandId, isDeleted, updatedAt(sort: Desc)])
   @@index([status, isDeleted, updatedAt])
-  @@map("turbo_projects")
+  @@map("batch_projects")
 }
 
-/// One input of a TurboProject: an idea brief or an input ingredient, with its
+/// One input of a BatchProject: an idea brief or an input ingredient, with its
 /// generation, review and scheduling state.
-model TurboProjectItem {
+model BatchProjectItem {
   id                  String                 @id @default(cuid())
   organizationId      String
   organization        Organization           @relation(fields: [organizationId], references: [id])
   projectId           String
-  project             TurboProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project             BatchProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   position            Int
-  status              TurboProjectItemStatus @default(PENDING)
-  /// Idea brief for idea Turbo projects. Shape: `TurboIdea`.
+  status              BatchProjectItemStatus @default(PENDING)
+  /// Idea brief for idea batches. Shape: `BatchIdea`.
   idea                Json?
   inputIngredientId   String?
   inputCategory       String?
@@ -7612,7 +7147,7 @@ model TurboProjectItem {
   error               String?
   dispatchedAt        DateTime?
   postId              String?
-  reviewTurboRunId       String?
+  reviewBatchId       String?
   reviewItemId        String?
   scheduledAt         DateTime?
   /// Destinations this item scheduled to: `[{ credentialId, postId, scheduledAt }]`.
@@ -7620,15 +7155,15 @@ model TurboProjectItem {
   /// Retry attempts; each attempt dispatches under its own idempotency key.
   retryCount          Int                    @default(0)
   /// Server-side idea generation: accepted quote line, credit reservation and
-  /// its settlement state. Shape: `ITurboProjectItemDispatch`.
+  /// its settlement state. Shape: `IBatchProjectItemDispatch`.
   dispatch            Json?
   isDeleted           Boolean                @default(false)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
-  @@index([organizationId, projectId, isDeleted, position], map: "turbo_project_items_org_project_position_idx")
+  @@index([organizationId, projectId, isDeleted, position], map: "batch_project_items_org_project_position_idx")
   @@index([organizationId, reviewItemId, isDeleted])
-  @@map("turbo_project_items")
+  @@map("batch_project_items")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -7960,7 +7495,6 @@ model AgentUntrustedContentAudit {
   agentStrategyId     String?
   toolName            String
   source              String
-  origin              String             @default("agent")
   outcome             String
   confidence          Float
   minConfidence       Float
@@ -8365,7 +7899,6 @@ model BrandOsRevision {
   content Json
   exportSchemaVersion String @default("1")
   sourcePreviewTokenHash String? @unique
-  generationRulesReviewHash String?
   approvedById String?
   approvedBy User? @relation("BrandOsApprover", fields: [approvedById], references: [id], onDelete: Restrict)
   approvedAt DateTime?
@@ -8415,138 +7948,6 @@ model OutlierConfiguration {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@map("outlier_configurations")
-}
-
-/// Immutable provider measurements collected prospectively. These observations
-/// carry evidence, never generation or publication authority.
-model PostExposureObservation {
-  id String @id @default(cuid())
-  organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  brandId String
-  brand Brand @relation(fields: [brandId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "post_exposure_observations_brand_scope_fkey")
-  credentialId String
-  credential Credential @relation(fields: [credentialId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "post_exposure_observations_credential_scope_fkey")
-  postId String?
-  post Post? @relation(fields: [postId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "post_exposure_observations_post_scope_fkey")
-  nativeSourcePostId String?
-  nativeSourcePost SourcePost? @relation(fields: [nativeSourcePostId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "post_exposure_observations_native_source_scope_fkey")
-  platform String
-  format String
-  externalId String
-  logicalPostId String
-  publishedAt DateTime
-  contentDigest String
-  publicationFingerprint String
-  sourceAttemptId String
-  sourceFingerprint String
-  requestStartedAt DateTime
-  receivedAt DateTime
-  providerAsOf DateTime?
-  exposures Json
-  isPinned Boolean?
-  isPromoted Boolean?
-  isResponse Boolean
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  breakoutBaselineReceipts BreakoutBaselineReceipt[]
-  @@unique([id, organizationId])
-  @@unique([organizationId, credentialId, platform, externalId, sourceAttemptId], map: "post_exposure_observations_attempt_key")
-  @@unique([id, organizationId, brandId, credentialId], map: "post_exposure_observations_receipt_scope_key")
-  @@index([organizationId, brandId, credentialId, platform, format, isDeleted, publishedAt(sort: Desc)], map: "post_exposure_observations_baseline_idx")
-  @@index([organizationId, postId, isDeleted, receivedAt(sort: Desc)], map: "post_exposure_observations_post_idx")
-  @@index([organizationId, nativeSourcePostId, isDeleted, receivedAt(sort: Desc)], map: "post_exposure_observations_native_source_idx")
-  @@map("post_exposure_observations")
-}
-
-/// Historical comparison evidence only. A receipt never authorizes generation
-/// or publication; execution must revalidate current source and account policy.
-model BreakoutBaselineReceipt {
-  id String @id @default(cuid())
-  organizationId String
-  brandId String
-  credentialId String
-  targetObservationId String
-  targetObservation PostExposureObservation @relation(fields: [targetObservationId, organizationId, brandId, credentialId], references: [id, organizationId, brandId, credentialId], onDelete: Restrict, onUpdate: Cascade, map: "breakout_baseline_receipts_target_scope_fkey")
-  platform String
-  format String
-  metric String
-  optionsFingerprint String
-  evidenceFingerprint String
-  idempotencyKey String
-  evaluation Json
-  evaluatedAt DateTime
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  responses BreakoutResponse[]
-  @@unique([id, organizationId])
-  @@unique([id, organizationId, brandId, credentialId], map: "breakout_baseline_receipts_response_scope_key")
-  @@unique([organizationId, idempotencyKey])
-  @@index([organizationId, brandId, credentialId, isDeleted, evaluatedAt(sort: Desc)], map: "breakout_baseline_receipts_scope_idx")
-  @@map("breakout_baseline_receipts")
-}
-
-/// One durable identity per original own-account publication. Detection and
-/// output reservation confer no authority to spend credits or publish.
-model BreakoutResponse {
-  id String @id @default(cuid())
-  organizationId String
-  brandId String
-  credentialId String
-  platform String
-  externalId String
-  logicalPostId String
-  sourcePostId String?
-  sourcePost Post? @relation("breakout_source_post", fields: [sourcePostId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "breakout_responses_source_post_scope_fkey")
-  nativeSourcePostId String?
-  nativeSourcePost SourcePost? @relation(fields: [nativeSourcePostId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "breakout_responses_native_source_scope_fkey")
-  triggerReceiptId String
-  triggerReceipt BreakoutBaselineReceipt @relation(fields: [triggerReceiptId, organizationId, brandId, credentialId], references: [id, organizationId, brandId, credentialId], onDelete: Restrict, onUpdate: Cascade, map: "breakout_responses_trigger_scope_fkey")
-  publicationFingerprint String
-  contentDigest String
-  detectedAt DateTime
-  state String @default("detected")
-  heldReason String?
-  expiresAt DateTime?
-  outputPlanFingerprint String?
-  outputs BreakoutResponseOutput[]
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([id, organizationId, brandId, credentialId], map: "breakout_responses_output_scope_key")
-  @@unique([organizationId, credentialId, platform, externalId], map: "breakout_responses_source_key")
-  @@index([organizationId, brandId, credentialId, isDeleted, state, detectedAt(sort: Desc)], map: "breakout_responses_scope_idx")
-  @@map("breakout_responses")
-}
-
-/// Slots are never recycled after deletion/failure. The same generation key
-/// must be reconciled before any ambiguous provider attempt is retried.
-model BreakoutResponseOutput {
-  id String @id @default(cuid())
-  organizationId String
-  brandId String
-  credentialId String
-  responseId String
-  response BreakoutResponse @relation(fields: [responseId, organizationId, brandId, credentialId], references: [id, organizationId, brandId, credentialId], onDelete: Restrict, onUpdate: Cascade, map: "breakout_response_outputs_response_scope_fkey")
-  ordinal Int
-  kind String
-  format String
-  generationKey String
-  state String @default("reserved")
-  heldReason String?
-  workflowExecutionId String?
-  publicationActor Json?
-  artifact Post?
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([id, organizationId, brandId], map: "breakout_response_outputs_post_scope_key")
-  @@unique([organizationId, responseId, ordinal], map: "breakout_response_outputs_slot_key")
-  @@unique([organizationId, generationKey], map: "breakout_response_outputs_generation_key")
-  @@index([organizationId, brandId, credentialId, isDeleted, state], map: "breakout_response_outputs_scope_idx")
-  @@map("breakout_response_outputs")
 }
 
 model OutlierBaselineSnapshot {
@@ -8617,11 +8018,7 @@ model OutlierPostPerformance {
 
 /// Deployment-wide outbound events, configured by the operator rather than tenants.
 model SystemEventWebhook {
-  deliveries SystemEventDelivery[]
-  destinationsResolvedAt DateTime?
   skippedAt DateTime?
-  /// Terminal: the event-level lease cap was reached; only an operator retry reopens it.
-  failedAt DateTime?
   id             String   @id
   type           String
   payload        String
@@ -8646,949 +8043,4 @@ model SystemNotificationSettings {
   eventTypes String[]
   updatedAt DateTime @updatedAt
   @@map("system_notification_settings")
-}
-
-model VisualProject {
-  id String @id @default(cuid())
-  organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id])
-  brandId String
-  brand Brand @relation(fields: [brandId], references: [id])
-  userId String
-  user User @relation(fields: [userId], references: [id])
-  label String
-  requestId String
-  inputHash String
-  currentRevision Int @default(1)
-  revisions VisualRevision[]
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([organizationId, brandId, requestId])
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)])
-  @@map("visual_projects")
-}
-
-model VisualRevision {
-  id String @id @default(cuid())
-  organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id])
-  brandId String
-  brand Brand @relation(fields: [brandId], references: [id])
-  userId String
-  user User @relation(fields: [userId], references: [id])
-  projectId String
-  project VisualProject @relation(fields: [projectId], references: [id])
-  number Int
-  requestId String
-  inputHash String
-  prompt String?
-  sourceCode String?
-  sourceHash String?
-  modelKey String?
-  rendererVersion String
-  settings Json
-  props Json @default("{}")
-  sourceAssetIds Json @default("[]")
-  status String @default("queued")
-  progress Int @default(0)
-  workflowExecutionId String?
-  reservationId String?
-  maximumCredits Float
-  consumedCredits Float @default(0)
-  receipts Json @default("[]")
-  preview Json @default("[]")
-  outputRequests Json @default("[{\"format\":\"mp4\"}]")
-  outputs Json @default("[]")
-  diagnostics Json @default("[]")
-  cancelRequestedAt DateTime?
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([projectId, number])
-  @@unique([projectId, requestId])
-  @@index([organizationId, brandId, projectId, status, isDeleted])
-  @@map("visual_revisions")
-}
-
-model ContentLearningAccount {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-mode String @default("shadow")
-revision Int @default(0)
-epoch Int @default(0)
-evidenceRevision Int @default(0)
-resetAt DateTime?
-activeConfigVersion String @default("rl-reward-v1-experimental")
-sharingConsentVersion Int?
-sharedReleasePreference String @default("automatic")
-pinnedReleaseId String?
-activePolicyId String?
-approvedArmIds String[] @default([])
-pilotStartedAt DateTime?
-prePilotReleaseId String?
-failureReason String?
-driftState String?
-@@unique([organizationId, credentialId])
-@@map("content_learning_accounts")
-consents ContentLearningConsent[]
-}
-
-model ContentLearningConsent {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-accountId String
-version Int
-granted Boolean
-purpose String @default("shared_strategy_training_v1")
-actorId String
-actor User @relation(fields: [actorId], references: [id])
-noticeVersion String
-grantedAt DateTime?
-revokedAt DateTime?
-@@unique([accountId, version])
-@@map("content_learning_consents")
-account ContentLearningAccount @relation(fields: [accountId], references: [id], onDelete: Restrict, map: "learning_consent_account_fk")
-}
-
-model ContentLearningDecision {
-opportunityId String? @unique
-opportunity ContentLearningOpportunity? @relation("LearningOpportunityDecision", fields: [opportunityId], references: [id])
-
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-requestKey String
-destinationKey String
-candidateIndex Int
-payloadHash String
-scopeKey String
-epoch Int
-accountRevision Int
-scopeRevision Int?
-cellDescriptor Json?
-descriptorHash String?
-executionProbabilities Json?
-mode String
-contextVector Float[]
-contextSnapshot Json
-eligibleArmIds String[]
-probabilities Json
-selectedArmId String
-selectedProbability Float
-assignment String
-assignmentProbability Float
-executionProbability Float
-configVersion String
-baselineId String?
-accountPolicyId String?
-sharedReleaseId String?
-sharedReleaseRevision Int?
-modelVersion String?
-briefVersion String?
-promptVersion String?
-harnessVersion String?
-parentRequestId String?
-runId String?
-workflowExecutionId String?
-generationId String?
-originalPromptHash String?
-finalArtifactHash String?
-state String @default("pending")
-censorshipReason String?
-synthetic Boolean @default(false)
-post Post?
-@@unique([organizationId, requestKey, destinationKey, candidateIndex])
-@@index([scopeKey, epoch, createdAt])
-@@map("content_learning_decisions")
-rewards ContentLearningReward[]
-baseline ContentLearningBaseline? @relation(fields: [baselineId], references: [id], onDelete: Restrict, map: "learning_decision_baseline_fk")
-}
-
-model ContentLearningCheckpoint {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-postId String
-post Post @relation(fields: [postId], references: [id])
-windowId String @default("48h-v1")
-revision Int @default(0)
-sourceAttemptId String
-dueAt DateTime
-requestStartedAt DateTime
-receivedAt DateTime
-providerAsOf DateTime?
-sourceAnalyticsId String?
-measurement Json
-format String
-publishedAt DateTime
-organicProvenance Json
-sourceFingerprint String @unique
-supersedesId String?
-validity String
-attestation Json?
-@@unique([organizationId, postId, credentialId, windowId, revision])
-@@index([organizationId, credentialId, format, publishedAt])
-@@map("content_learning_checkpoints")
-rewards ContentLearningReward[]
-}
-
-model ContentLearningBaseline {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-fingerprint String @unique
-scopeKey String
-cellDescriptor Json?
-descriptorHash String?
-cutoff DateTime
-snapshotEvidenceRevision Int?
-snapshotEpoch Int?
-expiresAt DateTime?
-configVersion String
-contributorCheckpointIds String[]
-contributorRevisions Int[]
-count Int
-medianExposure Float
-samples Json
-validity String
-@@index([scopeKey, cutoff])
-@@index([organizationId, credentialId, scopeKey, snapshotEpoch, snapshotEvidenceRevision, cutoff(sort: Desc), id(sort: Desc)], map: "learning_baseline_materialization_lookup_idx")
-@@map("content_learning_baselines")
-rewards ContentLearningReward[]
-decisions ContentLearningDecision[]
-}
-
-model ContentLearningReward {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-decisionId String
-version Int
-checkpointId String
-baselineId String
-rawComponents Json
-boundedComponents Json
-composite Float?
-confidence Json
-status String
-reasons String[]
-sourceFingerprint String @unique
-supersedesId String?
-@@unique([decisionId, version])
-@@index([organizationId, credentialId, status])
-@@map("content_learning_rewards")
-decision ContentLearningDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict, map: "learning_reward_decision_fk")
-checkpoint ContentLearningCheckpoint @relation(fields: [checkpointId], references: [id], onDelete: Restrict, map: "learning_reward_checkpoint_fk")
-baseline ContentLearningBaseline @relation(fields: [baselineId], references: [id], onDelete: Restrict, map: "learning_reward_baseline_fk")
-}
-
-model ContentLearningPolicyVersion {
-activeScopes ContentLearningScopeState[] @relation("LearningScopeActivePolicy")
-pinnedScopes ContentLearningScopeState[] @relation("LearningScopePinnedPolicy")
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-@@index([organizationId, brandId, credentialId, isDeleted])
-scopeKey String
-cellDescriptor Json?
-descriptorHash String?
-epoch Int
-version Int
-parentId String?
-algorithm String @default("ridge-epsilon-v1")
-configVersion String
-featureSchema String
-armState Json
-coefficients Json
-evidenceManifestHash String
-evidenceIds String[]
-state String
-synthetic Boolean @default(false)
-@@unique([scopeKey, epoch, version])
-@@map("content_learning_policy_versions")
-}
-
-model ContentLearningSharedPolicy {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-cell String
-version Int
-runId String
-datasetId String
-featureSchema String
-coefficients Json
-directives Json
-validity String
-synthetic Boolean @default(false)
-@@unique([cell, version])
-@@map("content_learning_shared_policies")
-dataset ContentLearningDataset @relation(fields: [datasetId], references: [id], onDelete: Restrict, map: "learning_shared_dataset_fk")
-}
-
-model ContentLearningBrandPreference {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-preference String @default("automatic")
-pinnedReleaseId String?
-revision Int @default(0)
-@@unique([organizationId, brandId])
-@@map("content_learning_brand_preferences")
-}
-
-model ContentLearningDataset {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-origin String
-ownerActorId String
-ownerActor User @relation(fields: [ownerActorId], references: [id])
-rightsStatement String
-schemaVersion String
-profile String
-cell String
-cutoff DateTime
-manifestHash String @unique
-manifest Json
-status String
-counts Json
-invalidationRevision Int @default(0)
-synthetic Boolean @default(false)
-entries ContentLearningDatasetEntry[]
-@@map("content_learning_datasets")
-runs ContentLearningRun[]
-sharedPolicies ContentLearningSharedPolicy[]
-}
-
-model ContentLearningDatasetEntry {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-datasetId String
-dataset ContentLearningDataset @relation(fields: [datasetId], references: [id])
-sourceFingerprint String
-sourceReference Json
-consentVersion Int?
-accountGroup String
-decisionAt DateTime
-measuredAt DateTime
-features Float[]
-armId String
-probabilities Json
-reward Float
-split String
-synthetic Boolean @default(false)
-@@unique([datasetId, sourceFingerprint])
-@@index([datasetId, split])
-@@map("content_learning_dataset_entries")
-}
-
-model ContentLearningRun {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-datasetId String
-configHash String
-parentArtifactId String?
-baselineArtifactId String?
-type String
-status String @default("pending")
-progress Int @default(0)
-error String?
-workflowExecutionId String?
-resultArtifactId String?
-report Json?
-seed String
-idempotencyKey String @unique
-startedAt DateTime?
-completedAt DateTime?
-synthetic Boolean @default(false)
-@@map("content_learning_runs")
-dataset ContentLearningDataset @relation(fields: [datasetId], references: [id], onDelete: Restrict, map: "learning_run_dataset_fk")
-}
-
-model ContentLearningRelease {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-manifest Json
-reviewId String
-reportId String
-stage String @default("candidate")
-revision Int @default(0)
-priorReleaseId String?
-recipientSalt String
-synthetic Boolean @default(false)
-invalidationRevision Int @default(0)
-stageStartedAt DateTime?
-activeCells String[] @default([])
-@@map("content_learning_releases")
-}
-
-model ContentLearningOperation {
-enrollments ContentLearningEnrollment[]
-
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String?
-brandId String?
-credentialId String?
-scope String
-actorId String
-actor User @relation(fields: [actorId], references: [id])
-requestId String
-payloadHash String
-type String
-beforeRevision Int?
-afterRevision Int?
-status String @default("pending")
-error String?
-resultReferences Json
-@@unique([actorId, scope, requestId])
-@@index([organizationId, status])
-@@map("content_learning_operations")
-}
-
-model ContentLearningDependency {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-sourceKind String
-sourceOrganizationId String?
-sourceId String
-sourceVersion String
-derivedKind String
-derivedOrganizationId String?
-derivedId String
-valid Boolean @default(true)
-invalidatedAt DateTime?
-@@unique([sourceKind, sourceId, sourceVersion, derivedKind, derivedId])
-@@index([sourceKind, sourceId, valid])
-@@index([derivedKind, derivedId, valid])
-@@index([sourceKind, sourceId, sourceOrganizationId, isDeleted])
-@@index([derivedKind, derivedId, derivedOrganizationId, isDeleted])
-@@map("content_learning_dependencys")
-}
-
-model ContentLearningExperiment {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String?
-brand Brand? @relation(fields: [brandId], references: [id])
-credentialId String?
-credential Credential? @relation(fields: [credentialId], references: [id])
-kind String
-cellKey String
-candidatePolicyId String?
-controlPolicyId String?
-candidateReleaseId String?
-controlReleaseId String?
-builtInControlVersion String?
-stage String?
-releaseRevision Int?
-spec Json
-specHash String @unique
-actorUserId String
-actor User @relation(fields: [actorUserId], references: [id])
-status String @default("preregistered")
-revision Int @default(0)
-synthetic Boolean @default(false)
-encryptedSeed String
-startAt DateTime
-endAt DateTime
-freezeAt DateTime
-sealedAt DateTime?
-enrollments ContentLearningEnrollment[]
-opportunities ContentLearningOpportunity[]
-events ContentLearningExperimentEvent[]
-@@index([organizationId, brandId, credentialId, isDeleted])
-@@map("content_learning_experiments")
-}
-
-model ContentLearningEnrollment {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-experimentId String
-experiment ContentLearningExperiment @relation(fields: [experimentId], references: [id])
-accountEpoch Int
-ownerOperationId String
-ownerOperation ContentLearningOperation @relation(fields: [ownerOperationId], references: [id])
-consentNoticeVersion String
-consentAt DateTime
-withdrawnAt DateTime?
-cohortHash String
-included Boolean
-cohortFraction Float
-startAt DateTime
-endAt DateTime
-baselineSnapshot Json
-cadenceSnapshot Json
-opportunities ContentLearningOpportunity[]
-events ContentLearningExperimentEvent[]
-@@unique([experimentId, organizationId, credentialId])
-@@index([organizationId, brandId, credentialId, isDeleted])
-@@map("content_learning_enrollments")
-}
-
-model ContentLearningOpportunity {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String
-brand Brand @relation(fields: [brandId], references: [id])
-credentialId String
-credential Credential @relation(fields: [credentialId], references: [id])
-experimentId String
-experiment ContentLearningExperiment @relation(fields: [experimentId], references: [id])
-enrollmentId String
-enrollment ContentLearningEnrollment @relation(fields: [enrollmentId], references: [id])
-requestKey String
-destinationKey String
-candidateIndex Int
-decisionId String?
-decision ContentLearningDecision? @relation("LearningOpportunityDecision")
-assignedAt DateTime
-group String
-groupProbability Float
-assignmentDraw Float
-specHash String
-stage String?
-releaseRevision Int?
-policyManifest Json
-parentRequestId String?
-runId String?
-workflowExecutionId String?
-nodeId String?
-ingredientId String?
-postId String?
-slotReservationId String?
-cadenceId String?
-artifactHash String?
-deadlineAt DateTime
-state String @default("assigned")
-events ContentLearningExperimentEvent[]
-@@unique([experimentId, organizationId, requestKey, destinationKey, candidateIndex])
-@@index([organizationId, brandId, credentialId, isDeleted])
-@@map("content_learning_opportunities")
-}
-
-model ContentLearningExperimentEvent {
-id String @id @default(cuid())
-isDeleted Boolean @default(false)
-createdAt DateTime @default(now())
-updatedAt DateTime @updatedAt
-organizationId String
-organization Organization @relation(fields: [organizationId], references: [id])
-brandId String?
-brand Brand? @relation(fields: [brandId], references: [id])
-credentialId String?
-credential Credential? @relation(fields: [credentialId], references: [id])
-experimentId String
-experiment ContentLearningExperiment @relation(fields: [experimentId], references: [id])
-opportunityId String?
-opportunity ContentLearningOpportunity? @relation(fields: [opportunityId], references: [id])
-enrollmentId String?
-enrollment ContentLearningEnrollment? @relation(fields: [enrollmentId], references: [id])
-eventKey String
-kind String
-sourceKind String
-sourceId String
-sourceRevision String
-occurredAt DateTime
-observedAt DateTime
-payloadSchemaVersion Int @default(1)
-payload Json
-supersedesId String?
-fingerprint String @unique
-@@unique([experimentId, organizationId, eventKey])
-@@index([opportunityId, kind, occurredAt])
-@@index([organizationId, brandId, credentialId, isDeleted])
-@@map("content_learning_experiment_events")
-}
-
-model ContentLearningScopeState {
- id String @id @default(cuid())
- organizationId String
- organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
- brandId String
- brand Brand @relation(fields: [brandId], references: [id], onDelete: Restrict)
- credentialId String
- credential Credential @relation(fields: [credentialId], references: [id], onDelete: Restrict)
- scopeKey String
- epoch Int
- revision Int @default(0)
- activePolicyId String?
- activePolicy ContentLearningPolicyVersion? @relation("LearningScopeActivePolicy", fields: [activePolicyId], references: [id], onDelete: Restrict)
- pinnedPolicyId String?
- pinnedPolicy ContentLearningPolicyVersion? @relation("LearningScopePinnedPolicy", fields: [pinnedPolicyId], references: [id], onDelete: Restrict)
- lastValidRewardAt DateTime?
- cellDescriptor Json
- descriptorHash String
- isDeleted Boolean @default(false)
- createdAt DateTime @default(now())
- updatedAt DateTime @updatedAt
- @@unique([organizationId, credentialId, scopeKey, epoch])
- @@index([organizationId, brandId, credentialId, isDeleted])
- @@index([organizationId, scopeKey, epoch, isDeleted])
- @@map("content_learning_scope_states")
-}
-
-/// Frozen authenticated Crun submissions. No API key, prompt or signed input URL is stored.
-model CrunGenerationTask {
-  id                    String   @id @default(cuid())
-  organizationId        String
-  userId                String
-  ingredientId          String
-  brandId               String?
-  reservationId         String?
-  fundingBinding        Json
-  modelKey              String
-  endpoint              String
-  contractVersion       String
-  quoteId               String
-  outputIndex           Int
-  inputHash             String
-  inputMetadata         Json
-  quoteSnapshot         Json
-  credentialSource      String
-  credentialId          String?
-  credentialFingerprint String
-  providerTaskId        String?
-  state                 String   @default("prepared")
-  submittedAt           DateTime?
-  deadlineAt            DateTime?
-  nextPollAt            DateTime?
-  nextMediaAttemptAt    DateTime?
-  nextAccountingAttemptAt DateTime?
-  pollCount             Int      @default(0)
-  leaseUntil            DateTime?
-  version               Int      @default(0)
-  terminalReceipt       Json?
-  failureCode           String?
-  recoveryCode          String?
-  cancelRequestedAt     DateTime?
-  mediaPersistedAt      DateTime?
-  billingRecordedAt     DateTime?
-  vendorCostRecordedAt  DateTime?
-  copyAttemptCount      Int      @default(0)
-  isDeleted             Boolean  @default(false)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  @@unique([organizationId, ingredientId], map: "crun_tasks_org_ingredient_key")
-  @@unique([organizationId, quoteId, outputIndex], map: "crun_tasks_org_quote_output_key")
-  @@unique([credentialFingerprint, providerTaskId], map: "crun_tasks_credential_provider_task_key")
-  @@index([isDeleted, state, nextPollAt], map: "crun_tasks_due_idx")
-  @@index([organizationId, reservationId, isDeleted], map: "crun_tasks_reservation_idx")
-  @@map("crun_generation_tasks")
-}
-
-model BrandedGenerationReceipt {
-  id String @id @default(cuid())
-  organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  brandId String
-  brand Brand @relation("branded_generation_receipt_brand", fields: [brandId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Restrict)
-  actorId String
-  actor User @relation("branded_generation_receipt_actor", fields: [actorId], references: [id], onDelete: Restrict)
-  requestKey String
-  candidateIndex Int
-  requestHash String
-  revision Int @default(0)
-  state String
-  mode String
-  surface String
-  providerAttemptRef String? @unique
-  projection Json
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  events BrandedGenerationReceiptEvent[]
-  promptSnapshots GenerationPromptSnapshot[]
-  @@unique([id, organizationId, brandId])
-  @@unique([organizationId, brandId, requestKey, candidateIndex], map: "branded_generation_receipts_request_key")
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc), id(sort: Desc)], map: "branded_generation_receipts_scope_idx")
-  @@index([state, updatedAt], map: "branded_generation_receipts_state_updated_idx")
-  @@map("branded_generation_receipts")
-}
-model BrandedGenerationReceiptEvent {
-  id String @id @default(cuid())
-  receiptId String
-  organizationId String
-  brandId String
-  receipt BrandedGenerationReceipt @relation(fields: [receiptId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Restrict, map: "branded_generation_receipt_events_receipt_scope_fkey")
-  actorId String
-  actor User @relation("branded_generation_receipt_event_actor", fields: [actorId], references: [id], onDelete: Restrict)
-  operationKey String
-  operationHash String
-  revision Int
-  type String
-  projection Json
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  @@unique([receiptId, revision])
-  @@unique([receiptId, operationKey])
-  @@index([organizationId, brandId, receiptId, revision], map: "branded_generation_receipt_events_scope_idx")
-  @@map("branded_generation_receipt_events")
-}
-
-/// Operator routes for signup and billing events. Webhook credentials are GCM encrypted.
-model SystemNotificationDestination {
-  id String @id @default(cuid())
-  label String
-  provider String
-  address String?
-  webhookEncrypted String?
-  eventTypes String[]
-  isEnabled Boolean @default(true)
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deliveries SystemEventDelivery[]
-  @@index([isDeleted, isEnabled], map: "system_notification_destinations_enabled_idx")
-  @@map("system_notification_destinations")
-}
-
-/// Independent acknowledgement and retry state for each event/destination.
-model SystemEventDelivery {
-  id String @id @default(cuid())
-  eventId String
-  event SystemEventWebhook @relation(fields: [eventId], references: [id])
-  destinationId String
-  destination SystemNotificationDestination @relation(fields: [destinationId], references: [id])
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now())
-  deliveredAt DateTime?
-  skippedAt DateTime?
-  /// Terminal: the attempt cap was reached; only an operator retry revives it.
-  failedAt DateTime?
-  leaseToken String?
-  leaseUntil DateTime?
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([eventId, destinationId])
-  @@index([isDeleted, deliveredAt, skippedAt, nextAttemptAt], map: "system_event_deliveries_due_idx")
-  @@map("system_event_deliveries")
-}
-
-/// Durable prepared bytes; never stores an expiring URL. Authorization remains
-/// on the owning record and is rechecked whenever a grant is issued.
-model MediaDeliveryVariant {
-  id             String   @id @default(cuid())
-  organizationId String
-  ingredientId   String
-  sourceIdentity String
-  sourceKey      String
-  sourceVersion  Int
-  policyVersion  Int
-  purpose        String
-  state          String   @default("PENDING")
-  storageKey     String?
-  failureCode    String?
-  isDeleted      Boolean  @default(false)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@unique([organizationId, ingredientId, sourceIdentity, policyVersion, purpose], map: "media_delivery_variant_identity")
-  @@index([organizationId, ingredientId, isDeleted])
-  @@map("media_delivery_variants")
-}
-
-/// Durable reservation for an explicitly requested action on imported content.
-/// Uncertain delivery is never retried automatically.
-model SourcePostNativeAction {
-  id String @id @default(cuid())
-  organizationId String
-  brandId String
-  postId String
-  post SourcePost @relation(fields: [postId, organizationId, brandId], references: [id, organizationId, brandId], onDelete: Restrict, onUpdate: Cascade, map: "source_post_native_actions_post_scope_fkey")
-  credentialId String
-  credential Credential @relation(fields: [credentialId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "source_post_native_actions_credential_fkey")
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "source_post_native_actions_user_fkey")
-  action String
-  requestHash String
-  idempotencyKey String
-  status String @default("pending")
-  externalId String?
-  message String?
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([organizationId, brandId, idempotencyKey], map: "source_post_native_actions_scope_key")
-  @@index([organizationId, brandId, postId, isDeleted], map: "source_post_native_actions_scope_post_idx")
-  @@map("source_post_native_actions")
-}
-
-
-/// Verified private bot association. Native IDs and report bindings never imply this relation.
-model BotAccountLink {
-  id String @id @default(cuid())
-  organizationId String
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "bot_account_links_org_fkey")
-  integrationId String
-  integration OrgIntegration @relation(fields: [integrationId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "bot_account_links_installation_fkey")
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "bot_account_links_user_fkey")
-  platform IntegrationPlatform
-  remoteUserId String
-  revision Int @default(1)
-  capturedIsApiKey Boolean @default(false)
-  capturedApiKeyId String?
-  capturedApiKey ApiKey? @relation(fields: [capturedApiKeyId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "bot_account_links_key_fkey")
-  capturedScopes String[] @default([])
-  verifiedAt DateTime @default(now())
-  revokedAt DateTime?
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([organizationId, integrationId, platform, remoteUserId], map: "bot_account_links_installation_identity_key")
-  @@index([organizationId, userId, isDeleted], map: "bot_account_links_user_idx")
-  @@map("bot_account_links")
-}
-
-/// A producer certificate, not a grant. Missing/unproven scope cannot authorize restricted history.
-model WorkflowExecutionReadScope {
-  executionId String @id
-  organizationId String
-  execution WorkflowExecution @relation(fields: [executionId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_scopes_execution_fkey")
-  protocolVersion Int @default(1)
-  family String
-  coverage String @default("UNPROVEN")
-  scopeClass String @default("ORG_ONLY")
-  rootContentHash String
-  producer String
-  proactiveStrategyId String?
-  proactiveStrategy AgentStrategy? @relation(fields: [proactiveStrategyId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_scopes_strategy_fkey")
-  proactiveThreadId String?
-  proactiveThread AgentThread? @relation(fields: [proactiveThreadId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_scopes_thread_fkey")
-  batchChildVersionId String?
-  batchChildVersion WorkflowVersion? @relation(fields: [batchChildVersionId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_scopes_batch_version_fkey")
-  isDeleted Boolean @default(false)
-  createdAt DateTime @default(now())
-  dependencies WorkflowExecutionReadBrandDependency[]
-  parentEdges WorkflowExecutionReadLineage[] @relation("read_lineage_child_scope")
-  childEdges WorkflowExecutionReadLineage[] @relation("read_lineage_parent_scope")
-  @@unique([executionId, organizationId], map: "workflow_execution_read_scopes_execution_org_key")
-  @@map("workflow_execution_read_scopes")
-}
-
-/// Append-only complete private-brand dependency set, including deleted brands.
-model WorkflowExecutionReadBrandDependency {
-  executionId String
-  organizationId String
-  brandId String
-  scope WorkflowExecutionReadScope @relation(fields: [executionId, organizationId], references: [executionId, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_dependencies_scope_fkey")
-  brand Brand @relation(fields: [brandId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_dependencies_brand_fkey")
-  createdAt DateTime @default(now())
-  @@id([executionId, organizationId, brandId])
-  @@map("workflow_execution_read_brand_dependencies")
-}
-
-/// Actual persisted parent-node/item lineage; JSON parent pointers are not sufficient proof.
-model WorkflowExecutionReadLineage {
-  parentExecutionId String
-  childExecutionId String
-  organizationId String
-  parentNodeId String
-  itemIndex Int @default(-1)
-  parentExecution WorkflowExecution @relation("read_lineage_parent_execution", fields: [parentExecutionId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_lineage_parent_execution_fkey")
-  childExecution WorkflowExecution @relation("read_lineage_child_execution", fields: [childExecutionId, organizationId], references: [id, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_lineage_child_execution_fkey")
-  parentScope WorkflowExecutionReadScope @relation("read_lineage_parent_scope", fields: [parentExecutionId, organizationId], references: [executionId, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_lineage_parent_scope_fkey")
-  childScope WorkflowExecutionReadScope @relation("read_lineage_child_scope", fields: [childExecutionId, organizationId], references: [executionId, organizationId], onDelete: Restrict, onUpdate: Cascade, map: "workflow_execution_read_lineage_child_scope_fkey")
-  createdAt DateTime @default(now())
-  @@id([parentExecutionId, childExecutionId, parentNodeId, itemIndex, organizationId])
-  @@index([childExecutionId, organizationId], map: "workflow_execution_read_lineage_child_idx")
-  @@map("workflow_execution_read_lineage")
 }

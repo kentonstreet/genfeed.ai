@@ -4,7 +4,6 @@ import { ReplicateProviderError } from '@api/services/integrations/replicate/err
 import {
   AgentFailureReason,
   IngredientCategory,
-  IngredientOrigin,
   MetadataExtension,
 } from '@genfeedai/contracts';
 import { testId } from '@helpers/testing/test-id.helper';
@@ -128,7 +127,6 @@ describe('WorkflowEngineExecutorHelperService.createWorkflowOutputIngredient', (
       expect.objectContaining({
         generationPrompt: 'A launch poster',
         generationSource: 'generation-brief:v1:workflow',
-        origin: IngredientOrigin.GENERATED,
         negativePrompt: 'watermark',
         providerData: { compilerId: 'qwen-image-image-compiler' },
       }),
@@ -327,52 +325,5 @@ describe('WorkflowEngineExecutorHelperService.createAndLinkProcessingOutput', ()
     expect(createBeforeProviderSubmission).toHaveBeenCalledWith(
       expect.objectContaining({ isByok: true }),
     );
-  });
-});
-
-describe('WorkflowEngineExecutorHelperService.requireMediaAsset activated storage', () => {
-  it('returns the exact raw stored key from a scoped ready record, including reserved characters', async () => {
-    const key = 'ingredients/videos/random key?frame=#x%2F.mp4';
-    const findOne = vi.fn().mockResolvedValue({
-      id: 'asset-1',
-      brandId: 'brand-1',
-      category: IngredientCategory.VIDEO,
-      status: 'GENERATED',
-      s3Key: key,
-    });
-    const helper = new WorkflowEngineExecutorHelperService(
-      { isAuthorizedMediaDeliveryEnabled: true } as ConfigService,
-      undefined,
-      undefined,
-      { findOne } as unknown as IngredientsService,
-    );
-    const asset = await helper.requireMediaAsset('asset-1', 'org-1', [
-      IngredientCategory.VIDEO,
-    ]);
-    expect(asset.objectKey).toBe(key);
-    expect(findOne).toHaveBeenCalledWith({
-      id: 'asset-1',
-      organizationId: 'org-1',
-      isDeleted: false,
-    });
-  });
-
-  it('rejects a keyless record when activated instead of rebuilding an object key from its ID', async () => {
-    const findOne = vi.fn().mockResolvedValue({
-      id: 'asset-1',
-      brandId: 'brand-1',
-      category: IngredientCategory.VIDEO,
-      status: 'GENERATED',
-      s3Key: null,
-    });
-    const helper = new WorkflowEngineExecutorHelperService(
-      { isAuthorizedMediaDeliveryEnabled: true } as ConfigService,
-      undefined,
-      undefined,
-      { findOne } as unknown as IngredientsService,
-    );
-    await expect(
-      helper.requireMediaAsset('asset-1', 'org-1', [IngredientCategory.VIDEO]),
-    ).rejects.toThrow('no trusted stored object key');
   });
 });

@@ -3,24 +3,9 @@ import { GenerationBillingService } from '@api/collections/credits/services/gene
 import { AvatarVideoBillingService } from '@api/collections/videos/services/avatar-video-billing.service';
 import { AvatarVideoGenerationService } from '@api/collections/videos/services/avatar-video-generation.service';
 import { AvatarVideoLifecycleService } from '@api/collections/videos/services/avatar-video-lifecycle.service';
-import { AvatarVideoModelService } from '@api/collections/videos/services/avatar-video-model.service';
-import { AvatarVideoReferenceService } from '@api/collections/videos/services/avatar-video-reference.service';
-import { NotFoundException } from '@api/exceptions/not-found.exception';
-import {
-  avatarEngineSnapshot,
-  photoAnimationSnapshot,
-} from '@api/helpers/utils/credits/avatar-duration-quote.fixture';
 import { WebSocketPaths } from '@api/helpers/utils/websocket/websocket.util';
 import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
-import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
-import {
-  ByokProvider,
-  IngredientCategory,
-  IngredientStatus,
-  RouterPriority,
-  VoiceProvider,
-} from '@genfeedai/contracts';
-import { MODEL_KEYS } from '@genfeedai/contracts/constants';
+import { ByokProvider, VoiceProvider } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,8 +36,6 @@ interface ResolveIdentityInputsHarness {
 }
 
 const AVATAR_PRICE = 3;
-/** A platform ElevenLabs speech quote, distinct from any avatar price. */
-const SPEECH_PRICE = 2;
 
 describe('AvatarVideoGenerationService', () => {
   const createService = () => {
@@ -60,16 +43,11 @@ describe('AvatarVideoGenerationService', () => {
       findOne: vi.fn(),
     };
     const configService = {
-      isAuthorizedMediaDeliveryEnabled: false,
       ingredientsEndpoint: 'http://localhost:3010',
     };
     const byokService = {
       resolveApiKey: vi.fn().mockResolvedValue(null),
-      lookupApiKey: vi.fn(),
     };
-    byokService.lookupApiKey.mockImplementation((org, provider) =>
-      byokService.resolveApiKey(org, provider),
-    );
     const creditsUtilsService = {
       bindReservationOutput: vi
         .fn()
@@ -84,36 +62,7 @@ describe('AvatarVideoGenerationService', () => {
       queueDeduction: vi.fn().mockResolvedValue(undefined),
     };
     const modelCreditQuote = {
-      quoteSnapshotByKey: vi.fn(
-        async (
-          modelKey: string,
-          input: { duration: number; selectors?: { avatar_type: string } },
-        ) =>
-          modelKey.startsWith('elevenlabs/')
-            ? { costSource: 'reviewed-provider', credits: SPEECH_PRICE }
-            : modelKey === MODEL_KEYS.HEYGEN_AVATAR
-              ? // Flow tests hold a photo render at the AVATAR_PRICE stub.
-                {
-                  ...photoAnimationSnapshot(input.duration),
-                  allocatedCredits: [AVATAR_PRICE],
-                  credits: AVATAR_PRICE,
-                }
-              : avatarEngineSnapshot(
-                  modelKey as 'heygen/avatar-iv' | 'heygen/avatar-v',
-                  input.selectors?.avatar_type ?? '',
-                  input.duration,
-                ),
-      ),
-    };
-    const routerService = {
-      selectModel: vi.fn(
-        async (options: { eligibleModelKeys: readonly string[] }) => ({
-          selectedModel: options.eligibleModelKeys[0],
-        }),
-      ),
-    };
-    const modelRegistration = {
-      validateModelForOrg: vi.fn(async (key: string) => ({ key })),
+      quoteByKey: vi.fn().mockResolvedValue(AVATAR_PRICE),
     };
     const elevenlabsService = {
       generateAndUploadAudio: vi.fn().mockResolvedValue({
@@ -132,30 +81,9 @@ describe('AvatarVideoGenerationService', () => {
     };
     const heygenService = {
       generatePhotoAvatarVideo: vi.fn().mockResolvedValue('heygen-job-1'),
-      generateNativeAvatarVideo: vi.fn().mockResolvedValue('heygen-native-job'),
-      resolveAvatarSelection: vi.fn(),
-      validateVoiceSelection: vi
-        .fn()
-        .mockResolvedValue({ voiceId: 'voice-1', ownership: 'public' }),
-      resolveOrganizationConnection: vi.fn(async (org) => {
-        const credential = await byokService.resolveApiKey(
-          org,
-          ByokProvider.HEYGEN,
-        );
-        return {
-          apiKey: credential?.apiKey ?? 'platform-key',
-          binding: {
-            provider: 'heygen',
-            kind: credential ? 'byok' : 'platform',
-            organizationId: org,
-            credentialVersionId: 'version-1',
-          },
-        };
-      }),
       getAvatars: vi.fn().mockResolvedValue([]),
     };
     const ingredientsService = {
-      findOne: vi.fn(),
       findAvatarImageById: vi.fn().mockResolvedValue({
         cdnUrl: 'https://cdn.example.com/avatar.png',
         id: 'avatar-1',
@@ -178,15 +106,7 @@ describe('AvatarVideoGenerationService', () => {
         metadataData: { id: 'avatar-metadata-1' },
       }),
     };
-    const videosService = {
-      patch: vi.fn(),
-      prisma: {
-        ingredient: {
-          findFirst: vi.fn().mockResolvedValue(null),
-          update: vi.fn().mockResolvedValue({}),
-        },
-      },
-    };
+    const videosService = { patch: vi.fn() };
     const voicesService = {
       findOne: vi.fn(),
     };
@@ -204,13 +124,11 @@ describe('AvatarVideoGenerationService', () => {
     );
 
     const billingTransaction = {
-      crunGenerationTask: { findFirst: vi.fn().mockResolvedValue(null) },
       $queryRaw: vi.fn(),
       creditReservation: { findFirst: vi.fn().mockResolvedValue(null) },
       ingredient: { findFirst: vi.fn().mockResolvedValue(null) },
     };
     const billingPrisma = {
-      crunGenerationTask: { findFirst: vi.fn().mockResolvedValue(null) },
       $transaction: async (
         operation: (tx: typeof billingTransaction) => Promise<void>,
       ) => operation(billingTransaction),
@@ -227,36 +145,21 @@ describe('AvatarVideoGenerationService', () => {
         bindOutput: vi.fn(),
       } as never,
     );
-    const mediaIssuer = { issueServerPublish: vi.fn() };
-    // A raw audio URL is measured before the hold; flow tests use a 4 s clip.
-    const filesClient = {
-      probeMediaFromUrl: vi.fn().mockResolvedValue({ durationSeconds: 4 }),
-    };
-    const platformSettings = {
-      getFeatureSettings: vi.fn().mockResolvedValue({ elevenlabsModel: null }),
-    };
-    const personas = personasServiceStub();
     const service = new AvatarVideoGenerationService(
       brandsService as never,
+      configService as never,
+      byokService as never,
       new AvatarVideoBillingService(
         creditsUtilsService as never,
         generationBilling,
         modelCreditQuote as never,
         loggerService,
-        new AvatarVideoModelService(
-          routerService as never,
-          modelRegistration as never,
-        ),
-        byokService as never,
-        heygenService as never,
-        videosService.prisma as never,
-        filesClient as never,
-        platformSettings as never,
       ),
       elevenlabsService as never,
       failedGenerationService as never,
       managedInferenceRuntimeService as never,
       heygenService as never,
+      ingredientsService as never,
       loggerService,
       metadataService as never,
       orgSettingsService as never,
@@ -264,27 +167,14 @@ describe('AvatarVideoGenerationService', () => {
       videosService as never,
       voicesService as never,
       lifecycleService,
-      new AvatarVideoReferenceService(
-        configService as never,
-        ingredientsService as never,
-        mediaIssuer as never,
-        personas,
-      ),
     );
 
     return {
-      filesClient,
-      personas,
-      videosService,
-      configService,
-      mediaIssuer,
       brandsService,
       byokService,
       creditDeductionQueueService,
       creditsUtilsService,
       modelCreditQuote,
-      modelRegistration,
-      routerService,
       elevenlabsService,
       failedGenerationService,
       managedInferenceRuntimeService,
@@ -305,35 +195,6 @@ describe('AvatarVideoGenerationService', () => {
     userId: 'test-object-id',
   };
 
-  it('reissues the canonical avatar source instead of using its cached URL when activated', async () => {
-    const h = createService();
-    h.configService.isAuthorizedMediaDeliveryEnabled = true;
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-    h.mediaIssuer.issueServerPublish.mockResolvedValue(
-      new Map([
-        ['avatar-1', 'https://cdn.example.com/opaque-avatar?Signature=fresh'],
-      ]),
-    );
-    await h.service.generateAvatarVideo(
-      {
-        photoIngredientId: 'avatar-1',
-        heygenVoiceId: 'voice-1',
-        text: 'Speech',
-      },
-      context,
-    );
-    expect(h.mediaIssuer.issueServerPublish).toHaveBeenCalledWith(
-      context.organizationId,
-      ['avatar-1'],
-    );
-    expect(h.heygenService.generatePhotoAvatarVideo.mock.calls[0]?.[1]).toBe(
-      'https://cdn.example.com/opaque-avatar?Signature=fresh',
-    );
-  });
-
   async function resolveIdentityInputs(
     service: AvatarVideoGenerationService,
     params: Record<string, unknown>,
@@ -350,16 +211,19 @@ describe('AvatarVideoGenerationService', () => {
 
   it.each([
     ['HeyGen voice', { heygenVoiceId: 'voice-1' }, false, 0],
-    // HeyGen renders on the organization's key; only the speech is ours.
     [
       'platform ElevenLabs speech',
       { elevenlabsVoiceId: 'voice-1' },
       false,
-      SPEECH_PRICE,
+      AVATAR_PRICE,
     ],
     ['BYOK ElevenLabs speech', { elevenlabsVoiceId: 'voice-1' }, true, 0],
-    // Genfeed's own voices runtime has no per-character rate: included (#6932).
-    ['Genfeed saved voice', { clonedVoiceId: 'saved-voice-1' }, false, 0],
+    [
+      'Genfeed saved voice',
+      { clonedVoiceId: 'saved-voice-1' },
+      false,
+      AVATAR_PRICE,
+    ],
   ])(
     'quotes actual funding for %s with HeyGen BYOK',
     async (_label, voice, elevenLabsByok, cost) => {
@@ -387,18 +251,10 @@ describe('AvatarVideoGenerationService', () => {
             : null,
       );
       await expect(
-        service.quoteCredits(
-          {
-            text: 'Speech',
-            photoUrl: 'https://cdn.example.com/photo.png',
-            ...voice,
-          },
-          context,
-        ),
+        service.quoteCredits({ text: 'Speech', ...voice }, context),
       ).resolves.toEqual({
         billingMode: cost === 0 ? 'byok' : 'platform',
         credits: cost,
-        modelKey: MODEL_KEYS.HEYGEN_AVATAR,
       });
       expect(
         managedInferenceRuntimeService.generateVoice,
@@ -411,7 +267,7 @@ describe('AvatarVideoGenerationService', () => {
   it.each([
     ['provider-owned speech', { heygenVoiceId: 'voice-1' }, false],
     ['platform-funded speech', { elevenlabsVoiceId: 'voice-1' }, true],
-    ['saved Genfeed voice', { clonedVoiceId: 'voice-1' }, false],
+    ['saved Genfeed voice', { clonedVoiceId: 'voice-1' }, true],
   ])(
     'settles direct HeyGen BYOK avatars correctly with %s',
     async (_label, voice, billable) => {
@@ -447,74 +303,6 @@ describe('AvatarVideoGenerationService', () => {
       );
     },
   );
-
-  describe('character admission (#6040)', () => {
-    it('refuses a photo that is a character the brand lost before funding or any output', async () => {
-      const {
-        brandsService,
-        creditsUtilsService,
-        personas,
-        service,
-        sharedService,
-      } = createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      vi.mocked(personas.resolveCharacterReferences).mockRejectedValueOnce(
-        new NotFoundException('Reference image'),
-      );
-
-      await expect(
-        service.generateAvatarVideo(
-          {
-            heygenVoiceId: 'voice-1',
-            photoIngredientId: 'avatar-1',
-            text: 'Speech',
-          },
-          context,
-        ),
-      ).rejects.toBeInstanceOf(NotFoundException);
-
-      expect(personas.resolveCharacterReferences).toHaveBeenCalledWith(
-        expect.objectContaining({
-          brandId: 'brand-1',
-          ingredientIds: ['avatar-1'],
-          path: 'avatar-video',
-        }),
-      );
-      expect(creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-      expect(sharedService.createMediaDocumentsInternal).not.toHaveBeenCalled();
-    });
-
-    it('links the admitted character to the avatar output', async () => {
-      const { brandsService, personas, service, sharedService } =
-        createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      vi.mocked(personas.resolveCharacterReferences).mockResolvedValueOnce({
-        availableAvatarIds: new Set(['avatar-1']),
-        grantedAvatarOwners: new Map(),
-        personaId: 'persona-1',
-        personaIdByAssetId: new Map(),
-      });
-
-      await service.generateAvatarVideo(
-        {
-          heygenVoiceId: 'voice-1',
-          photoIngredientId: 'avatar-1',
-          text: 'Speech',
-        },
-        context,
-      );
-
-      expect(sharedService.createMediaDocumentsInternal).toHaveBeenCalledWith(
-        expect.objectContaining({ personaId: 'persona-1' }),
-      );
-    });
-  });
 
   it('holds, binds and never deducts for an unguarded platform caller', async () => {
     const { service, brandsService, creditsUtilsService, sharedService } =
@@ -593,118 +381,6 @@ describe('AvatarVideoGenerationService', () => {
 
     expect(creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
     expect(creditsUtilsService.bindReservationOutput).not.toHaveBeenCalled();
-  });
-
-  it('hands the frozen per-second quote to a caller that holds the credits itself', async () => {
-    const { service, brandsService, creditsUtilsService } = createService();
-    brandsService.findOne.mockResolvedValue({ agentConfig: {}, id: 'brand-1' });
-    const onCreditsPrepared = vi.fn();
-
-    await service.generateAvatarVideo(
-      {
-        heygenVoiceId: 'voice-1',
-        photoUrl: 'https://cdn.example.com/avatar.png',
-        text: 'Speech',
-      },
-      context,
-      undefined,
-      { groupId: 'scene-group', groupIndex: 0, settleCreditsExternally: true },
-      onCreditsPrepared,
-    );
-
-    expect(creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    // The caller stores it on its own hold and settles to the real clip.
-    expect(onCreditsPrepared).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({
-        billingMode: 'platform',
-        durationQuote: expect.objectContaining({
-          estimatedSeconds: 1,
-          snapshot: expect.objectContaining({
-            modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-          }),
-        }),
-      }),
-    );
-  });
-
-  describe('remix-run avatar variants (#6933)', () => {
-    const variantScope = {
-      groupId: 'run-1',
-      groupIndex: 0,
-      isByokBypass: false,
-      settleCreditsExternally: false,
-    };
-
-    it('holds the variant on its own render hold with the frozen quote', async () => {
-      const { service, brandsService, creditsUtilsService } = createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-
-      await service.generateAvatarVideo(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-        undefined,
-        variantScope,
-        async () => undefined,
-      );
-
-      expect(creditsUtilsService.reserveCredits).toHaveBeenCalledOnce();
-      // The webhook settles this hold to the duration HeyGen returns.
-      expect(creditsUtilsService.bindReservationOutput).toHaveBeenCalledWith(
-        expect.objectContaining({
-          metadata: expect.objectContaining({
-            avatarDurationQuote: expect.objectContaining({
-              estimatedSeconds: 1,
-            }),
-          }),
-          reservationId: 'service-pool-1',
-          workloadId: 'avatar-ingredient-1',
-        }),
-      );
-      expect(
-        creditsUtilsService.deductCreditsFromOrganization,
-      ).not.toHaveBeenCalled();
-    });
-
-    it('releases the variant hold when HeyGen fails the render', async () => {
-      const { service, brandsService, creditsUtilsService, heygenService } =
-        createService();
-      brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      heygenService.generatePhotoAvatarVideo.mockRejectedValue(
-        new HeyGenSubmissionRejectedError(),
-      );
-
-      await expect(
-        service.generateAvatarVideo(
-          {
-            heygenVoiceId: 'voice-1',
-            photoUrl: 'https://cdn.example.com/avatar.png',
-            text: 'Speech',
-          },
-          context,
-          undefined,
-          variantScope,
-          async () => undefined,
-        ),
-      ).rejects.toThrow();
-
-      expect(creditsUtilsService.releaseReservation).toHaveBeenCalledWith({
-        organizationId: 'test-object-id',
-        reservationId: 'service-pool-1',
-      });
-      expect(
-        creditsUtilsService.deductCreditsFromOrganization,
-      ).not.toHaveBeenCalled();
-    });
   });
 
   it('binds the hold before HeyGen sees the render id', async () => {
@@ -865,13 +541,6 @@ describe('AvatarVideoGenerationService', () => {
         expect.objectContaining({
           metadata: {
             assetId: 'avatar-ingredient-1',
-            // The photo render is held per second, so settlement re-prices it.
-            avatarDurationQuote: expect.objectContaining({
-              estimatedSeconds: 1,
-              snapshot: expect.objectContaining({
-                modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-              }),
-            }),
             submissionIntent: { version: 1, provider: ByokProvider.HEYGEN },
           },
         }),
@@ -897,11 +566,7 @@ describe('AvatarVideoGenerationService', () => {
       heygenService,
     } = createService();
     brandsService.findOne.mockResolvedValue({ agentConfig: {}, id: 'brand-1' });
-    modelCreditQuote.quoteSnapshotByKey.mockResolvedValue({
-      ...photoAnimationSnapshot(1),
-      allocatedCredits: [0],
-      credits: 0,
-    });
+    modelCreditQuote.quoteByKey.mockResolvedValue(0);
 
     await expect(
       service.generateAvatarVideo(
@@ -918,7 +583,7 @@ describe('AvatarVideoGenerationService', () => {
     expect(heygenService.generatePhotoAvatarVideo).not.toHaveBeenCalled();
   });
 
-  it('prices the platform charge per second from the heygen/avatar model row', async () => {
+  it('prices the platform charge from the heygen/avatar model row', async () => {
     const { service, brandsService, modelCreditQuote } = createService();
     brandsService.findOne.mockResolvedValue({ agentConfig: {}, id: 'brand-1' });
 
@@ -931,69 +596,8 @@ describe('AvatarVideoGenerationService', () => {
       context,
     );
 
-    expect(price).toEqual({
-      billingMode: 'platform',
-      credits: AVATAR_PRICE,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
-    // "Speech" is six characters, a one-second estimate.
-    expect(modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-      MODEL_KEYS.HEYGEN_AVATAR,
-      { duration: 1 },
-    );
-  });
-
-  it('quotes Studio a photo animation per second with its estimated clip length, holding nothing', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-
-    await expect(
-      h.service.quote(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-      ),
-    ).resolves.toEqual({
-      billingMode: 'platform',
-      credits: AVATAR_PRICE,
-      // "Speech" is six characters, a one-second estimate.
-      estimatedSeconds: 1,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    expect(h.sharedService.createMediaDocumentsInternal).not.toHaveBeenCalled();
-    expect(h.heygenService.generatePhotoAvatarVideo).not.toHaveBeenCalled();
-  });
-
-  it('quotes Studio zero platform credits for a HeyGen BYOK render', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-    h.byokService.resolveApiKey.mockResolvedValue({ apiKey: 'org-key' });
-
-    await expect(
-      h.service.quote(
-        {
-          heygenVoiceId: 'voice-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'Speech',
-        },
-        context,
-      ),
-    ).resolves.toMatchObject({
-      billingMode: 'byok',
-      credits: 0,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
+    expect(price).toEqual({ billingMode: 'platform', credits: AVATAR_PRICE });
+    expect(modelCreditQuote.quoteByKey).toHaveBeenCalledWith('heygen/avatar');
   });
 
   it('pins both provider keys before reservation, even when org keys change during admission', async () => {
@@ -1029,11 +633,7 @@ describe('AvatarVideoGenerationService', () => {
       },
       reserve,
     );
-    expect(reserve).toHaveBeenCalledWith({
-      billingMode: 'byok',
-      credits: 0,
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
-    });
+    expect(reserve).toHaveBeenCalledWith({ billingMode: 'byok', credits: 0 });
     expect(elevenlabsService.generateAndUploadAudio.mock.calls[0][5]).toBe(
       `pinned-${ByokProvider.ELEVENLABS}`,
     );
@@ -1074,8 +674,6 @@ describe('AvatarVideoGenerationService', () => {
     expect(reserve).toHaveBeenCalledWith({
       billingMode: 'platform',
       credits: AVATAR_PRICE,
-      durationQuote: expect.objectContaining({ estimatedSeconds: 1 }),
-      modelKey: MODEL_KEYS.HEYGEN_AVATAR,
     });
     expect(elevenlabsService.generateAndUploadAudio).not.toHaveBeenCalled();
     expect(heygenService.generatePhotoAvatarVideo).not.toHaveBeenCalled();
@@ -1101,7 +699,7 @@ describe('AvatarVideoGenerationService', () => {
       await service.generateAvatarVideo(
         {
           photoUrl: 'https://cdn.example.com/avatar.png',
-          heygenVoiceId: 'voice-1',
+          audioUrl: 'https://cdn.example.com/audio.mp3',
           text: 'Founder update',
         },
         context,
@@ -1112,7 +710,7 @@ describe('AvatarVideoGenerationService', () => {
         expect.any(Object),
         context.organizationId,
         context.userId,
-        isByok ? 'byok-test-key' : 'platform-key',
+        isByok ? 'byok-test-key' : undefined,
         '9:16',
       );
       expect(creditsUtilsService.bindReservationOutput).toHaveBeenCalledTimes(
@@ -1153,7 +751,7 @@ describe('AvatarVideoGenerationService', () => {
     },
   );
 
-  it('with HeyGen BYOK, holds nothing for speech from a saved Genfeed voice', async () => {
+  it('with HeyGen BYOK, still charges for speech from a saved Genfeed voice', async () => {
     const {
       brandsService,
       byokService,
@@ -1196,178 +794,7 @@ describe('AvatarVideoGenerationService', () => {
       context,
     );
 
-    expect(managedInferenceRuntimeService.generateVoice).toHaveBeenCalledOnce();
-    expect(creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    expect(creditsUtilsService.bindReservationOutput).not.toHaveBeenCalled();
-  });
-
-  describe('audio-driven admission (#6932)', () => {
-    it('accepts photo plus audio with no script and holds the measured audio', async () => {
-      const h = createService();
-      h.brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        cdnUrl: 'https://cdn.example.com/voice.mp3',
-        id: 'narration-1',
-        status: IngredientStatus.UPLOADED,
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: null },
-      });
-      await h.service.generateAvatarVideo(
-        {
-          audioIngredientId: 'narration-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: '',
-        },
-        context,
-      );
-
-      expect(h.filesClient.probeMediaFromUrl).toHaveBeenCalledWith(
-        'https://cdn.example.com/voice.mp3',
-        'audio',
-      );
-      expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-        MODEL_KEYS.HEYGEN_AVATAR,
-        { duration: 4 },
-      );
-      expect(h.heygenService.generatePhotoAvatarVideo).toHaveBeenCalledWith(
-        'avatar-ingredient-1',
-        expect.any(String),
-        { audioUrl: 'https://cdn.example.com/voice.mp3' },
-        context.organizationId,
-        context.userId,
-        'platform-key',
-        '9:16',
-      );
-      expect(h.creditsUtilsService.bindReservationOutput).toHaveBeenCalledTimes(
-        1,
-      );
-    });
-
-    it('holds a short script over a long saved narration at the narration length', async () => {
-      const h = createService();
-      h.brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        cdnUrl: 'https://cdn.example.com/narration.mp3',
-        id: 'narration-1',
-        status: IngredientStatus.GENERATED,
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: 300 },
-      });
-
-      await h.service.generateAvatarVideo(
-        {
-          audioIngredientId: 'narration-1',
-          photoUrl: 'https://cdn.example.com/avatar.png',
-          text: 'hi',
-        },
-        context,
-      );
-
-      expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-        MODEL_KEYS.HEYGEN_AVATAR,
-        { duration: 300 },
-      );
-      expect(h.filesClient.probeMediaFromUrl).not.toHaveBeenCalled();
-    });
-
-    it('refuses a platform render whose audio cannot be measured before any output', async () => {
-      const h = createService();
-      h.brandsService.findOne.mockResolvedValue({
-        agentConfig: {},
-        id: 'brand-1',
-      });
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        cdnUrl: 'https://cdn.example.com/voice.mp3',
-        id: 'narration-1',
-        status: IngredientStatus.UPLOADED,
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: null },
-      });
-      h.filesClient.probeMediaFromUrl.mockResolvedValue({
-        durationSeconds: null,
-      });
-
-      await expect(
-        h.service.generateAvatarVideo(
-          {
-            audioIngredientId: 'narration-1',
-            photoUrl: 'https://cdn.example.com/avatar.png',
-            text: 'A script that must not size this hold',
-          },
-          context,
-        ),
-      ).rejects.toThrow('could not be measured');
-      expect(h.modelCreditQuote.quoteSnapshotByKey).not.toHaveBeenCalled();
-      expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-      expect(
-        h.sharedService.createMediaDocumentsInternal,
-      ).not.toHaveBeenCalled();
-    });
-  });
-
-  it('with HeyGen BYOK, holds only the platform speech and speaks it on the priced model', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      agentConfig: {},
-      id: 'brand-1',
-    });
-    h.byokService.resolveApiKey.mockImplementation(
-      async (_organizationId: string, provider: ByokProvider) =>
-        provider === ByokProvider.HEYGEN ? { apiKey: 'heygen-byok-key' } : null,
-    );
-
-    await h.service.generateAvatarVideo(
-      {
-        elevenlabsVoiceId: 'voice-1',
-        photoUrl: 'https://cdn.example.com/avatar.png',
-        text: 'Founder update',
-      },
-      context,
-    );
-
-    expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledTimes(1);
-    expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-      MODEL_KEYS.ELEVENLABS_MULTILINGUAL_V2,
-      {
-        characters: 14,
-        organizationId: context.organizationId,
-        provider: 'elevenlabs',
-      },
-    );
-    expect(h.creditsUtilsService.reserveCredits).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: SPEECH_PRICE }),
-    );
-    expect(h.elevenlabsService.generateAndUploadAudio).toHaveBeenCalledWith(
-      'voice-1',
-      'Founder update',
-      expect.any(String),
-      context.organizationId,
-      context.userId,
-      undefined,
-      { modelId: 'eleven_multilingual_v2' },
-    );
-    expect(h.heygenService.generatePhotoAvatarVideo).toHaveBeenCalledWith(
-      'avatar-ingredient-1',
-      expect.any(String),
-      expect.any(Object),
-      context.organizationId,
-      context.userId,
-      'heygen-byok-key',
-      '9:16',
-    );
+    expect(creditsUtilsService.bindReservationOutput).toHaveBeenCalledTimes(1);
   });
 
   it('publishes initial progress on the ingredient video path for its user', async () => {
@@ -1376,7 +803,7 @@ describe('AvatarVideoGenerationService', () => {
     await service.generateAvatarVideo(
       {
         photoUrl: 'https://cdn.example.com/avatar.png',
-        heygenVoiceId: 'voice-1',
+        audioUrl: 'https://cdn.example.com/audio.mp3',
         text: 'Create the founder update',
       },
       context,
@@ -1402,7 +829,7 @@ describe('AvatarVideoGenerationService', () => {
       service.generateAvatarVideo(
         {
           photoUrl: 'https://cdn.example.com/avatar.png',
-          heygenVoiceId: 'voice-1',
+          audioUrl: 'https://cdn.example.com/audio.mp3',
           text: 'Create the founder update',
         },
         context,
@@ -1977,321 +1404,5 @@ describe('AvatarVideoGenerationService', () => {
       undefined,
     );
     expect(heygenService.generatePhotoAvatarVideo).toHaveBeenCalled();
-  });
-  const savedNative = (lookId = 'brand-look') => ({
-    version: 1 as const,
-    source: 'heygen-look' as const,
-    provider: 'heygen' as const,
-    lookId,
-    groupId: null,
-    ownership: 'private' as const,
-    label: 'My trained look',
-    preview: 'https://cdn.example.com/preview.jpg',
-    avatarType: 'digital_twin',
-    supportedEngines: ['avatar_iv'],
-    readiness: {
-      usable: true,
-      reason: null,
-      lookStatus: 'completed',
-      groupStatus: null,
-      consentStatus: null,
-    },
-    connection: {
-      provider: 'heygen' as const,
-      kind: 'byok' as const,
-      organizationId: context.organizationId,
-      credentialVersionId: 'saved-version',
-    },
-  });
-
-  it('uses the brand native look ahead of the organization look and never renders the preview', async () => {
-    const h = createService();
-    const ref = savedNative();
-    h.brandsService.findOne.mockResolvedValue({
-      id: 'brand-1',
-      agentConfig: { defaultAvatarRef: ref },
-    });
-    h.orgSettingsService.findOne.mockResolvedValue({
-      defaultAvatarRef: savedNative('organization-look'),
-    });
-    const connection = {
-      apiKey: 'current-key',
-      binding: { ...ref.connection, credentialVersionId: 'current-version' },
-    };
-    h.heygenService.resolveAvatarSelection.mockResolvedValue({
-      avatarRef: { ...ref, connection: connection.binding },
-      connection,
-    });
-    await h.service.generateAvatarVideo(
-      { text: 'Hello', useIdentity: true, heygenVoiceId: 'voice-1' },
-      context,
-    );
-    expect(h.heygenService.resolveAvatarSelection).toHaveBeenCalledWith(
-      ref,
-      context.organizationId,
-    );
-    expect(h.heygenService.generateNativeAvatarVideo).toHaveBeenCalledWith(
-      'avatar-ingredient-1',
-      expect.objectContaining({ lookId: 'brand-look' }),
-      { inputText: 'Hello', voiceId: 'voice-1' },
-      'current-key',
-      '9:16',
-      'avatar_iv',
-    );
-    expect(h.heygenService.generatePhotoAvatarVideo).not.toHaveBeenCalled();
-    expect(h.videosService.prisma.ingredient.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          generationProvider: expect.objectContaining({
-            connection: connection.binding,
-          }),
-        }),
-      }),
-    );
-    expect(
-      h.videosService.prisma.ingredient.update.mock.invocationCallOrder[0],
-    ).toBeLessThan(
-      h.heygenService.generateNativeAvatarVideo.mock.invocationCallOrder[0],
-    );
-  });
-
-  describe('engine routing and per-second billing', () => {
-    // 120 characters at 12 characters a second is a 10 s estimate.
-    const script = 'a'.repeat(120);
-    const platformTwin = (supportedEngines = ['avatar_iv', 'avatar_v']) => ({
-      ...savedNative('twin-look'),
-      ownership: 'public' as const,
-      supportedEngines,
-      connection: {
-        provider: 'heygen' as const,
-        kind: 'platform' as const,
-        organizationId: context.organizationId,
-      },
-    });
-    const admit = (
-      h: ReturnType<typeof createService>,
-      ref: ReturnType<typeof platformTwin>,
-    ) => {
-      h.brandsService.findOne.mockResolvedValue({
-        id: 'brand-1',
-        agentConfig: {},
-      });
-      const connection = {
-        apiKey: 'platform-key',
-        binding: { ...ref.connection, credentialVersionId: 'version-1' },
-      };
-      h.heygenService.resolveAvatarSelection.mockResolvedValue({
-        avatarRef: { ...ref, connection: connection.binding },
-        connection,
-      });
-    };
-
-    it('routes Auto on quality to Avatar V and holds its per-second estimate', async () => {
-      const h = createService();
-      const ref = platformTwin();
-      admit(h, ref);
-      h.routerService.selectModel.mockResolvedValue({
-        selectedModel: MODEL_KEYS.HEYGEN_AVATAR_V,
-      });
-
-      await h.service.generateAvatarVideo(
-        {
-          avatarRef: ref,
-          heygenVoiceId: 'voice-1',
-          prioritize: RouterPriority.QUALITY,
-          text: script,
-        },
-        context,
-      );
-
-      expect(h.routerService.selectModel).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eligibleModelKeys: [
-            MODEL_KEYS.HEYGEN_AVATAR_IV,
-            MODEL_KEYS.HEYGEN_AVATAR_V,
-          ],
-          prioritize: 'quality',
-        }),
-      );
-      expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-        MODEL_KEYS.HEYGEN_AVATAR_V,
-        { duration: 10, selectors: { avatar_type: 'digital_twin' } },
-      );
-      // $0.12/s x 10 s x 3.33 margin.
-      expect(h.creditsUtilsService.reserveCredits).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 400 }),
-      );
-      expect(h.creditsUtilsService.bindReservationOutput).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amount: 400,
-          metadata: expect.objectContaining({
-            avatarDurationQuote: expect.objectContaining({
-              estimatedSeconds: 10,
-            }),
-          }),
-        }),
-      );
-      expect(h.sharedService.createMediaDocumentsInternal).toHaveBeenCalledWith(
-        expect.objectContaining({ model: MODEL_KEYS.HEYGEN_AVATAR_V }),
-      );
-      expect(h.heygenService.generateNativeAvatarVideo).toHaveBeenCalledWith(
-        'avatar-ingredient-1',
-        expect.objectContaining({ lookId: 'twin-look' }),
-        { inputText: script, voiceId: 'voice-1' },
-        'platform-key',
-        '9:16',
-        'avatar_v',
-      );
-    });
-
-    it('holds a saved narration for its measured length, not the script', async () => {
-      const h = createService();
-      const ref = platformTwin(['avatar_iv']);
-      admit(h, ref);
-      h.ingredientsService.findOne.mockResolvedValue({
-        category: IngredientCategory.AUDIO,
-        id: 'narration-1',
-        status: IngredientStatus.GENERATED,
-        cdnUrl: 'https://cdn.example.com/narration.mp3',
-      });
-      h.videosService.prisma.ingredient.findFirst.mockResolvedValue({
-        metadata: { duration: 4.2 },
-      });
-
-      await h.service.generateAvatarVideo(
-        { audioIngredientId: 'narration-1', avatarRef: ref, text: script },
-        context,
-      );
-
-      expect(h.modelCreditQuote.quoteSnapshotByKey).toHaveBeenCalledWith(
-        MODEL_KEYS.HEYGEN_AVATAR_IV,
-        { duration: 5, selectors: { avatar_type: 'digital_twin' } },
-      );
-    });
-
-    it('refuses an explicit Avatar V the look cannot render before any hold or dispatch', async () => {
-      const h = createService();
-      const ref = platformTwin(['avatar_iv']);
-      admit(h, ref);
-
-      await expect(
-        h.service.generateAvatarVideo(
-          {
-            avatarRef: ref,
-            heygenVoiceId: 'voice-1',
-            model: MODEL_KEYS.HEYGEN_AVATAR_V,
-            text: script,
-          },
-          context,
-        ),
-      ).rejects.toThrow('Avatar V');
-      expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-      expect(
-        h.sharedService.createMediaDocumentsInternal,
-      ).not.toHaveBeenCalled();
-      expect(h.heygenService.generateNativeAvatarVideo).not.toHaveBeenCalled();
-    });
-
-    it('quotes a native look by its engine for run-level callers', async () => {
-      const h = createService();
-      const ref = platformTwin(['avatar_iv']);
-      admit(h, ref);
-
-      await expect(
-        h.service.quoteCredits(
-          { avatarRef: ref, heygenVoiceId: 'voice-1', text: script },
-          context,
-        ),
-      ).resolves.toEqual({
-        billingMode: 'platform',
-        // $0.0805/s digital twin x 10 s x 3.33 margin.
-        credits: 269,
-        modelKey: MODEL_KEYS.HEYGEN_AVATAR_IV,
-      });
-    });
-    it('quotes Studio a native look by its engine with the estimated clip length', async () => {
-      const h = createService();
-      const ref = platformTwin(['avatar_iv']);
-      admit(h, ref);
-
-      await expect(
-        h.service.quote(
-          { avatarRef: ref, heygenVoiceId: 'voice-1', text: script },
-          context,
-        ),
-      ).resolves.toEqual({
-        billingMode: 'platform',
-        // $0.0805/s digital twin x 10 s x 3.33 margin.
-        credits: 269,
-        estimatedSeconds: 10,
-        modelKey: MODEL_KEYS.HEYGEN_AVATAR_IV,
-      });
-      expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-      expect(h.heygenService.generateNativeAvatarVideo).not.toHaveBeenCalled();
-    });
-  });
-
-  it('rejects failed native admission before credit holds, placeholders, and dispatch', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      id: 'brand-1',
-      agentConfig: {},
-    });
-    h.heygenService.resolveAvatarSelection.mockRejectedValue(
-      new HttpException('Consent is pending', HttpStatus.BAD_REQUEST),
-    );
-    await expect(
-      h.service.generateAvatarVideo(
-        { text: 'Hello', avatarRef: savedNative(), heygenVoiceId: 'voice-1' },
-        context,
-      ),
-    ).rejects.toThrow('Consent is pending');
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    expect(h.sharedService.createMediaDocumentsInternal).not.toHaveBeenCalled();
-    expect(h.heygenService.generateNativeAvatarVideo).not.toHaveBeenCalled();
-  });
-
-  it('rejects cross-tenant narration before reserving credits', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      id: 'brand-1',
-      agentConfig: {},
-    });
-    h.ingredientsService.findOne.mockResolvedValue(null);
-    await expect(
-      h.service.generateAvatarVideo(
-        {
-          text: '',
-          avatarRef: savedNative(),
-          audioIngredientId: 'foreign-audio',
-        },
-        context,
-      ),
-    ).rejects.toThrow('playable audio asset');
-    expect(h.ingredientsService.findOne).toHaveBeenCalledWith({
-      id: 'foreign-audio',
-      organizationId: context.organizationId,
-      isDeleted: false,
-    });
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-  });
-
-  it('quotes readiness without generating speech or reserving credits', async () => {
-    const h = createService();
-    h.brandsService.findOne.mockResolvedValue({
-      id: 'brand-1',
-      agentConfig: {},
-    });
-    h.heygenService.resolveAvatarSelection.mockRejectedValue(
-      new HttpException('Training is incomplete', HttpStatus.BAD_REQUEST),
-    );
-    await expect(
-      h.service.quoteCredits(
-        { text: 'Hello', avatarRef: savedNative(), heygenVoiceId: 'voice-1' },
-        context,
-      ),
-    ).rejects.toThrow('Training is incomplete');
-    expect(h.creditsUtilsService.reserveCredits).not.toHaveBeenCalled();
-    expect(h.elevenlabsService.generateAndUploadAudio).not.toHaveBeenCalled();
   });
 });

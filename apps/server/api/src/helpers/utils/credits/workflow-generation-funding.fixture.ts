@@ -5,22 +5,21 @@ import type {
   WorkflowExecutionGenerationBilling,
   WorkflowGenerationDispatch,
   WorkflowGenerationNodeAllocation,
-  WorkflowMediaPreparationContract,
 } from '@genfeedai/contracts/interfaces/billing';
 import { quoteModelBillablePricing } from '@genfeedai/pricing';
 
-/** Explicit test tariffs: video 5 credits and image 1 credit; never a production fallback. */
+/** Explicit test tariffs: video 5 credits and stitch 1 credit; never a production fallback. */
 export function workflowFundingFixture(
   executionId = 'execution-a',
 ): WorkflowExecutionGenerationBilling {
   const allocations = [
     ['video', 'videoGen', 5],
-    ['image', 'imageGen', 1],
+    ['stitch', 'videoStitch', 1],
   ].map(([node, action, cost]): WorkflowGenerationNodeAllocation => {
     const nodeId = String(node);
     const actionId = String(action);
     const modelKey = `test/${nodeId}`;
-    const provider = 'replicate';
+    const provider = nodeId === 'video' ? 'replicate' : 'local';
     const quote = quoteModelBillablePricing(
       billableProfile({ key: modelKey, provider, cost: Number(cost) }),
       { modelKey, provider, requests: 1, outputs: 1 },
@@ -28,41 +27,11 @@ export function workflowFundingFixture(
       '2026-09-30T00:00:00.000Z',
     );
     if (quote.status !== 'priced') throw new Error(quote.reason);
-    // Synthetic reviewed identities are deliberate financial test inputs only.
-    const preparationContract: WorkflowMediaPreparationContract = {
-      version: 1,
-      preparationVersion: 1,
-      actionId: actionId === 'videoGen' ? 'videoGen' : 'imageGen',
-      brief: {
-        briefVersion: 1,
-        compilerId: 'synthetic-test-compiler',
-        compilerVersion: 1,
-        profileId: 'synthetic-test-profile',
-        profileVersion: 1,
-        modelKey,
-        mediaKind: nodeId === 'video' ? 'video' : 'image',
-      },
-      reviewedOutput: {
-        modelKey,
-        provider: 'replicate',
-        endpoint: modelKey,
-        version: 'synthetic-reviewed-test-v1',
-        target: { model: modelKey },
-        output: {
-          adapterVersion: 1,
-          representation: 'uri',
-          requests: 1,
-          outputs: 1,
-        },
-      },
-    };
     const compiled: Omit<WorkflowGenerationDispatch, 'billableFingerprint'> = {
-      contractVersion: `workflow-media-v1:${quoteSnapshotHash(preparationContract)}`,
-      preparationContract,
-      projectionPolicy: { kind: 'frozen-pricing-profile', version: 1 },
+      contractVersion: 'test-v1',
       modelKey,
       provider,
-      target: JSON.stringify({ model: modelKey }),
+      target: modelKey,
       credentialRoute: { kind: 'platform' },
       quantities: { requests: 1, outputs: 1 },
     };
@@ -84,8 +53,8 @@ export function workflowFundingFixture(
     organizationId: 'org-a',
     actorUserId: 'user-a',
     workflowVersionId: 'version-a',
-    selectedNodeIds: ['video', 'image'],
-    graphFingerprint: quoteSnapshotHash(['video', 'image']),
+    selectedNodeIds: ['video', 'stitch'],
+    graphFingerprint: quoteSnapshotHash(['video', 'stitch']),
     allocations,
   };
   return {
@@ -95,7 +64,7 @@ export function workflowFundingFixture(
     manifestHash: quoteSnapshotHash(manifest),
     holdAmount: '6',
     reservationId: `hold-${executionId}`,
-    expiresAt: '2099-01-01T00:00:00.000Z',
+    expiresAt: '2026-10-01T00:00:00.000Z',
     dispatchClosed: false,
     operations: allocations.map((allocation) => ({
       operationId: allocation.operationId,

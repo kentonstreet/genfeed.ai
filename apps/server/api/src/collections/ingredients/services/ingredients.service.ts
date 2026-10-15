@@ -1,47 +1,30 @@
-import { HIDDEN_LIBRARY_ASSET_STATUSES } from '@api/collections/ingredients/constants/library-asset-listing.constants';
-import {
-  CreateIngredientDto,
-  type IngredientServerCreate,
-} from '@api/collections/ingredients/dto/create-ingredient.dto';
+import { CreateIngredientDto } from '@api/collections/ingredients/dto/create-ingredient.dto';
 import {
   type IngredientServerUpdate,
   UpdateIngredientDto,
 } from '@api/collections/ingredients/dto/update-ingredient.dto';
 import type { IngredientDocument } from '@api/collections/ingredients/schemas/ingredient.schema';
-import { assertTagsVisibleToBrand } from '@api/collections/ingredients/utils/assert-tags-visible-to-brand.util';
 import {
   toIngredientCreateData,
   toIngredientUpdateData,
 } from '@api/collections/ingredients/utils/ingredient-create-data.util';
-import {
-  ingredientGenerationUpdateTargets,
-  preserveIngredientGenerationEntry,
-  stampIngredientGenerationEntry,
-} from '@api/collections/ingredients/utils/ingredient-generation-entry.util';
-import { ingredientPopulationForContext } from '@api/collections/ingredients/utils/ingredient-population.util';
-import { canEditAssetTags } from '@api/collections/ingredients/utils/ingredient-tag-edit-access.util';
 import { AssetGateService } from '@api/collections/organization-settings/services/asset-gate.service';
-import { PersonaReferencesService } from '@api/collections/personas/services/persona-references.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { HandleErrors } from '@api/helpers/decorators/error-handler.decorator';
 import { CategoryPrismaUtil } from '@api/helpers/utils/category-prisma/category-prisma.util';
 import { persistQuoteGroupDisposition } from '@api/helpers/utils/credits/persist-quote-group-completion.util';
 import { persistSubmissionFailure } from '@api/helpers/utils/credits/persist-submission-failure.util';
-import { IngredientFilterUtil } from '@api/helpers/utils/ingredient-filter/ingredient-filter.util';
 import { LibraryShelfUtil } from '@api/helpers/utils/library-shelf/library-shelf.util';
 import { scopedWhere } from '@api/index';
-import { CacheService } from '@api/services/cache/cache.service';
-import { MediaDerivativePreparationService } from '@api/services/media-urls/media-derivative-preparation.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   BaseService,
   type PopulateInput,
 } from '@api/shared/services/base/base.service';
+import { PopulatePatterns } from '@api/shared/utils/populate/populate.util';
 import type { AggregatePaginateResult } from '@api/types/aggregate-paginate-result';
 import {
-  FleetReviewStatus,
   type IngredientCategory,
-  type IngredientOrigin,
   IngredientStatus,
   LibraryShelf,
   MetadataExtension,
@@ -53,17 +36,8 @@ import type {
 import type { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { withExternalMediaFallback } from '@libs/media/media-url.util';
-import {
-  getTenantContext,
-  isCrossOrgUnsafe,
-} from '@libs/prisma/tenant-context';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
-
-/** The request organization writes stay inside; `undefined` for workers and `crossOrgUnsafe`. */
-function requestOrganizationId(): string | undefined {
-  return isCrossOrgUnsafe() ? undefined : getTenantContext()?.organizationId;
-}
 
 @Injectable()
 export class IngredientsService extends BaseService<
@@ -133,54 +107,54 @@ export class IngredientsService extends BaseService<
   }
 
   /**
-   * Character reference hook. A character's primary reference is mirrored to
-   * `Persona.avatarIngredientId`; moving an asset to or from the trash
-   * re-mirrors it for every character using that asset. Resolved lazily
-   * (strict:false) like the asset gate, so this widely provided service gains
-   * no constructor or module edge (it is also provided by the workers domain
-   * module). Best-effort: readers already skip trashed references, so a
-   * failure only leaves the single-image mirror stale until the next write.
+   * Get context-aware population options to prevent over-fetching
+   * @param context - The context determining which fields to populate
    */
-  protected async resyncCharacterReferences(
-    organizationId: string | null | undefined,
-    ingredientIds: readonly string[],
-  ): Promise<void> {
-    if (!organizationId || ingredientIds.length === 0) {
-      return;
-    }
-    try {
-      await this.moduleRef
-        .get(PersonaReferencesService, { strict: false })
-        .resyncForIngredients(organizationId, ingredientIds);
-    } catch (error: unknown) {
-      this.logger.warn(
-        `${this.constructorName} character reference re-sync failed`,
-        { error, ingredientIds, organizationId },
-      );
-    }
-  }
-
   protected getPopulationForContext(
     context: 'list' | 'detail' | 'minimal' | 'create' = 'minimal',
   ): PopulateOption[] {
-    return ingredientPopulationForContext(context);
+    // User details are omitted from list projections unless a caller explicitly
+    // needs them; this keeps ingredient payloads and relation queries bounded.
+    switch (context) {
+      case 'list':
+        return [
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataBasic,
+          PopulatePatterns.promptMinimal,
+          { path: 'tags', select: ['id', 'label'] },
+        ];
+      case 'detail':
+        return [
+          PopulatePatterns.organizationMinimal,
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataFull,
+          PopulatePatterns.promptFull,
+          { path: 'parent', select: ['id', 'category', 'status'] },
+          { path: 'references', select: ['id', 'category', 'status'] },
+          { path: 'tags', select: ['id', 'label'] },
+        ];
+      case 'create':
+        return [
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataBasic,
+          PopulatePatterns.promptMinimal,
+        ];
+      default:
+        return [PopulatePatterns.brandId, { path: 'metadata', select: ['id'] }];
+    }
   }
 
   @HandleErrors('create ingredient', 'ingredients')
   async create(
-    createDto: IngredientServerCreate,
+    createDto: CreateIngredientDto,
     populate: PopulateInput = this.getPopulationForContext('create'),
   ): Promise<IngredientDocument> {
     this.logger.debug(`${this.constructorName} create`, { createDto });
 
     const result = await super.create(
-      toIngredientCreateData({
-        ...createDto,
-        providerData: stampIngredientGenerationEntry(
-          createDto.origin,
-          createDto.providerData,
-        ),
-      } as unknown as Record<string, unknown>) as CreateIngredientDto,
+      toIngredientCreateData(
+        createDto as unknown as Record<string, unknown>,
+      ) as CreateIngredientDto,
       populate,
     );
 
@@ -197,6 +171,44 @@ export class IngredientsService extends BaseService<
     }
 
     return result;
+  }
+
+  /**
+   * Find all children of a parent ingredient.
+   *
+   * @param id - Parent ingredient ID
+   * @param limit - Maximum number of children to return (default: 100, max: 500)
+   * @returns Array of child ingredients
+   */
+  async findChildren(
+    id: string,
+    limit: number = 100,
+  ): Promise<IngredientDocument[]> {
+    try {
+      this.logger.debug(`${this.constructorName} findChildren`, {
+        parentId: id,
+      });
+
+      const safeLimit = Math.min(limit, 500);
+
+      const result = await this.prisma.ingredient.findMany({
+        where: { isDeleted: false, parentId: id },
+        take: safeLimit,
+      });
+
+      this.logger.debug(`${this.constructorName} findChildren success`, {
+        count: result.length,
+        parentId: id,
+      });
+
+      return result as unknown as IngredientDocument[];
+    } catch (error: unknown) {
+      this.logger.error(`${this.constructorName} findChildren failed`, {
+        error,
+        parentId: id,
+      });
+      throw error;
+    }
   }
 
   /**
@@ -235,54 +247,6 @@ export class IngredientsService extends BaseService<
       });
       throw error;
     }
-  }
-
-  /**
-   * One page of an organization's Library assets of a single category, newest
-   * first. Scoped by `organizationId` and `isDeleted: false`, and by `brandId`
-   * when the caller is brand-scoped. Training ingredients and failed, archived
-   * or rejected assets are left out, like the Library list defaults.
-   */
-  async listLibraryAssets(params: {
-    brandId?: string;
-    characterFilter?: Record<string, unknown>;
-    category: IngredientCategory;
-    limit: number;
-    offset: number;
-    organizationId: string;
-    origin?: IngredientOrigin;
-    shelf?: LibraryShelf;
-    tagFilter?: Record<string, unknown>;
-  }): Promise<IngredientDocument[]> {
-    const rows = await this.prisma.ingredient.findMany({
-      include: {
-        metadata: { select: { result: true } },
-        ...IngredientFilterUtil.buildLibraryTagsInclude(),
-      },
-      orderBy: { createdAt: 'desc' },
-      skip: params.offset,
-      take: params.limit,
-      where: scopedWhere(params.organizationId, {
-        ...(params.brandId ? { brandId: params.brandId } : {}),
-        category: params.category,
-        ...(params.shelf
-          ? {
-              AND: [
-                LibraryShelfUtil.buildShelfFilter(params.shelf),
-                ...(params.tagFilter ? [params.tagFilter] : []),
-              ],
-            }
-          : {
-              status: { notIn: [...HIDDEN_LIBRARY_ASSET_STATUSES] },
-              ...(params.tagFilter ?? {}),
-            }),
-        trainingId: null,
-        ...(params.origin ? { origin: params.origin } : {}),
-        ...(params.characterFilter ?? {}),
-      }),
-    });
-
-    return rows.map((row) => this.normalizeDocument(row));
   }
 
   async findAvatarImageById(
@@ -361,19 +325,26 @@ export class IngredientsService extends BaseService<
     }
   }
 
-  /**
-   * Tags an asset may carry (#6011): its brand's tags, organization-wide tags
-   * and the legacy default tags, never another brand's or organization's.
-   */
   async assertClientTags(
     tagIds: string[],
     organizationId: string,
-    brandId?: string | null,
   ): Promise<void> {
-    await assertTagsVisibleToBrand(this.prisma, tagIds, {
-      brandId,
-      organizationId,
+    const ids = [...new Set(tagIds)];
+    if (ids.length === 0) return;
+    if (!organizationId) {
+      throw new BadRequestException(
+        'An organization is required to assign tags',
+      );
+    }
+    const tags = await this.prisma.tag.findMany({
+      where: { id: { in: ids }, organizationId, isDeleted: false },
+      select: { id: true },
     });
+    if (tags.length !== ids.length) {
+      throw new BadRequestException(
+        'Tags must belong to the current organization',
+      );
+    }
   }
 
   async patch(
@@ -387,26 +358,8 @@ export class IngredientsService extends BaseService<
       const data = this.normalizeData(
         toIngredientUpdateData(updateDto as unknown as Record<string, unknown>),
       );
-      // In a request the row is read, written and re-read under its organization.
-      const organizationId = requestOrganizationId();
-      const rowWhere = organizationId ? { id, organizationId } : { id };
-      const current = await this.findOne(rowWhere);
+      const current = await this.findOne({ id });
       if (!current) throw new NotFoundException('Ingredient', id);
-      if (Object.hasOwn(data, 'providerData'))
-        data.providerData = preserveIngredientGenerationEntry(
-          data.providerData,
-          current.providerData,
-        );
-      if (
-        current.reviewStatus &&
-        (updateDto.status === IngredientStatus.VALIDATED ||
-          updateDto.status === IngredientStatus.REJECTED)
-      ) {
-        data.reviewStatus =
-          updateDto.status === IngredientStatus.VALIDATED
-            ? FleetReviewStatus.APPROVED
-            : FleetReviewStatus.REJECTED;
-      }
       const completed = current?.organizationId
         ? await persistQuoteGroupDisposition(
             this.prisma,
@@ -430,11 +383,7 @@ export class IngredientsService extends BaseService<
         throw new NotFoundException('Ingredient', id);
       }
 
-      if (Object.hasOwn(updateDto, 'isDeleted')) {
-        await this.resyncCharacterReferences(current.organizationId, [id]);
-      }
-
-      const result = await this.findOne(rowWhere, populate);
+      const result = await this.findOne({ id }, populate);
 
       if (!result) {
         this.logger.error(
@@ -442,17 +391,6 @@ export class IngredientsService extends BaseService<
           { id },
         );
         throw new NotFoundException('Ingredient', id);
-      }
-
-      try {
-        await this.moduleRef
-          .get(CacheService, { strict: false })
-          .invalidateByTags(['ingredients']);
-      } catch (error: unknown) {
-        this.logger.warn(
-          `${this.constructorName} could not invalidate the Library list cache`,
-          { error },
-        );
       }
 
       this.logger.debug(`${this.constructorName} patch success`, { id });
@@ -463,40 +401,6 @@ export class IngredientsService extends BaseService<
         await this.fireAssetGateForOrganizations([result.organizationId]);
       }
 
-      if (
-        result.organizationId &&
-        result.s3Key &&
-        (updateDto.status === IngredientStatus.GENERATED ||
-          updateDto.status === IngredientStatus.UPLOADED ||
-          updateDto.scope === 'PUBLIC')
-      ) {
-        try {
-          await this.moduleRef
-            .get(MediaDerivativePreparationService, { strict: false })
-            .enqueue(result.organizationId, result.id);
-          if (result.isPublic || result.scope === 'PUBLIC') {
-            const preparation = this.moduleRef.get(
-              MediaDerivativePreparationService,
-              { strict: false },
-            );
-            await preparation.enqueue(
-              result.organizationId,
-              result.id,
-              'public-share',
-            );
-            await preparation.enqueue(
-              result.organizationId,
-              result.id,
-              'public-og',
-            );
-          }
-        } catch (error: unknown) {
-          this.logger.warn('Protected preview preparation requires retry', {
-            id,
-            error,
-          });
-        }
-      }
       return result;
     } catch (error: unknown) {
       this.logger.error(`${this.constructorName} patch failed`, {
@@ -506,20 +410,6 @@ export class IngredientsService extends BaseService<
       });
       throw error;
     }
-  }
-
-  /** Soft-delete one ingredient, keyed by the request organization inside a request. */
-  override async remove(id: string): Promise<IngredientDocument | null> {
-    const organizationId = requestOrganizationId();
-    const removed = organizationId
-      ? await this.patchOneWhere(scopedWhere(organizationId, { id }), {
-          isDeleted: true,
-        })
-      : await super.remove(id);
-    if (removed) {
-      await this.resyncCharacterReferences(removed.organizationId, [id]);
-    }
-    return removed;
   }
 
   async patchAll(
@@ -546,43 +436,21 @@ export class IngredientsService extends BaseService<
       const data = this.normalizeData(
         updateData,
       ) as Prisma.IngredientUpdateManyMutationInput;
-      const replacesProviderData = Object.hasOwn(updateData, 'providerData');
       const owners = await this.findAll(
         {
           where,
-          select: {
-            organizationId: true,
-            ...(replacesProviderData ? { id: true, providerData: true } : {}),
-          },
+          select: { organizationId: true },
         },
         { pagination: false },
         false,
       );
-      // A tenant request never writes platform rows (`organizationId: null`).
-      const isTenantRequest = requestOrganizationId() !== undefined;
-      const targets = ingredientGenerationUpdateTargets(
-        owners.docs,
-        replacesProviderData,
-        isTenantRequest,
-      );
       const targetOrganizationIds = [
-        ...new Set(targets.map((target) => target.organizationId)),
+        ...new Set(owners.docs.map((row) => row.organizationId ?? null)),
       ];
       let modifiedCount = 0;
-      for (const target of targets) {
-        const { organizationId } = target;
-        const targetData = replacesProviderData
-          ? {
-              ...data,
-              providerData: preserveIngredientGenerationEntry(
-                data.providerData,
-                target.providerData,
-              ) as Prisma.InputJsonValue,
-            }
-          : data;
+      for (const organizationId of targetOrganizationIds) {
         const ownedWhere = {
           ...where,
-          ...(target.id ? { AND: [where], id: target.id } : {}),
           organizationId,
           isDeleted: where.isDeleted ?? false,
         };
@@ -590,13 +458,13 @@ export class IngredientsService extends BaseService<
           (await persistQuoteGroupDisposition(
             this.prisma,
             ownedWhere,
-            targetData,
+            data,
             update.isGenerationFailureConfirmed === true,
           )) ??
           (await persistSubmissionFailure(
             this.prisma,
             ownedWhere,
-            targetData,
+            data,
             update.isGenerationFailureConfirmed === true,
           ));
         const result =
@@ -604,11 +472,10 @@ export class IngredientsService extends BaseService<
           (await this.prisma.ingredient.updateMany({
             where: {
               AND: [where],
-              ...(target.id ? { id: target.id } : {}),
               organizationId,
               isDeleted: where.isDeleted ?? false,
             },
-            data: targetData,
+            data,
           }));
         modifiedCount += result.count;
       }
@@ -635,61 +502,21 @@ export class IngredientsService extends BaseService<
   }
 
   /**
-   * Soft-delete one live ingredient the caller may edit.
-   *
-   * Missing, already-deleted, other-organization, and non-editable rows return
-   * null. The route maps that to 404 so those cases are not distinguishable.
-   * The write repeats the organization and live-row predicates.
-   */
-  async softDeleteOneScoped(params: {
-    id: string;
-    organizationId: string;
-    editor: { brandId: string; userId: string };
-  }): Promise<IngredientDocument | null> {
-    const { id, organizationId, editor } = params;
-
-    if (!id) {
-      return null;
-    }
-
-    const existing = await this.prisma.ingredient.findFirst({
-      select: { id: true, userId: true, scope: true, brandId: true },
-      where: scopedWhere(organizationId, { id }),
-    });
-
-    if (
-      !existing ||
-      !canEditAssetTags(existing, {
-        brandId: editor.brandId,
-        userIds: [editor.userId],
-      })
-    ) {
-      return null;
-    }
-
-    const deleted = await this.patchOneWhere(
-      scopedWhere(organizationId, { id }),
-      { isDeleted: true },
-    );
-    if (deleted) {
-      await this.resyncCharacterReferences(organizationId, [id]);
-    }
-    return deleted;
-  }
-
-  /**
    * Soft-delete a caller-supplied id list in two queries.
    *
-   * Both queries require the active organization and live rows. The existing
-   * asset edit rule selects owned, same-brand, or organization-shared rows;
-   * inaccessible, missing, and already-deleted ids are reported as failed.
+   * Replaces a per-id `findOne` + `patch` loop. Permission semantics are
+   * unchanged: an id is deletable when it exists, is not already deleted, and
+   * the caller either owns it or shares its organization. Everything else —
+   * missing, already deleted, or foreign on both axes — comes back in
+   * `failed`. `findByIds` cannot be reused here: it is organization-scoped
+   * only and would drop ingredients the caller owns in another org.
    */
   async bulkSoftDeleteScoped(params: {
     ids: string[];
     organizationId: string;
-    editor: { brandId: string; userId: string };
+    userId: string;
   }): Promise<{ deleted: string[]; failed: string[] }> {
-    const { ids, organizationId, editor } = params;
+    const { ids, organizationId, userId } = params;
 
     if (!ids || ids.length === 0) {
       return { deleted: [], failed: [] };
@@ -698,19 +525,16 @@ export class IngredientsService extends BaseService<
     const uniqueIds = [...new Set(ids)];
 
     const permitted = await this.prisma.ingredient.findMany({
-      select: { id: true, userId: true, scope: true, brandId: true },
-      where: scopedWhere(organizationId, { id: { in: uniqueIds } }),
+      select: { id: true },
+      where: {
+        id: { in: uniqueIds },
+        isDeleted: false,
+        OR: [{ userId }, { organizationId }],
+      },
     });
 
     const permittedIds = new Set(
-      permitted
-        .filter((row) =>
-          canEditAssetTags(row, {
-            brandId: editor.brandId,
-            userIds: [editor.userId],
-          }),
-        )
-        .map((row) => row.id),
+      permitted.map((row: { id: string }) => row.id),
     );
 
     const deleted: string[] = [];
@@ -729,9 +553,12 @@ export class IngredientsService extends BaseService<
       // visible at the mutation site.
       await this.prisma.ingredient.updateMany({
         data: { isDeleted: true },
-        where: scopedWhere(organizationId, { id: { in: [...permittedIds] } }),
+        where: {
+          id: { in: [...permittedIds] },
+          isDeleted: false,
+          OR: [{ userId }, { organizationId }],
+        },
       });
-      await this.resyncCharacterReferences(organizationId, [...permittedIds]);
     }
 
     this.logger.debug(`${this.constructorName} bulkSoftDeleteScoped success`, {
@@ -791,6 +618,125 @@ export class IngredientsService extends BaseService<
   }
 
   /**
+   * Get KPI metrics for ingredients
+   */
+  async getKPIMetrics(
+    organizationId: string,
+    category?: string,
+  ): Promise<{
+    total: number;
+    generated: number;
+    rejected: number;
+    validated: number;
+    byCategory?: Record<
+      string,
+      { generated: number; rejected: number; validated: number }
+    >;
+  }> {
+    try {
+      this.logger.debug(`${this.constructorName} getKPIMetrics`, {
+        category,
+        organizationId,
+      });
+
+      const baseWhere: Prisma.IngredientWhereInput = scopedWhere(
+        organizationId,
+        {
+          ...CategoryPrismaUtil.toIngredientCategoryFilter(category),
+        },
+      );
+
+      if (category) {
+        const [total, generated, rejected, validated] = await Promise.all([
+          this.prisma.ingredient.count({ where: baseWhere }),
+          this.prisma.ingredient.count({
+            where: {
+              ...baseWhere,
+              status: IngredientStatus.GENERATED,
+            },
+          }),
+          this.prisma.ingredient.count({
+            where: {
+              ...baseWhere,
+              status: IngredientStatus.REJECTED,
+            },
+          }),
+          this.prisma.ingredient.count({
+            where: {
+              ...baseWhere,
+              status: IngredientStatus.VALIDATED,
+            },
+          }),
+        ]);
+
+        return { generated, rejected, total, validated };
+      }
+
+      // All categories
+      const [total, generated, rejected, validated] = await Promise.all([
+        this.prisma.ingredient.count({ where: baseWhere }),
+        this.prisma.ingredient.count({
+          where: {
+            ...baseWhere,
+            status: IngredientStatus.GENERATED,
+          },
+        }),
+        this.prisma.ingredient.count({
+          where: {
+            ...baseWhere,
+            status: IngredientStatus.REJECTED,
+          },
+        }),
+        this.prisma.ingredient.count({
+          where: {
+            ...baseWhere,
+            status: IngredientStatus.VALIDATED,
+          },
+        }),
+      ]);
+
+      // Build per-category breakdown
+      const categoryGroups = await this.prisma.ingredient.groupBy({
+        by: ['category', 'status'],
+        where: baseWhere,
+        _count: { id: true },
+      });
+
+      const byCategory: Record<
+        string,
+        { generated: number; rejected: number; validated: number }
+      > = {};
+
+      for (const group of categoryGroups) {
+        if (!group.category) continue;
+        if (!byCategory[group.category]) {
+          byCategory[group.category] = {
+            generated: 0,
+            rejected: 0,
+            validated: 0,
+          };
+        }
+        if (group.status === IngredientStatus.GENERATED) {
+          byCategory[group.category].generated = group._count.id;
+        } else if (group.status === IngredientStatus.REJECTED) {
+          byCategory[group.category].rejected = group._count.id;
+        } else if (group.status === IngredientStatus.VALIDATED) {
+          byCategory[group.category].validated = group._count.id;
+        }
+      }
+
+      return { byCategory, generated, rejected, total, validated };
+    } catch (error: unknown) {
+      this.logger.error(`${this.constructorName} getKPIMetrics failed`, {
+        category,
+        error,
+        organizationId,
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Aggregate the counts behind the Library sidebar: one count per asset type,
    * one per shelf, plus Starred, Trash, and the storage meter.
    *
@@ -800,8 +746,9 @@ export class IngredientsService extends BaseService<
    * renders each number as "the size of this saved query", never as a share of
    * a whole.
    *
-   * Seven tenant-scoped (`scopedWhere`) queries; one `groupBy` yields the type
-   * breakdown, three shelves and the `fileSize` sum for the storage meter.
+   * Six queries, all tenant-scoped through `scopedWhere`. The type breakdown and
+   * three of the six shelves fall out of a single `groupBy` that also carries the
+   * `fileSize` sum, so the storage meter costs nothing extra.
    */
   @HandleErrors('get library summary', 'ingredients')
   async getLibrarySummary(
@@ -812,7 +759,6 @@ export class IngredientsService extends BaseService<
 
     const [
       groups,
-      referencesCount,
       unsortedCount,
       needsReviewCount,
       approvedCount,
@@ -824,12 +770,6 @@ export class IngredientsService extends BaseService<
         _sum: { fileSize: true },
         by: ['category', 'status'],
         where: scopedWhere(organizationId, { ...filters }),
-      }),
-      this.prisma.ingredient.count({
-        where: scopedWhere(organizationId, {
-          ...filters,
-          ...LibraryShelfUtil.buildShelfFilter(LibraryShelf.REFERENCES),
-        }),
       }),
       this.prisma.ingredient.count({
         where: scopedWhere(organizationId, {
@@ -890,14 +830,15 @@ export class IngredientsService extends BaseService<
     return {
       byCategory,
       byShelf: {
-        [LibraryShelf.REFERENCES]: referencesCount,
         [LibraryShelf.GENERATING]: countOf(IngredientStatus.PROCESSING),
         [LibraryShelf.UNSORTED]: unsortedCount,
         [LibraryShelf.NEEDS_REVIEW]: needsReviewCount,
         [LibraryShelf.APPROVED]: approvedCount,
-        [LibraryShelf.REJECTED]: countOf(IngredientStatus.REJECTED),
         [LibraryShelf.FAILED]: countOf(IngredientStatus.FAILED),
-        [LibraryShelf.ARCHIVED]: countOf(IngredientStatus.ARCHIVED),
+        [LibraryShelf.ARCHIVED]: countOf(
+          IngredientStatus.ARCHIVED,
+          IngredientStatus.REJECTED,
+        ),
       },
       starredCount,
       storageBytes,

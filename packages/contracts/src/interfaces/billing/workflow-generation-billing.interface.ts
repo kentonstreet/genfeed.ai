@@ -4,79 +4,8 @@ import type {
   ProviderQuoteDimensions,
 } from './model-pricing.interface';
 
-export type WorkflowGenerationProviderTarget =
-  | { model: string }
-  | { version: string };
-
-export type WorkflowReviewedOutputContract =
-  | {
-      modelKey: string;
-      provider: 'replicate';
-      endpoint: string;
-      version: string;
-      target: WorkflowGenerationProviderTarget;
-      output: {
-        adapterVersion: 1;
-        representation: 'uri' | 'uri-array';
-        requests: 1;
-        outputs: 1;
-        countInput?: string;
-      };
-    }
-  | {
-      modelKey: string;
-      provider: 'fal';
-      endpoint: string;
-      version: string;
-      target: { endpoint: string };
-      output: {
-        adapterVersion: 1;
-        representation: 'video-object';
-        requests: 1;
-        outputs: 1;
-        countInput?: never;
-      };
-    };
-
-export interface WorkflowMediaPreparationContract {
-  version: 1;
-  preparationVersion: 1;
-  actionId: 'imageGen' | 'videoGen';
-  brief:
-    | {
-        briefVersion: number;
-        compilerId: string;
-        compilerVersion: number;
-        profileId: string;
-        profileVersion: number;
-        modelKey: string;
-        mediaKind: 'image' | 'video';
-      }
-    | {
-        kind: 'reviewed-provider-schema';
-        modelKey: string;
-        mediaKind: 'video';
-        schemaVersion: string;
-        schemaFamily: string;
-        inputSchemaHash: string;
-        adapterVersion: 1;
-      };
-  reviewedOutput: WorkflowReviewedOutputContract;
-}
-
-export type WorkflowMediaProjectionPolicy =
-  | { kind: 'frozen-pricing-profile'; version: 1 }
-  | {
-      kind: 'exact-provider-input';
-      version: 1;
-      inputKeys: string[];
-      inputFingerprint: string;
-    };
-
 export interface WorkflowGenerationDispatch {
   contractVersion: string;
-  preparationContract: WorkflowMediaPreparationContract;
-  projectionPolicy: WorkflowMediaProjectionPolicy;
   provider: string;
   modelKey: string;
   target: string;

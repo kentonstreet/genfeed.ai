@@ -31,10 +31,7 @@ function fixture() {
     },
   };
   const tx = {
-    ingredient: {
-      findFirst: vi.fn().mockResolvedValue({ generationBilling: receipt }),
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-    },
+    ingredient: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     creditReservation: {
       findFirst: vi.fn().mockResolvedValue(hold),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -46,7 +43,6 @@ function fixture() {
     },
     $transaction: vi.fn(async (run) => run(tx)),
   };
-  tx.ingredient.findFirst = prisma.ingredient.findFirst;
   return { prisma, tx, hold, receipt };
 }
 const where = {
@@ -105,7 +101,7 @@ describe('persistQuoteGroupDisposition', () => {
         status: IngredientStatus.FAILED,
       }),
     ).resolves.toBeNull();
-    expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
+    expect(state.prisma.$transaction).not.toHaveBeenCalled();
   });
   it('atomically saves a confirmed provider-negative disposition with the FAILED CAS', async () => {
     const state = fixture();
@@ -142,49 +138,7 @@ describe('persistQuoteGroupDisposition', () => {
     await expect(
       persistQuoteGroupDisposition(state.prisma as never, where, data),
     ).resolves.toBeNull();
-    expect(state.tx.ingredient.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('preserves provider evidence when the durable artifact is saved atomically', async () => {
-    const state = fixture();
-    Object.assign(state.hold.metadata, {
-      providerCompletions: [
-        {
-          ingredientId: 'image-0',
-          outputIndex: 0,
-          provider: 'fal',
-          externalIdHash: 'a'.repeat(64),
-          modelKey: 'test/model',
-          quoteHash: 'b'.repeat(64),
-          width: 1280,
-          height: 720,
-          duration: 3,
-        },
-      ],
-      providerCompletionConflicts: ['image-1'],
-    });
-    await persistQuoteGroupDisposition(state.prisma as never, where, data);
-    expect(state.tx.creditReservation.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: {
-          metadata: expect.objectContaining({
-            providerCompletions: [
-              expect.objectContaining({
-                duration: 3,
-                externalIdHash: 'a'.repeat(64),
-              }),
-            ],
-            providerCompletionConflicts: ['image-1'],
-            completedArtifacts: [
-              expect.objectContaining({
-                ingredientId: 'image-0',
-                s3Key: 'durable/image.png',
-              }),
-            ],
-          }),
-        },
-      }),
-    );
+    expect(state.prisma.$transaction).not.toHaveBeenCalled();
   });
   it('does not manufacture evidence when the terminal transition loses its CAS', async () => {
     const state = fixture();

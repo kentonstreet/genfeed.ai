@@ -1,8 +1,10 @@
 import { GENFEED_ACTION_NODE_TYPE } from '@genfeedai/actions';
+import type {
+  ExecutableNode,
+  ExecutionContext,
+} from '@genfeedai/workflows/engine';
+import { unwrapExecutableActionNode } from '@genfeedai/workflows/engine';
 import { describe, expect, it, vi } from 'vitest';
-import type { ExecutionContext } from '../../execution/engine';
-import type { ExecutableNode } from '../../types';
-import { unwrapExecutableActionNode } from '../../utils/action-node';
 import { ImageGenExecutor } from './image-gen-executor';
 import {
   buildImageGenerationResolverRequest,
@@ -53,13 +55,15 @@ describe('shared media resolver preparation and dispatch', () => {
     );
     const inputs = new Map<string, unknown>([['prompt', 'upstream']]);
     const prepared = buildImageGenerationResolverRequest(node, inputs);
-    const resolver = vi.fn().mockResolvedValue({
-      id: 'image',
-      status: 'PROCESSING',
-      model: 'test/image',
-      provider: 'replicate',
-      imageUrl: 'pending',
-    });
+    const resolver = vi
+      .fn()
+      .mockResolvedValue({
+        id: 'image',
+        status: 'PROCESSING',
+        model: 'test/image',
+        provider: 'replicate',
+        imageUrl: 'pending',
+      });
     const executor = new ImageGenExecutor();
     executor.setResolver(resolver);
     await executor.execute({ node, inputs, context });
@@ -81,13 +85,15 @@ describe('shared media resolver preparation and dispatch', () => {
     );
     const inputs = new Map<string, unknown>();
     const prepared = buildVideoGenerationResolverRequest(node, inputs);
-    const resolver = vi.fn().mockResolvedValue({
-      id: 'video',
-      status: 'PROCESSING',
-      model: 'test/video',
-      provider: 'replicate',
-      videoUrl: 'pending',
-    });
+    const resolver = vi
+      .fn()
+      .mockResolvedValue({
+        id: 'video',
+        status: 'PROCESSING',
+        model: 'test/video',
+        provider: 'replicate',
+        videoUrl: 'pending',
+      });
     const executor = new VideoGenExecutor();
     executor.setResolver(resolver);
     await executor.execute({ node, inputs, context });

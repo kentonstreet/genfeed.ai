@@ -130,7 +130,6 @@ describe('async generation settlement', () => {
       }),
     };
     const prisma = {
-      crunGenerationTask: { findFirst: vi.fn().mockResolvedValue(null) },
       creditReservation: {
         findMany: vi.fn(async () =>
           [...holds.values()]
@@ -176,12 +175,6 @@ describe('async generation settlement', () => {
       } as never,
       logger as never,
       prisma as never,
-      {
-        resolve: vi
-          .fn()
-          .mockResolvedValue({ isTrialSubject: false, threshold: null }),
-      } as never,
-      { sendTrialCreditsLow: vi.fn() } as never,
     );
   });
 

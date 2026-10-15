@@ -1,6 +1,7 @@
-import { PlatformSettingsService } from '@api/collections/platform-settings/services/platform-settings.service';
-import { buildReplicateStructuredPrompt } from '@api/services/integrations/llm/replicate-structured-prompt.util';
-import { runStructuredCompletion } from '@api/services/integrations/llm/structured-output.util';
+import {
+  runStructuredCompletion,
+  toStructuredJsonSchema,
+} from '@api/services/integrations/llm/structured-output.util';
 import type {
   OpenRouterMessage,
   OpenRouterMessageContentPart,
@@ -171,7 +172,6 @@ export class ReplicateService {
   };
 
   constructor(
-    private readonly platformSettingsService: PlatformSettingsService,
     private readonly configService: ConfigService,
     private readonly loggerService: LoggerService,
     @Optional() private readonly openRouterService?: OpenRouterService,
@@ -280,9 +280,7 @@ export class ReplicateService {
     try {
       // Use provided trainer version or default from config
       const versionString =
-        trainerVersion ||
-        (await this.platformSettingsService.getFeatureSettings())
-          .replicateTrainerModel;
+        trainerVersion || this.configService.get('REPLICATE_MODELS_TRAINER');
 
       // Expect format like: "replicate/fast-flux-trainer:<hash>"
       const [ownerModel, version] = String(versionString).split(':');
@@ -339,11 +337,9 @@ export class ReplicateService {
 
           await client.models.create(destOwner, destModel, {
             hardware:
-              (await this.platformSettingsService.getFeatureSettings())
-                .replicateModelHardware || 'gpu-t4',
+              this.configService.get('REPLICATE_MODEL_HARDWARE') || 'gpu-t4',
             visibility:
-              (await this.platformSettingsService.getFeatureSettings())
-                .replicateModelVisibility || 'private',
+              this.configService.get('REPLICATE_MODEL_VISIBILITY') || 'private',
           });
 
           const training = await attempt();
@@ -432,18 +428,17 @@ export class ReplicateService {
       : this.runModel(version, input, apiKeyOverride);
   }
 
-  public async enhanceVideo(
+  public enhanceVideo(
     videoUrl: string,
     apiKeyOverride?: string,
   ): Promise<string> {
     return this.runModel(
       'topazlabs/video-upscale',
       {
-        target_fps: (await this.platformSettingsService.getFeatureSettings())
-          .replicateTargetFps,
-        target_resolution: (
-          await this.platformSettingsService.getFeatureSettings()
-        ).replicateTargetResolution,
+        target_fps: this.configService.get('REPLICATE_TARGET_FPS'),
+        target_resolution: this.configService.get(
+          'REPLICATE_TARGET_RESOLUTION',
+        ),
         video: videoUrl,
       },
       apiKeyOverride,
@@ -583,13 +578,12 @@ export class ReplicateService {
     params: ReplicateStructuredTextParams<TResult>,
     apiKeyOverride?: string,
   ): Promise<TResult> {
-    const { input, beforeAttempt, onAttempt, prompt, schema, schemaName } =
-      params;
-    const schemaPrompt = buildReplicateStructuredPrompt(
+    const { input, onAttempt, prompt, schema, schemaName } = params;
+    const schemaPrompt = [
       prompt,
-      schema,
-      schemaName,
-    );
+      `Answer with a single JSON document matching this JSON Schema named "${schemaName}":`,
+      JSON.stringify(toStructuredJsonSchema(schema)),
+    ].join('\n\n');
 
     return runStructuredCompletion({
       attempt: async (repair) => {
@@ -603,7 +597,6 @@ export class ReplicateService {
               ].join('\n\n')
             : schemaPrompt,
         };
-        await beforeAttempt?.(attemptInput);
         const output = await this.generateTextCompletionSync(
           modelIdentifier,
           attemptInput,
@@ -822,12 +815,11 @@ export class ReplicateService {
         input.initial_prompt = options.prompt;
       }
 
-      // Community models require a pinned version; the model endpoint is official-only.
+      // Use openai/whisper model on Replicate
       const client = this.getClientForRequest(apiKeyOverride);
       const prediction = await client.predictions.create({
         input,
-        version:
-          '8099696689d249cf8b122d833c36ac3f75505c666a395ca40ef26f68e7d3d16e',
+        model: 'openai/whisper',
       });
 
       // Wait for the prediction to complete
@@ -835,8 +827,6 @@ export class ReplicateService {
 
       // Parse the Whisper output
       const output = result.output as {
-        transcription?: string;
-        detected_language?: string;
         text?: string;
         language?: string;
         segments?: Array<{
@@ -846,9 +836,6 @@ export class ReplicateService {
           words?: Array<{ start: number; end: number; word: string }>;
         }>;
       };
-
-      const text = output.transcription ?? output.text ?? '';
-      const language = output.detected_language ?? output.language ?? 'unknown';
 
       // Calculate duration from segments if available
       let duration = 0;
@@ -860,16 +847,16 @@ export class ReplicateService {
       this.loggerService.log(`${url} completed`, {
         duration,
         id: result.id,
-        language,
-        textLength: text.length,
+        language: output.language || 'unknown',
+        textLength: output.text?.length || 0,
       });
 
       return {
         confidence: undefined, // Whisper doesn't provide confidence scores
         duration,
-        language,
+        language: output.language || 'unknown',
         segments: output.segments,
-        text,
+        text: output.text || '',
       };
     } catch (error: unknown) {
       this.loggerService.error(`${url} failed`, error);

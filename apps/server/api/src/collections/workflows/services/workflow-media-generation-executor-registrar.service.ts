@@ -1,17 +1,10 @@
 import { MetadataEntity } from '@api/collections/metadata/entities/metadata.entity';
-import { FalVideoGenerationProviderAdapter } from '@api/collections/videos/services/providers/fal-video-generation-provider.adapter';
-import {
-  currentWorkflowGenerationDispatch,
-  runWithWorkflowGenerationDispatch,
-} from '@api/collections/workflow-executions/services/workflow-generation-dispatch.context';
 import { WorkflowEngineExecutorHelperService } from '@api/collections/workflows/services/workflow-engine-executor-helper.service';
-import { WorkflowFalOutputFinalizationService } from '@api/collections/workflows/services/workflow-fal-output-finalization.service';
-import type { ValidatedWorkflowMediaDispatch } from '@api/collections/workflows/services/workflow-media-billing-plan.service';
-import { WorkflowMediaDispatchAdmissionService } from '@api/collections/workflows/services/workflow-media-dispatch-admission.service';
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
-import { BusinessLogicException } from '@api/exceptions/business-logic.exception';
 import { ByokService } from '@api/services/byok/byok.service';
+import { FilesClientService } from '@api/services/files-microservice/client/files-client.service';
 import { ElevenLabsService } from '@api/services/integrations/elevenlabs/services/elevenlabs.service';
+import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
 import { ReplicateService } from '@api/services/integrations/replicate/services/replicate.service';
 import { MediaLocalizationService } from '@api/services/media-localization/media-localization.service';
 import {
@@ -26,6 +19,7 @@ import {
   type ExecutableNode,
   type ExecutionContext,
   ImageGenExecutor,
+  LipSyncExecutor,
   LocalizeSpeechExecutor,
   ReframeExecutor,
   TextToSpeechExecutor,
@@ -42,21 +36,19 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
     private readonly helper: WorkflowEngineExecutorHelperService,
     private readonly loggerService: LoggerService,
     private readonly providerPlan: WorkflowMediaProviderPlanService,
+    @Optional() private readonly heyGenService?: HeyGenService,
     @Optional() private readonly elevenLabsService?: ElevenLabsService,
     @Optional() private readonly replicateService?: ReplicateService,
+    @Optional() private readonly filesClientService?: FilesClientService,
     @Optional() private readonly byokService?: ByokService,
     @Optional()
     private readonly mediaLocalizationService?: MediaLocalizationService,
-    @Optional()
-    private readonly dispatchAdmission?: WorkflowMediaDispatchAdmissionService,
-    @Optional() private readonly falVideo?: FalVideoGenerationProviderAdapter,
-    @Optional()
-    private readonly falOutputFinalization?: WorkflowFalOutputFinalizationService,
   ) {}
 
   register(engine: WorkflowEngine): void {
     this.registerImageGenExecutor(engine);
     this.registerVideoGenExecutor(engine);
+    this.registerLipSyncExecutor(engine);
     this.registerLocalizationExecutors(engine);
     this.registerTextToSpeechExecutor(engine);
     this.registerReframeExecutor(engine);
@@ -72,43 +64,39 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
     const replicateService = this.replicateService;
 
     imageGenExecutor.setResolver(async (model, params, context, node) => {
-      const funded = await this.authorizeMediaDispatch(node, context);
-      const prepared =
-        funded?.prepared.actionId === 'imageGen'
-          ? funded.prepared
-          : await this.providerPlan.prepareImage({
-              model,
-              params,
-              context,
-              node,
-            });
-      const byok = funded
-        ? funded.credential
-        : await this.byokService?.resolveApiKey(
-            context.organizationId,
-            ByokProvider.REPLICATE,
-          );
-      const pendingOutput = await this.dispatchFundedMedia(funded, () =>
-        this.helper.createAndLinkProcessingOutput({
-          continuation: {
-            actionId: 'imageGen',
-            context,
-            isByok: Boolean(byok),
-            node,
-            provider: 'replicate',
-          },
-          output: prepared.output,
-          resultUrl: (ingredientId) =>
-            this.helper.buildImageIngredientUrl(ingredientId),
-          runProvider: (_ingredientId, continuationId) =>
-            replicateService.runModel(
-              model,
-              prepared.input,
-              byok?.apiKey,
-              continuationId,
-            ),
-        }),
+      const prepared = await this.providerPlan.prepareImage({
+        model,
+        params,
+        context,
+        node,
+      });
+      // #5294 resolve the org's Replicate key once, the same way the
+      // lip-sync/TTS executors below do, so a BYOK credit bypass on this
+      // node's generation charge (VideoGenerationCreditsService et al.)
+      // can never disagree with which key actually pays for dispatch.
+      const byok = await this.byokService?.resolveApiKey(
+        context.organizationId,
+        ByokProvider.REPLICATE,
       );
+      const pendingOutput = await this.helper.createAndLinkProcessingOutput({
+        continuation: {
+          actionId: 'imageGen',
+          context,
+          isByok: Boolean(byok),
+          node,
+          provider: 'replicate',
+        },
+        output: prepared.output,
+        resultUrl: (ingredientId) =>
+          this.helper.buildImageIngredientUrl(ingredientId),
+        runProvider: (_ingredientId, continuationId) =>
+          replicateService.runModel(
+            model,
+            prepared.input,
+            byok?.apiKey,
+            continuationId,
+          ),
+      });
 
       return {
         generationBriefEvidence: prepared.generationBriefEvidence,
@@ -130,7 +118,7 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
   }
 
   private registerVideoGenExecutor(engine: WorkflowEngine): void {
-    if (!this.replicateService && !this.falVideo) {
+    if (!this.replicateService) {
       return;
     }
 
@@ -138,104 +126,39 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
     const replicateService = this.replicateService;
 
     videoGenExecutor.setResolver(async (model, params, context, node) => {
-      const funded = await this.authorizeMediaDispatch(node, context);
-      const prepared =
-        funded?.prepared.actionId === 'videoGen'
-          ? funded.prepared
-          : await this.providerPlan.prepareVideo({
-              model,
-              params,
-              context,
-              node,
-            });
-      if (prepared.provider !== 'replicate') {
-        if (!funded || !this.falVideo || !this.falOutputFinalization) {
-          throw new BusinessLogicException(
-            'Fal workflow execution requires its funded native dispatch adapter',
-          );
-        }
-        const falVideo = this.falVideo;
-        const finalization = this.falOutputFinalization;
-        const pending = await this.dispatchFundedMedia(funded, () =>
-          this.helper.createAndLinkProcessingOutput({
-            continuation: {
-              actionId: 'videoGen',
-              context,
-              isByok: Boolean(funded.credential),
-              node,
-              provider: 'fal',
-            },
-            output: prepared.output,
-            resultUrl: (id) => this.helper.buildVideoIngredientUrl(id),
-            runProvider: async () => {
-              const result = await falVideo.generate({
-                apiKeyOverride: funded.credential?.apiKey,
-                model: prepared.model,
-                modelProvider: 'fal',
-                organizationId: context.organizationId,
-                preparedFalDispatch: prepared.preparedFalDispatch,
-                prompt: prepared.output.generationPrompt ?? '',
-                promptParams: prepared.input,
-                width: 0,
-                height: 0,
-              });
-              if (result.completion !== 'remote-output' || !result.externalId) {
-                throw new BusinessLogicException(
-                  'Fal returned no accepted remote video',
-                );
-              }
-              return {
-                externalId: result.externalId,
-                completionQuantities: result.completionQuantities,
-              };
-            },
-            onProviderAccepted: async (_output, continuationId) => {
-              await finalization.finalize(
-                continuationId,
-                context.organizationId,
-              );
-            },
-          }),
-        );
-        return {
-          generationBriefEvidence: prepared.generationBriefEvidence,
-          generationSource: prepared.generationSource,
-          id: pending.ingredientId,
-          model,
-          provider: 'fal',
-          status: IngredientStatus.PROCESSING,
-          videoUrl: this.helper.buildVideoIngredientUrl(pending.ingredientId),
-        };
-      }
-      if (!replicateService)
-        throw new Error('Replicate workflow provider is unavailable');
-      const byok = funded
-        ? funded.credential
-        : await this.byokService?.resolveApiKey(
-            context.organizationId,
-            ByokProvider.REPLICATE,
-          );
-      const pendingOutput = await this.dispatchFundedMedia(funded, () =>
-        this.helper.createAndLinkProcessingOutput({
-          continuation: {
-            actionId: 'videoGen',
-            context,
-            isByok: Boolean(byok),
-            node,
-            provider: 'replicate',
-          },
-          output: prepared.output,
-          resultUrl: (ingredientId) =>
-            this.helper.buildVideoIngredientUrl(ingredientId),
-          runProvider: (_ingredientId, continuationId) =>
-            replicateService.runModel(
-              model,
-              prepared.input,
-              byok?.apiKey,
-              continuationId,
-            ),
-        }),
+      const prepared = await this.providerPlan.prepareVideo({
+        model,
+        params,
+        context,
+        node,
+      });
+      // #5294 resolve the org's Replicate key once, the same way the
+      // lip-sync/TTS executors below do, so a BYOK credit bypass on this
+      // node's generation charge (VideoGenerationCreditsService et al.)
+      // can never disagree with which key actually pays for dispatch.
+      const byok = await this.byokService?.resolveApiKey(
+        context.organizationId,
+        ByokProvider.REPLICATE,
       );
+      const pendingOutput = await this.helper.createAndLinkProcessingOutput({
+        continuation: {
+          actionId: 'videoGen',
+          context,
+          isByok: Boolean(byok),
+          node,
+          provider: 'replicate',
+        },
+        output: prepared.output,
+        resultUrl: (ingredientId) =>
+          this.helper.buildVideoIngredientUrl(ingredientId),
+        runProvider: (_ingredientId, continuationId) =>
+          replicateService.runModel(
+            model,
+            prepared.input,
+            byok?.apiKey,
+            continuationId,
+          ),
+      });
 
       return {
         generationBriefEvidence: prepared.generationBriefEvidence,
@@ -256,6 +179,136 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
     engine.registerExecutor(
       'videoGen',
       this.helper.wrapEngineExecutor(videoGenExecutor),
+    );
+  }
+
+  private registerLipSyncExecutor(engine: WorkflowEngine): void {
+    const executor = new LipSyncExecutor();
+    executor.setResolver(
+      async (mediaValue, audioValue, options, context, node) => {
+        if (!this.filesClientService)
+          throw new Error('Media file service is unavailable');
+        const media = await this.helper.requireMediaAsset(
+          mediaValue,
+          context.organizationId,
+          [
+            IngredientCategory.VIDEO,
+            IngredientCategory.IMAGE,
+            IngredientCategory.AVATAR,
+          ],
+        );
+        const audio = await this.helper.requireMediaAsset(
+          audioValue,
+          context.organizationId,
+          [
+            IngredientCategory.MUSIC,
+            IngredientCategory.VOICE,
+            IngredientCategory.AUDIO,
+          ],
+        );
+        const configuredBrandId = this.helper.readConfigString(
+          node.config,
+          'brandId',
+        );
+        if (configuredBrandId && configuredBrandId !== media.brandId) {
+          throw new Error('Lip-sync brand must match the source asset brand');
+        }
+        if (audio.brandId !== media.brandId) {
+          throw new Error(
+            'Lip-sync source media and audio must belong to the same brand',
+          );
+        }
+        const isVideo = media.category === IngredientCategory.VIDEO;
+        const mode = isVideo ? 'video' : 'image';
+        if (options.mode && options.mode !== mode) {
+          throw new Error(
+            'Lip-sync mode does not match the selected source asset',
+          );
+        }
+        const model =
+          options.model ??
+          (isVideo ? 'sync/lipsync-2' : MODEL_KEYS.HEYGEN_AVATAR);
+        if (
+          isVideo
+            ? !['sync/lipsync-2', 'sync/lipsync-2-pro'].includes(model)
+            : model !== MODEL_KEYS.HEYGEN_AVATAR
+        ) {
+          throw new Error(
+            'Select a compatible lip-sync model for the source media',
+          );
+        }
+        if (isVideo ? !this.replicateService : !this.heyGenService) {
+          throw new Error('Selected lip-sync provider is unavailable');
+        }
+        const [mediaUrl, audioUrl] = await Promise.all([
+          this.filesClientService.getPresignedDownloadUrl(
+            media.storageKey,
+            media.storageType,
+          ),
+          this.filesClientService.getPresignedDownloadUrl(
+            audio.storageKey,
+            audio.storageType,
+          ),
+        ]);
+        const provider = isVideo ? 'replicate' : 'heygen';
+        const byok = await this.byokService?.resolveApiKey(
+          context.organizationId,
+          isVideo ? ByokProvider.REPLICATE : ByokProvider.HEYGEN,
+        );
+        const pending = await this.helper.createAndLinkProcessingOutput({
+          output: {
+            brandId: media.brandId,
+            category: IngredientCategory.VIDEO,
+            extension: MetadataExtension.MP4,
+            model,
+            organizationId: context.organizationId,
+            userId: context.userId,
+            parentIngredientId: media.id,
+            references: [media.id, audio.id],
+            transformations: [TransformationCategory.LIP_SYNCED],
+          },
+          continuation: {
+            actionId: 'lipSync',
+            context,
+            isByok: Boolean(byok),
+            node,
+            provider,
+          },
+          resultUrl: (id) => this.helper.buildVideoIngredientUrl(id),
+          runProvider: async (id, continuationId) => {
+            if (isVideo && this.replicateService) {
+              return this.replicateService.runModel(
+                model,
+                {
+                  video: mediaUrl,
+                  audio: audioUrl,
+                  sync_mode: options.syncMode ?? 'silence',
+                },
+                byok?.apiKey,
+                continuationId,
+              );
+            }
+            if (!this.heyGenService) throw new Error('HeyGen is unavailable');
+            return this.heyGenService.generatePhotoAvatarVideo(
+              id,
+              mediaUrl,
+              audioUrl,
+              context.organizationId,
+              context.userId,
+              byok?.apiKey,
+            );
+          },
+        });
+        return {
+          id: pending.ingredientId,
+          status: IngredientStatus.PROCESSING,
+          videoUrl: this.helper.buildVideoIngredientUrl(pending.ingredientId),
+        };
+      },
+    );
+    engine.registerExecutor(
+      executor.nodeType,
+      this.helper.wrapEngineExecutor(executor),
     );
   }
 
@@ -534,41 +587,5 @@ export class WorkflowMediaGenerationExecutorRegistrarService {
     });
 
     return params.buildReturn(pendingOutput.ingredientId, outputCategory);
-  }
-
-  private authorizeMediaDispatch(
-    node: ExecutableNode,
-    context: ExecutionContext,
-  ): Promise<ValidatedWorkflowMediaDispatch | undefined> {
-    return (
-      this.dispatchAdmission?.authorize(node, context) ??
-      Promise.resolve(undefined)
-    );
-  }
-
-  private async dispatchFundedMedia<T>(
-    funded: ValidatedWorkflowMediaDispatch | undefined,
-    callback: () => Promise<T>,
-  ): Promise<T> {
-    if (!funded) {
-      return callback();
-    }
-    const current = currentWorkflowGenerationDispatch();
-    if (
-      !current ||
-      current.executionId !== funded.executionId ||
-      current.operationId !== funded.operationId
-    ) {
-      throw new BusinessLogicException(
-        'Workflow dispatch context is unavailable',
-      );
-    }
-    return runWithWorkflowGenerationDispatch(
-      {
-        ...current,
-        dispatchFingerprint: funded.dispatchFingerprint,
-      },
-      callback,
-    );
   }
 }
