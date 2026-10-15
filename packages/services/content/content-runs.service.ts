@@ -1,11 +1,12 @@
 import type { ContentRunStatus } from '@genfeedai/contracts';
-import type {
-  BrandRemixRunView,
-  CreateBrandRemixRun,
-  PreparePausedMetaCampaignDraft,
-  ReviseBrandRemixRun,
-  StartBrandRemixRun,
-  SubmitBrandRemixRunForReview,
+import {
+  type BrandRemixRunView,
+  brandRemixRunViewSchema,
+  type CreateBrandRemixRun,
+  type PreparePausedMetaCampaignDraft,
+  type ReviseBrandRemixRun,
+  type StartBrandRemixRun,
+  type SubmitBrandRemixRunForReview,
 } from '@genfeedai/contracts/api-types/contracts';
 import {
   type BrandRemixRunListQuery,
@@ -18,46 +19,23 @@ import type {
   ExecuteBrandRemixScenes,
   QuoteBrandRemixScenes,
 } from '@genfeedai/contracts/api-types/contracts/brand-remix-scene.contract';
-import {
-  type ReplaceStoryboardCharacter,
-  type StoryboardCharacterOperationReceipt,
-  type StoryboardCharacterReplacement,
-  type StoryboardCharacterReplacements,
-  storyboardCharacterOperationReceiptSchema,
-  storyboardCharacterReplacementSchema,
-  storyboardCharacterReplacementsSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-character-replace.contract';
 import type { UpdateStoryboardPlan } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
-import type {
-  ControlStoryboardRun,
-  CreateStoryboardRun,
-  DraftStoryboardPlan,
-  StoryboardRun,
-  UpdateStoryboardSource,
+import {
+  type ControlStoryboardRun,
+  type CreateStoryboardRun,
+  type StoryboardRun,
+  storyboardRunSchema,
+  type UpdateStoryboardSource,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import {
   type StoryboardRunCapabilities,
   storyboardRunCapabilitiesSchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run-capabilities.contract';
 import {
-  type CancelStoryboardRun,
-  type CreateStoryboardRunQuote,
-  type ExecuteStoryboardRun,
-  type ResumeStoryboardRun,
-  type StoryboardRunQuote,
-  storyboardRunQuoteSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-run-quote.contract';
-import {
   type ListStoryboardRuns,
   type StoryboardRunSummary,
   storyboardRunSummarySchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run-summary.contract';
-import {
-  type GenerateStoryboardStills,
-  type QuoteStoryboardStills,
-  type StoryboardStillQuote,
-  storyboardStillQuoteSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-still.contract';
 import type { ContentRunBrief } from '@genfeedai/contracts/interfaces';
 import type {
   ContentRunAnalyticsSummary,
@@ -65,12 +43,6 @@ import type {
   ContentRunRecommendation,
   ContentRunVariant,
 } from '@genfeedai/contracts/interfaces/content/content-run.interface';
-import type { IHttpRequestOptions } from '@genfeedai/contracts/interfaces/utils/http-request-options.interface';
-import {
-  deserializeLegacyStoryboardRunDocument,
-  deserializeStoryboardRunDocument,
-} from '@services/content/content-run-document';
-import { isExpectedStoryboardSaveConflict } from '@services/content/storyboard-save-conflict';
 import { EnvironmentService } from '@services/core/environment.service';
 import { HTTPBaseService } from '@services/core/interceptor.service';
 import {
@@ -78,7 +50,6 @@ import {
   deserializeResource,
   type JsonApiResponseDocument,
 } from '@services/core/json-api';
-import type { AxiosRequestConfig } from 'axios';
 
 export interface CreateResearchBriefRunInput {
   angle?: string;
@@ -153,94 +124,6 @@ export class ContentRunsService extends HTTPBaseService {
     return storyboardRunCapabilitiesSchema.parse(response.data);
   }
 
-  async listStoryboardCharacterReplacements(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterReplacements> {
-    const response = await this.instance.get<StoryboardCharacterReplacements>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacements`,
-      { signal },
-    );
-    return storyboardCharacterReplacementsSchema.parse(response.data);
-  }
-
-  async getStoryboardCharacterReplacementStatus(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    operationId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterOperationReceipt> {
-    const response =
-      await this.instance.get<StoryboardCharacterOperationReceipt>(
-        `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacements/${encodeURIComponent(operationId)}`,
-        { signal },
-      );
-    return storyboardCharacterOperationReceiptSchema.parse(response.data);
-  }
-
-  async replaceStoryboardCharacter(
-    brandId: string,
-    runId: string,
-    shotId: string,
-    input: ReplaceStoryboardCharacter,
-    signal?: AbortSignal,
-  ): Promise<StoryboardCharacterReplacement> {
-    const response = await this.instance.post<StoryboardCharacterReplacement>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacement`,
-      input,
-      { signal },
-    );
-    return storyboardCharacterReplacementSchema.parse(response.data);
-  }
-
-  async quoteStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: CreateStoryboardRunQuote,
-  ): Promise<StoryboardRunQuote> {
-    const response = await this.instance.post<StoryboardRunQuote>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/quotes`,
-      input,
-    );
-    return storyboardRunQuoteSchema.parse(response.data);
-  }
-  async executeStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: ExecuteStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/execute`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-  async cancelStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: CancelStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/cancel`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-  async resumeStoryboardRun(
-    brandId: string,
-    runId: string,
-    input: ResumeStoryboardRun,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/resume`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
   async createStoryboardRun(
     brandId: string,
     input: CreateStoryboardRun,
@@ -249,7 +132,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs`,
       input,
     );
-    return deserializeStoryboardRunDocument(response.data);
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
+    );
   }
 
   async updateStoryboardPlan(
@@ -257,16 +142,13 @@ export class ContentRunsService extends HTTPBaseService {
     runId: string,
     input: UpdateStoryboardPlan,
   ): Promise<StoryboardRun> {
-    const config: AxiosRequestConfig & IHttpRequestOptions = {
-      handlesErrorResponse: (response) =>
-        isExpectedStoryboardSaveConflict(response, input.expectedRevision),
-    };
     const response = await this.instance.patch<JsonApiResponseDocument>(
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan`,
       input,
-      config,
     );
-    return deserializeStoryboardRunDocument(response.data);
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
+    );
   }
 
   async resetStoryboardPlan(
@@ -278,7 +160,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan/reset`,
       input,
     );
-    return deserializeStoryboardRunDocument(response.data);
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
+    );
   }
 
   async approveStoryboardPlan(
@@ -290,56 +174,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan/approve`,
       input,
     );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
-  async draftStoryboardPlan(
-    brandId: string,
-    runId: string,
-    input: DraftStoryboardPlan,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/plan/draft`,
-      input,
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
     );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
-  async quoteStoryboardStills(
-    brandId: string,
-    runId: string,
-    input: QuoteStoryboardStills,
-  ): Promise<StoryboardStillQuote> {
-    const response = await this.instance.post<StoryboardStillQuote>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills/quote`,
-      input,
-    );
-    return storyboardStillQuoteSchema.parse(response.data);
-  }
-
-  async generateStoryboardStills(
-    brandId: string,
-    runId: string,
-    input: GenerateStoryboardStills,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills`,
-      input,
-    );
-    return deserializeStoryboardRunDocument(response.data);
-  }
-
-  async reconcileStoryboardStills(
-    brandId: string,
-    runId: string,
-    signal?: AbortSignal,
-  ): Promise<StoryboardRun> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/stills/reconcile`,
-      {},
-      { signal },
-    );
-    return deserializeStoryboardRunDocument(response.data);
   }
 
   async updateStoryboardSource(
@@ -347,16 +184,13 @@ export class ContentRunsService extends HTTPBaseService {
     runId: string,
     input: UpdateStoryboardSource,
   ): Promise<StoryboardRun> {
-    const config: AxiosRequestConfig & IHttpRequestOptions = {
-      handlesErrorResponse: (response) =>
-        isExpectedStoryboardSaveConflict(response, input.expectedRevision),
-    };
     const response = await this.instance.patch<JsonApiResponseDocument>(
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/source`,
       input,
-      config,
     );
-    return deserializeStoryboardRunDocument(response.data);
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
+    );
   }
 
   async getStoryboardRun(
@@ -368,7 +202,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}`,
       { signal },
     );
-    return deserializeStoryboardRunDocument(response.data);
+    return storyboardRunSchema.parse(
+      deserializeResource<StoryboardRun>(response.data),
+    );
   }
   async listStoryboardRuns(
     brandId: string,
@@ -422,7 +258,9 @@ export class ContentRunsService extends HTTPBaseService {
       input,
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async listBrandRemixRuns(
@@ -449,7 +287,9 @@ export class ContentRunsService extends HTTPBaseService {
       { signal },
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async reviseBrandRemixRun(
@@ -461,7 +301,9 @@ export class ContentRunsService extends HTTPBaseService {
       input,
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async startBrandRemixRun(
@@ -473,7 +315,9 @@ export class ContentRunsService extends HTTPBaseService {
       input,
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async submitBrandRemixRunForReview(
@@ -485,7 +329,9 @@ export class ContentRunsService extends HTTPBaseService {
       input,
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async prepareBrandRemixPausedDraft(
@@ -497,7 +343,9 @@ export class ContentRunsService extends HTTPBaseService {
       input,
     );
 
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async attachBrandRemixAnalysisSource(
@@ -508,7 +356,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/content-runs/${runId}/remix/scenes/source`,
       input,
     );
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async quoteBrandRemixScenes(
@@ -519,7 +369,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/content-runs/${runId}/remix/scenes/quote`,
       input,
     );
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async executeBrandRemixScenes(
@@ -530,7 +382,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/content-runs/${runId}/remix/scenes/execute`,
       input,
     );
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async cancelBrandRemixScenes(
@@ -541,7 +395,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/content-runs/${runId}/remix/scenes/cancel`,
       input,
     );
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async resumeBrandRemixScenes(
@@ -552,7 +408,9 @@ export class ContentRunsService extends HTTPBaseService {
       `/content-runs/${runId}/remix/scenes/resume`,
       input,
     );
-    return deserializeLegacyStoryboardRunDocument(response.data);
+    return brandRemixRunViewSchema.parse(
+      deserializeResource<BrandRemixRunView>(response.data),
+    );
   }
 
   async findOne(runId: string): Promise<ContentRunRecord> {

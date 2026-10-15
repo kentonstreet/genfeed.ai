@@ -1,16 +1,6 @@
-import {
-  type StoryboardStoredRunConfig,
-  storyboardHasUnresolvedAssemblyJobs,
-  storyboardLegacyStages,
-  storyboardLegacyState,
-  storyboardStoredRunConfigSchema,
-} from '@api/collections/content-runs/services/storyboard-imported-run-state.schema';
-import { storyboardStillInput } from '@api/collections/content-runs/services/storyboard-still-state';
 import type { StoryboardPlan } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
-import {
-  storyboardImportedPlanSchema,
-  storyboardPlanSchema,
-} from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
+import { storyboardPlanSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
+import type { StoryboardRunConfig } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 
 /** Duration choices come from the resolved model, never a UI sample. Lower wins ties. */
@@ -37,7 +27,7 @@ export function snapStoryboardDurations(
               : nearest,
           ),
   }));
-  const result = storyboardImportedPlanSchema.safeParse({ ...plan, shots });
+  const result = storyboardPlanSchema.safeParse({ ...plan, shots });
   if (!result.success)
     throw new BadRequestException(
       result.error.issues.map((issue) => issue.message).join('; '),
@@ -45,37 +35,18 @@ export function snapStoryboardDurations(
   return result.data;
 }
 
-export type StoryboardEditableConfig = StoryboardStoredRunConfig & {
-  plan: StoryboardPlan;
-};
-export function assertStoryboardPlan(
-  config: StoryboardStoredRunConfig,
-): asserts config is StoryboardEditableConfig {
-  if (!config.plan)
-    throw new ConflictException('STORYBOARD_MIGRATION_REVIEW_REQUIRED');
-}
-
-export function assertStoryboardEditable(
-  config: StoryboardStoredRunConfig,
-): void {
-  const legacy = storyboardLegacyState(config);
-  const pipeline = config.scenePipeline ?? legacy?.scenePipeline;
-  const stages = storyboardLegacyStages(pipeline).map(({ stage }) => stage);
+export function assertStoryboardEditable(config: StoryboardRunConfig): void {
+  const stages = Object.values(config.scenePipeline?.scenes ?? {}).flatMap(
+    (scene) => [scene.image, scene.video],
+  );
+  const analysis = config.scenePipeline?.analysis;
+  if (analysis) stages.push(analysis.transcription, analysis.rewrite);
   if (
     ['analysing', 'generating', 'assembling'].includes(config.state) ||
-    legacy?.generationClaim ||
-    legacy?.paidDraftOperation ||
-    legacy?.reviewClaim?.status === 'claimed' ||
-    legacy?.execution?.variants.some((variant) =>
-      ['queued', 'processing'].includes(variant.status),
+    stages.some((stage) =>
+      ['claimed', 'submitted', 'uncertain'].includes(stage.state),
     ) ||
-    stages.some(
-      (stage) =>
-        ['claimed', 'submitted', 'uncertain'].includes(stage.state) ||
-        Boolean(stage.groupId && !stage.assetId && stage.state !== 'ready'),
-    ) ||
-    storyboardHasUnresolvedAssemblyJobs(pipeline) ||
-    pipeline?.receipts.some((receipt) =>
+    config.scenePipeline?.receipts.some((receipt) =>
       ['reserved', 'uncertain'].includes(receipt.state),
     )
   ) {
@@ -85,72 +56,44 @@ export function assertStoryboardEditable(
   }
 }
 
-/**
- * Submitted asset/freshness changes never manufacture a fresh generated still.
- * Stills are server-owned: a still being generated stays `generating` across
- * edits, and its job decides fresh or stale when it lands.
- */
+/** Submitted asset/freshness changes never manufacture a fresh generated still. */
 export function editStoryboardPlan(
-  config: StoryboardStoredRunConfig,
+  config: StoryboardRunConfig,
   submitted: StoryboardPlan,
-): StoryboardEditableConfig {
+): StoryboardRunConfig {
   assertStoryboardEditable(config);
   const styleChanged =
-    config.plan?.styleLabel !== submitted.styleLabel ||
-    JSON.stringify(config.plan?.styleReferenceAssetIds) !==
+    config.plan.styleLabel !== submitted.styleLabel ||
+    JSON.stringify(config.plan.styleReferenceAssetIds) !==
       JSON.stringify(submitted.styleReferenceAssetIds);
-  const previous = new Map(
-    (config.plan?.shots ?? []).map((shot) => [shot.id, shot]),
+  const previous = new Map(config.plan.shots.map((shot) => [shot.id, shot]));
+  const oldCast = new Map(
+    config.plan.cast.map((member) => [member.id, member]),
   );
-  const plan = (
-    config.origin === 'migrated'
-      ? storyboardImportedPlanSchema
-      : storyboardPlanSchema
-  ).parse({
+  const plan = storyboardPlanSchema.parse({
     ...submitted,
     shots: submitted.shots.map((shot) => {
       const old = previous.get(shot.id);
-      const conditioning = (value: StoryboardPlan, id: string) => {
-        const prompt = storyboardShotPrompt(value, id);
-        return {
-          referenceAssetIds: prompt.referenceAssetIds,
-          avatarAssetId: prompt.avatarAssetId,
-        };
-      };
-      const castChanged = Boolean(
-        old &&
-          config.plan &&
-          JSON.stringify(conditioning(config.plan, old.id)) !==
-            JSON.stringify(conditioning(submitted, shot.id)),
-      );
-      const stillInputChanged = Boolean(
-        old &&
-          config.plan &&
-          storyboardStillInput(config.plan, old.id).fingerprint !==
-            storyboardStillInput(submitted, shot.id).fingerprint,
-      );
-      const stale =
-        styleChanged ||
-        castChanged ||
-        stillInputChanged ||
-        old?.action !== shot.action;
+      const castChanged =
+        shot.speakerId &&
+        JSON.stringify(oldCast.get(shot.speakerId)?.referenceAssetIds) !==
+          JSON.stringify(
+            submitted.cast.find((member) => member.id === shot.speakerId)
+              ?.referenceAssetIds,
+          );
+      const stale = styleChanged || castChanged || old?.action !== shot.action;
       return {
         ...shot,
         stillAssetId: old?.stillAssetId,
-        stillFreshness:
-          old?.stillFreshness === 'generating'
-            ? 'generating'
-            : old?.stillAssetId
-              ? stale
-                ? 'stale'
-                : old.stillFreshness
-              : old?.stillFreshness === 'failed' && !stale
-                ? 'failed'
-                : 'missing',
+        stillFreshness: old?.stillAssetId
+          ? stale
+            ? 'stale'
+            : old.stillFreshness
+          : 'missing',
       };
     }),
   });
-  return storyboardStoredRunConfigSchema.parse({
+  return {
     ...config,
     plan,
     revision: config.revision + 1,
@@ -158,7 +101,7 @@ export function editStoryboardPlan(
     quote: undefined,
     state: 'storyboard',
     error: undefined,
-  }) as StoryboardEditableConfig;
+  };
 }
 
 export function assertStoryboardComplete(plan: StoryboardPlan): void {
@@ -173,15 +116,9 @@ export function assertStoryboardComplete(plan: StoryboardPlan): void {
 }
 
 export function approveStoryboardPlan(
-  config: StoryboardStoredRunConfig,
-): StoryboardEditableConfig {
+  config: StoryboardRunConfig,
+): StoryboardRunConfig {
   assertStoryboardEditable(config);
-  assertStoryboardPlan(config);
-  if (
-    config.origin === 'migrated' &&
-    config.migrationReview.status === 'required'
-  )
-    throw new ConflictException('STORYBOARD_MIGRATION_REVIEW_REQUIRED');
   assertStoryboardComplete(config.plan);
   const invalid = config.plan.shots.filter(
     (shot) =>

@@ -93,46 +93,7 @@ describe('ClientService (MCP) domain clients', () => {
     expect(mockAxiosInstance.patch).not.toHaveBeenCalled();
   });
 
-  it('posts only content to the authenticated result adapter and preserves its contract', async () => {
-    const content = JSON.stringify({
-      content: [{ type: 'text', text: 'payload' }],
-      structuredContent: { data: 'payload' },
-    });
-    const gated = { content, outcome: 'shadow_flagged', confidence: 0.99 };
-    mockAxiosInstance.post.mockResolvedValue({ data: gated });
-    expect(
-      await service.evaluateMcpToolResult('get_articles', content),
-    ).toEqual(gated);
-    expect(mockAxiosInstance.post).toHaveBeenCalledWith(
-      '/agent-tools/get_articles/result-gate',
-      { content },
-    );
-  });
-
-  it.each([{ data: { invalid: true } }, null])(
-    'fails safely on invalid classification response without logging upstream payload',
-    async (response) => {
-      mockAxiosInstance.post.mockResolvedValue(response);
-      await expect(
-        service.evaluateMcpToolResult('get_articles', 'RAW_SECRET'),
-      ).rejects.toThrow('MCP result classification unavailable');
-      expect(JSON.stringify(mockLoggerService.error.mock.calls)).not.toContain(
-        'RAW_SECRET',
-      );
-    },
-  );
-  it('does not expose adapter error detail or response payload to the shared request logger', async () => {
-    mockAxiosInstance.post.mockRejectedValue({
-      message: 'RAW_SECRET',
-      response: { data: { errors: [{ detail: 'RAW_SECRET' }] } },
-    });
-    await expect(
-      service.evaluateMcpToolResult('get_articles', 'RAW_SECRET'),
-    ).rejects.toThrow('MCP result classification unavailable');
-    expect(JSON.stringify(mockLoggerService.error.mock.calls)).not.toContain(
-      'RAW_SECRET',
-    );
-  });
+  // ==================== GENERIC ATTRIBUTE POST ====================
 
   describe('postAttributes', () => {
     it('posts the payload and unwraps created attributes', async () => {
@@ -164,6 +125,8 @@ describe('ClientService (MCP) domain clients', () => {
       expect(result).toEqual({ id: 'res-1' });
     });
   });
+
+  // ==================== AGENT TOOLS & APPROVALS ====================
 
   describe('executeAgentTool', () => {
     it('proxies the tool execution with an encoded tool name', async () => {
@@ -280,6 +243,8 @@ describe('ClientService (MCP) domain clients', () => {
     });
   });
 
+  // ==================== ANALYTICS ====================
+
   describe('getVideoAnalytics', () => {
     it('reads per-content aggregate metrics for a video id', async () => {
       (mockAxiosInstance.get as Mock).mockResolvedValue({
@@ -394,6 +359,8 @@ describe('ClientService (MCP) domain clients', () => {
       });
     });
   });
+
+  // ==================== CLIP PROJECTS ====================
 
   describe('clip projects', () => {
     it('analyzes a clip project from a YouTube URL', async () => {
@@ -531,32 +498,38 @@ describe('ClientService (MCP) domain clients', () => {
     });
   });
 
-  describe('editor projects', () => {
-    it('creates a seeded Editor project and omits a blank name', async () => {
-      (mockAxiosInstance.post as Mock).mockResolvedValue({
-        data: { data: { id: 'editor-1', type: 'editor-project' } },
-      });
-
-      const result = await service.openInEditor({
-        name: 'Launch cut',
-        sourceVideoIds: ['video-2', 'video-1'],
-      });
-
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/editor-projects', {
-        name: 'Launch cut',
-        sourceVideoIds: ['video-2', 'video-1'],
-      });
-      expect(result).toEqual({ id: 'editor-1', type: 'editor-project' });
-
-      await service.openInEditor({ sourceVideoIds: ['video-1'] });
-      expect(mockAxiosInstance.post).toHaveBeenLastCalledWith(
-        '/editor-projects',
-        { sourceVideoIds: ['video-1'] },
-      );
-    });
-  });
+  // ==================== WORKSPACE ====================
 
   describe('workspace reads', () => {
+    it('lists brands with id/name normalization', async () => {
+      (mockAxiosInstance.get as Mock).mockResolvedValue({
+        data: {
+          data: [
+            { attributes: { name: 'Acme', status: 'active' }, id: 'brand-1' },
+            { attributes: {}, id: 'brand-2' },
+          ],
+        },
+      });
+
+      const result = await service.listBrands();
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/brands');
+      expect(result[0]).toMatchObject({
+        id: 'brand-1',
+        name: 'Acme',
+        status: 'active',
+      });
+      expect(result[1]).toMatchObject({ id: 'brand-2', name: 'Unnamed' });
+    });
+
+    it('returns an empty brand list when the payload has no data', async () => {
+      (mockAxiosInstance.get as Mock).mockResolvedValue({ data: {} });
+
+      const result = await service.listBrands();
+
+      expect(result).toEqual([]);
+    });
+
     it('lists personas with JSON:API filters and paging defaults', async () => {
       (mockAxiosInstance.get as Mock).mockResolvedValue({
         data: {
@@ -579,18 +552,18 @@ describe('ClientService (MCP) domain clients', () => {
     it('creates a content batch as a JSON:API resource', async () => {
       (mockAxiosInstance.post as Mock).mockResolvedValue({
         data: {
-          data: { attributes: { turboRunId: 'batch-1', status: 'PENDING' } },
+          data: { attributes: { batchId: 'batch-1', status: 'PENDING' } },
         },
       });
 
-      const result = await service.createTurboRun({
+      const result = await service.createBatch({
         brandId: 'brand-1',
         count: 3,
         platforms: ['instagram'],
         topics: ['Daily post ideas'],
       });
 
-      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/turbo-runs', {
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith('/batches', {
         data: {
           attributes: {
             brandId: 'brand-1',
@@ -598,10 +571,10 @@ describe('ClientService (MCP) domain clients', () => {
             platforms: ['instagram'],
             topics: ['Daily post ideas'],
           },
-          type: 'turbo-runs',
+          type: 'batches',
         },
       });
-      expect(result).toEqual({ turboRunId: 'batch-1', status: 'PENDING' });
+      expect(result).toEqual({ batchId: 'batch-1', status: 'PENDING' });
     });
 
     it('surfaces API error detail when batch creation fails', async () => {
@@ -611,7 +584,7 @@ describe('ClientService (MCP) domain clients', () => {
       });
 
       await expect(
-        service.createTurboRun({
+        service.createBatch({
           brandId: 'brand-1',
           count: 1,
           platforms: ['instagram'],
@@ -626,15 +599,15 @@ describe('ClientService (MCP) domain clients', () => {
         },
       });
 
-      const result = await service.listTurboRuns({
-        turboRunId: 'batch-1',
+      const result = await service.listBatches({
+        batchId: 'batch-1',
         limit: 5,
         status: 'PROCESSING',
       });
 
-      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/turbo-runs', {
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/batches', {
         params: {
-          'filter[turboRunId]': 'batch-1',
+          'filter[batchId]': 'batch-1',
           'filter[status]': 'PROCESSING',
           'page[limit]': 5,
           'page[offset]': 0,
@@ -648,9 +621,25 @@ describe('ClientService (MCP) domain clients', () => {
         data: { data: null },
       });
 
-      const result = await service.listTurboRuns();
+      const result = await service.listBatches();
 
       expect(result).toEqual([]);
+    });
+
+    it('reads account identity from the whoami endpoint', async () => {
+      (mockAxiosInstance.get as Mock).mockResolvedValue({
+        data: {
+          data: { organization: 'org-1', user: { email: 'user@genfeed.ai' } },
+        },
+      });
+
+      const result = await service.getAccountInfo();
+
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith('/auth/whoami');
+      expect(result).toEqual({
+        organization: 'org-1',
+        user: { email: 'user@genfeed.ai' },
+      });
     });
 
     it('reads job status from the ingredient batch, not metadata', async () => {
@@ -681,33 +670,6 @@ describe('ClientService (MCP) domain clients', () => {
       });
     });
 
-    it('surfaces video generation progress and stage from the ingredient', async () => {
-      (mockAxiosInstance.get as Mock).mockResolvedValue({
-        data: {
-          data: [
-            {
-              attributes: {
-                category: 'VIDEO',
-                generationProgress: 42,
-                generationStage: 'rendering',
-                status: 'PROCESSING',
-              },
-              id: 'video-1',
-            },
-          ],
-        },
-      });
-
-      const result = await service.getJobStatus('video-1');
-
-      expect(result).toMatchObject({
-        id: 'video-1',
-        progress: 42,
-        stage: 'rendering',
-        status: 'PROCESSING',
-      });
-    });
-
     it('creates an agent chat thread', async () => {
       (mockAxiosInstance.post as Mock).mockResolvedValue({
         data: { data: { id: 'thread-1' } },
@@ -733,6 +695,8 @@ describe('ClientService (MCP) domain clients', () => {
       expect(result).toEqual({ id: 'turn-1' });
     });
   });
+
+  // ==================== SYSTEM WORKFLOW CATALOG ====================
 
   describe('system workflow catalog', () => {
     const catalogPayload = {
@@ -819,6 +783,8 @@ describe('ClientService (MCP) domain clients', () => {
       expect(result).toMatchObject({ id: 'workflow-2', name: 'Daily posts' });
     });
   });
+
+  // ==================== SOCIAL INBOX ACTIONS ====================
 
   describe('social inbox actions', () => {
     it('lists messages inside a conversation', async () => {
@@ -925,6 +891,8 @@ describe('ClientService (MCP) domain clients', () => {
       expect(result).toMatchObject({ id: 'conv-1', status: 'resolved' });
     });
   });
+
+  // ==================== META ADS ====================
 
   describe('Meta Ads', () => {
     it('lists ad accounts', async () => {
@@ -1128,6 +1096,8 @@ describe('ClientService (MCP) domain clients', () => {
     });
   });
 
+  // ==================== GOOGLE ADS ====================
+
   describe('Google Ads', () => {
     it('lists accessible customers', async () => {
       (mockAxiosInstance.get as Mock).mockResolvedValue({
@@ -1329,6 +1299,8 @@ describe('ClientService (MCP) domain clients', () => {
     });
   });
 
+  // ==================== ADS GATEWAY ====================
+
   describe('ads gateway insights', () => {
     it('gets ad set insights through the platform-generic gateway', async () => {
       (mockAxiosInstance.get as Mock).mockResolvedValue({
@@ -1390,7 +1362,53 @@ describe('ClientService (MCP) domain clients', () => {
     });
   });
 
+  // ==================== LINKEDIN ====================
+
   describe('LinkedIn', () => {
+    it('generates content variations with a default count', async () => {
+      (mockAxiosInstance.post as Mock).mockResolvedValue({
+        data: {
+          data: [
+            {
+              attributes: {
+                body: 'Body text',
+                content: 'Full content',
+                cta: 'Follow us',
+                hashtags: ['#ai'],
+                hook: 'Hot take',
+              },
+            },
+            { attributes: {} },
+          ],
+        },
+      });
+
+      const result = await service.generateLinkedInContent({
+        brandId: 'brand-1',
+        topic: 'AI trends',
+      });
+
+      expect(mockAxiosInstance.post).toHaveBeenCalledWith(
+        '/content-intelligence/generate',
+        {
+          brandId: 'brand-1',
+          platform: 'linkedin',
+          topic: 'AI trends',
+          variationsCount: 3,
+        },
+      );
+      expect(result).toEqual([
+        {
+          body: 'Body text',
+          content: 'Full content',
+          cta: 'Follow us',
+          hashtags: ['#ai'],
+          hook: 'Hot take',
+        },
+        { body: '', content: '', cta: '', hashtags: [], hook: '' },
+      ]);
+    });
+
     it('reports a connected LinkedIn credential', async () => {
       (mockAxiosInstance.get as Mock).mockResolvedValue({
         data: {

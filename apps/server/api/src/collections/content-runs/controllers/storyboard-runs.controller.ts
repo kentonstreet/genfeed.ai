@@ -2,24 +2,16 @@ import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticat
 import {
   ApproveStoryboardPlanDto,
   CreateStoryboardRunDto,
-  DraftStoryboardPlanDto,
-  GenerateStoryboardStillsDto,
   ListStoryboardRunsDto,
-  QuoteStoryboardStillsDto,
-  ReplaceStoryboardCharacterDto,
   ResetStoryboardPlanDto,
   UpdateStoryboardPlanDto,
   UpdateStoryboardSourceDto,
 } from '@api/collections/content-runs/dto/storyboard-run.dto';
-import { StoryboardCharacterReplaceService } from '@api/collections/content-runs/services/storyboard-character-replace.service';
 import { StoryboardRunCapabilitiesService } from '@api/collections/content-runs/services/storyboard-run-capabilities.service';
 import { StoryboardRunsService } from '@api/collections/content-runs/services/storyboard-runs.service';
-import { StoryboardStillsService } from '@api/collections/content-runs/services/storyboard-stills.service';
 import type { RequestWithContext as Request } from '@api/common/middleware/request-context.middleware';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
-import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
-import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import {
   serializeCollection,
   serializeSingle,
@@ -37,16 +29,14 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 
 @Controller('brands/:brandId/storyboard-runs')
-@OrganizationModule('storyboard')
 export class StoryboardRunsController {
   constructor(
     private readonly runs: StoryboardRunsService,
     private readonly capabilities: StoryboardRunCapabilitiesService,
-    private readonly characters: StoryboardCharacterReplaceService,
-    private readonly stills: StoryboardStillsService,
   ) {}
 
   @Post()
@@ -63,7 +53,6 @@ export class StoryboardRunsController {
     );
   }
 
-  @TenantReadPolicy('selected')
   @Get()
   async list(
     @Req() request: Request,
@@ -72,15 +61,10 @@ export class StoryboardRunsController {
     @Query() query: ListStoryboardRunsDto,
   ) {
     return serializeCollection(request, StoryboardRunSummarySerializer, {
-      docs: await this.runs.list(
-        resolveTenantReadScope(user).organizationId,
-        brandId,
-        query,
-      ),
+      docs: await this.runs.list(user.organizationId, brandId, query),
     });
   }
 
-  @TenantReadPolicy('selected')
   @Get(':runId')
   async get(
     @Req() request: Request,
@@ -91,122 +75,17 @@ export class StoryboardRunsController {
     return serializeSingle(
       request,
       StoryboardRunSerializer,
-      await this.runs.get(
-        resolveTenantReadScope(user).organizationId,
-        brandId,
-        runId,
-      ),
+      await this.runs.get(user.organizationId, brandId, runId),
     );
   }
 
-  @Post(':runId/shots/:shotId/character-replacement')
-  async replaceCharacter(
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @Param('shotId') shotId: string,
-    @CurrentUser() user: User,
-    @Body() body: ReplaceStoryboardCharacterDto,
-  ) {
-    return this.characters.replace(
-      user.organizationId,
-      brandId,
-      runId,
-      shotId,
-      body,
-    );
-  }
-
-  @TenantReadPolicy('selected')
-  @Get(':runId/shots/:shotId/character-replacements')
-  characterReplacements(
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @Param('shotId') shotId: string,
-    @CurrentUser() user: User,
-  ) {
-    return this.characters.list(
-      resolveTenantReadScope(user).organizationId,
-      brandId,
-      runId,
-      shotId,
-    );
-  }
-
-  @TenantReadPolicy('mutating')
-  @Get(':runId/shots/:shotId/character-replacements/:operationId')
-  characterReplacementStatus(
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @Param('shotId') shotId: string,
-    @Param('operationId') operationId: string,
-    @CurrentUser() user: User,
-  ) {
-    return this.characters.getStatus(
-      user.organizationId,
-      brandId,
-      runId,
-      shotId,
-      operationId,
-    );
-  }
-
-  @Post(':runId/stills/quote')
-  quoteStills(
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: QuoteStoryboardStillsDto,
-  ) {
-    return this.stills.quote(user.organizationId, brandId, runId, body);
-  }
-
-  @Post(':runId/stills')
-  async generateStills(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: GenerateStoryboardStillsDto,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.stills.generate(
-        user.organizationId,
-        brandId,
-        runId,
-        user.userId,
-        body,
-      ),
-    );
-  }
-
-  @Post(':runId/stills/reconcile')
-  async reconcileStills(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.stills.reconcile(user.organizationId, brandId, runId),
-    );
-  }
-
-  @TenantReadPolicy('selected')
   @Get(':runId/capabilities')
   async getCapabilities(
     @Param('brandId') brandId: string,
     @Param('runId') runId: string,
     @CurrentUser() user: User,
   ) {
-    return this.capabilities.get(
-      resolveTenantReadScope(user).organizationId,
-      brandId,
-      runId,
-    );
+    return this.capabilities.get(user.organizationId, brandId, runId);
   }
 
   @Patch(':runId/plan')
@@ -239,22 +118,8 @@ export class StoryboardRunsController {
     );
   }
 
-  @Post(':runId/plan/draft')
-  async draftPlan(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: DraftStoryboardPlanDto,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.runs.draftPlan(user.organizationId, brandId, runId, body),
-    );
-  }
-
   @Post(':runId/plan/approve')
+  @UseGuards(SubscriptionGuard)
   async approvePlan(
     @Req() request: Request,
     @Param('brandId') brandId: string,

@@ -1,20 +1,10 @@
 import { z } from 'zod';
 import { brandRemixScenePipelineSchema } from './brand-remix-scene.contract';
-import { storyboardCharacterReplacementSchema } from './storyboard-character-replace.contract';
 import {
-  storyboardImportedPresentationSchema,
-  storyboardMigrationMetadataSchema,
-  storyboardMigrationReviewSchema,
-} from './storyboard-migration.contract';
-import {
-  storyboardImportedPlanSchema,
   storyboardPlanSchema,
   storyboardPlanSettingsSchema,
 } from './storyboard-plan.contract';
-import {
-  storyboardOperationProjectionSchema,
-  storyboardRunQuoteSchema,
-} from './storyboard-run-quote.contract';
+import { storyboardRunQuoteSchema } from './storyboard-run-quote.contract';
 import {
   storyboardIdSchema,
   storyboardSourceSelectorSchema,
@@ -37,11 +27,8 @@ export const storyboardRunStateSchema = z.enum([
   'cancelled',
   'blocked',
 ]);
-export const storyboardNativeRunConfigSchema = z
+export const storyboardRunConfigSchema = z
   .object({
-    origin: z.literal('native').default('native'),
-    migrationReview: z.null().optional(),
-    importedPresentation: z.null().optional(),
     contract: z.literal(STORYBOARD_RUN_CONTRACT),
     version: z.literal(STORYBOARD_RUN_VERSION),
     revision: z.number().int().positive(),
@@ -55,31 +42,9 @@ export const storyboardNativeRunConfigSchema = z
     generatedPlan: storyboardPlanSchema.optional(),
     quote: storyboardRunQuoteSchema.optional(),
     scenePipeline: brandRemixScenePipelineSchema.optional(),
-    characterReplacements: z
-      .array(storyboardCharacterReplacementSchema)
-      .max(12)
-      .optional(),
     error: z.string().max(1_000).optional(),
   })
-  .strict();
-export const storyboardMigratedRunConfigSchema = storyboardNativeRunConfigSchema
-  .extend({
-    origin: z.literal('migrated'),
-    clientRequestId: z.string().uuid().nullable(),
-    createdByUserId: storyboardIdSchema.nullable(),
-    submittedInputHash: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .nullable(),
-    migration: storyboardMigrationMetadataSchema,
-    migrationReview: storyboardMigrationReviewSchema,
-    importedPresentation: storyboardImportedPresentationSchema.nullable(),
-    plan: storyboardImportedPlanSchema.nullable(),
-    generatedPlan: storyboardImportedPlanSchema.optional(),
-  })
-  .strict();
-export const storyboardRunConfigSchema = z
-  .union([storyboardNativeRunConfigSchema, storyboardMigratedRunConfigSchema])
+  .strict()
   .superRefine((config, ctx) => {
     if (
       config.approvedRevision !== undefined &&
@@ -105,11 +70,6 @@ export const storyboardRunSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     config: storyboardRunConfigSchema,
-    operation: storyboardOperationProjectionSchema.nullable().optional(),
-    migrationReview: storyboardMigrationReviewSchema.nullable().optional(),
-    importedPresentation: storyboardImportedPresentationSchema
-      .nullable()
-      .optional(),
   })
   .strict();
 export const createStoryboardRunSchema = z
@@ -122,29 +82,18 @@ export const createStoryboardRunSchema = z
 export const controlStoryboardRunSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
-/** Drafts a plan from the brief, or revises the current plan when `instruction` is set. */
-export const draftStoryboardPlanSchema = z
-  .object({
-    expectedRevision: z.number().int().positive(),
-    instruction: z.string().trim().min(1).max(2_000).optional(),
-  })
-  .strict();
 export const updateStoryboardSourceSchema = z
   .object({
     expectedRevision: z.number().int().positive(),
     source: storyboardSourceSelectorSchema,
   })
   .strict();
-export type StoryboardNativeRunConfig = z.infer<
-  typeof storyboardNativeRunConfigSchema
->;
 export type StoryboardRunConfig = z.infer<typeof storyboardRunConfigSchema>;
 export type StoryboardRun = z.infer<typeof storyboardRunSchema>;
 export type CreateStoryboardRun = z.infer<typeof createStoryboardRunSchema>;
 export type ControlStoryboardRun = z.infer<typeof controlStoryboardRunSchema>;
 export type ResetStoryboardPlan = ControlStoryboardRun;
 export type ApproveStoryboardPlan = ControlStoryboardRun;
-export type DraftStoryboardPlan = z.infer<typeof draftStoryboardPlanSchema>;
 export type UpdateStoryboardSource = z.infer<
   typeof updateStoryboardSourceSchema
 >;

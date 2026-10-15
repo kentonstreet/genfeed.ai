@@ -1,27 +1,18 @@
 import {
-  describeCreditPricing,
-  estimateToolCreditCost,
   getToolByName,
   getToolsetNames,
   getToolsForSurface,
   getToolsForToolsets,
-  isMcpBrandRequiredTool,
-  isToolAllowedInMcpAccessMode,
-  type McpAccessMode,
-  type McpBrandOption,
   type McpToolOutput,
-  readMcpBrandId,
-  requiresMcpApproval,
   type ToolsetName,
   toMcpTools,
 } from '@genfeedai/actions';
-import { isMcpTextDraftCall } from '@genfeedai/actions/server';
 import { formatAgentError } from '@genfeedai/agent/server';
-import { APP_ROUTES } from '@genfeedai/contracts/constants';
-import type { AgentToolResult } from '@genfeedai/contracts/interfaces';
-import { serializeMediaArtifact } from '@genfeedai/helpers';
-import { SATOSHI_FONT_RESOURCE_PATH } from '@genfeedai/ui/static/font';
-import { isRecord } from '@genfeedai/utils/data/extract.util';
+import { type AgentToolResult } from '@genfeedai/contracts/interfaces';
+import {
+  serializeMediaArtifact,
+  toMcpMediaToolResult,
+} from '@genfeedai/helpers';
 import { LoggerService } from '@libs/logger/logger.service';
 import { ConfigService } from '@mcp/config/config.service';
 import { McpAuthGuard } from '@mcp/guards/mcp-auth.guard';
@@ -30,46 +21,28 @@ import {
   McpResourceUri,
   PUBLIC_MCP_RESOURCES,
 } from '@mcp/mcp/resource-catalog';
-import { getPublicAppUrl, getPublicMcpUrl } from '@mcp/mcp/setup-page';
 import { AuthService, type McpRole } from '@mcp/services/auth.service';
 import { ClientService } from '@mcp/services/client.service';
-import { toNativeMcpMediaResult } from '@mcp/services/mcp-media-result.util';
 import {
   agentGuideResource,
   jsonResource,
-  markdownResource,
 } from '@mcp/services/mcp-resource-contents.util';
-import { finalizeMcpToolResult } from '@mcp/services/mcp-tool-result.util';
 import type { McpApprovalResource } from '@mcp/shared/interfaces/approval.interface';
 import type { McpResource } from '@mcp/shared/interfaces/mcp-resource.interface';
-import {
-  accountToolText,
-  dataToolResult,
-} from '@mcp/shared/utils/tool-result-text.util';
+import { formatListResult } from '@mcp/shared/utils/format-list-result.util';
 import { handleAccountManagementTool } from '@mcp/tools/account-management.tool';
 import { handleAdsGatewayTool } from '@mcp/tools/ads-gateway.tool';
 import { handleAgentChatTool } from '@mcp/tools/agent-chat.tool';
 import {
-  ANALYTICS_TOOL_NAMES,
-  handleAnalyticsTool,
-} from '@mcp/tools/analytics.tool';
-import {
   CLIP_PROJECTS_TOOL_NAMES,
   handleClipProjectsTool,
 } from '@mcp/tools/clip-projects.tool';
-import { CONTENT_TOOL_NAMES, handleContentTool } from '@mcp/tools/content.tool';
-import { EDITOR_TOOL_NAMES, handleEditorTool } from '@mcp/tools/editor.tool';
 import { handleGoogleAdsTool } from '@mcp/tools/google-ads.tool';
 import {
   approvalPendingToolResult,
-  mcpToolErrorResult,
   toMcpToolErrorResult,
 } from '@mcp/tools/mcp-tool-error';
 import { handleMetaAdsTool } from '@mcp/tools/meta-ads.tool';
-import {
-  ONBOARDING_TOOL_NAMES,
-  resolveOnboardBrandCall,
-} from '@mcp/tools/onboarding.tool';
 import { handleRemixTool, REMIX_TOOL_NAMES } from '@mcp/tools/remix.tool';
 import {
   handleSchedulerTool,
@@ -83,25 +56,18 @@ import {
   handleSocialMessagesTool,
   SOCIAL_MESSAGES_TOOL_NAMES,
 } from '@mcp/tools/social-messages.tool';
-import {
-  handleStoryboardTool,
-  STORYBOARD_TOOL_NAMES,
-} from '@mcp/tools/storyboard.tool';
+import { storyboardToolSchemas } from '@mcp/tools/storyboard.schemas';
 import { handleTikTokAdsTool } from '@mcp/tools/tiktok-ads.tool';
 import {
   handleToolDiscoveryTool,
   TOOL_DISCOVERY_TOOL_NAMES,
 } from '@mcp/tools/tool-discovery.tool';
 import { handleWorkflowControlTool } from '@mcp/tools/workflow-control.tool';
-import {
-  handleWorkflowStatusTool,
-  WORKFLOW_STATUS_TOOL_NAMES,
-} from '@mcp/tools/workflow-status.tool';
 import { cardResource } from '@mcp/ui/card-app';
 import {
-  MCP_CARD_RESOURCE_HASH,
   MCP_CARD_RESOURCE_URI,
   withCardMetadata,
+  withCardResult,
 } from '@mcp/ui/card-data';
 import { Injectable, type OnModuleInit, Optional } from '@nestjs/common';
 
@@ -134,6 +100,30 @@ const WORKFLOW_CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
+ * Names handled by the hand-written `handleLegacyTool` switch. This set is the
+ * classification source of truth for that branch; the switch must handle exactly
+ * these names (asserted by the drift guard + `tool-registry.dispatch.spec`).
+ */
+const LEGACY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'get_video_status',
+  'list_videos',
+  'get_video_analytics',
+  'create_article',
+  'search_articles',
+  'get_article',
+  'list_images',
+  'list_avatars',
+  'list_music',
+  'get_workflow_status',
+  'list_workflow_templates',
+  'get_content_analytics',
+  'get_usage_stats',
+  'generate_linkedin_content',
+  'get_linkedin_connection_status',
+  'get_linkedin_analytics',
+]);
+
+/**
  * Tools `handleToolCall` handles BEFORE `executeTool`, so they never flow
  * through classify-based dispatch. `resolve_approval` runs the deferred action
  * via its own path; the coverage guard must not treat it as unroutable.
@@ -143,6 +133,9 @@ const PRE_DISPATCH_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 const ACCOUNT_MANAGEMENT_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'get_account_info',
+  'list_brands',
+  'get_brand',
   'get_job_status',
 ]);
 
@@ -170,20 +163,16 @@ const isAdsGatewayTool = (name: string): boolean => name.startsWith('get_ads_');
  * a registry/handler mismatch fails the boot health check instead of surfacing
  * as a runtime "Unknown tool" error. Order mirrors the historical dispatch
  * precedence exactly (tool-discovery → agent-chat → workflow-control →
- * agent-executor → onboarding → catalog REST handlers → ads/external), so classification
- * never changes which handler runs. `tool-discovery` is checked first since
- * its name (`find_tools`) is a meta tool with no other executor to
- * shadow.
+ * agent-executor → legacy → external), so classification never changes which
+ * handler runs. `tool-discovery` is checked first since its names (e.g.
+ * `describe_tool`) are meta tools with no other executor to shadow.
  */
 type ExecutorKind =
   | 'tool-discovery'
   | 'agent-chat'
   | 'workflow-control'
   | 'agent-executor'
-  | 'onboarding'
-  | 'content'
-  | 'analytics'
-  | 'workflow-status'
+  | 'legacy'
   | 'meta-ads'
   | 'google-ads'
   | 'tiktok-ads'
@@ -191,7 +180,6 @@ type ExecutorKind =
   | 'account-management'
   | 'social-messages'
   | 'clip-projects'
-  | 'editor'
   | 'storyboard-capabilities'
   | 'remix'
   | 'scheduler'
@@ -250,7 +238,6 @@ export class ToolRegistryService implements OnModuleInit {
     // profile list, not an empty selection.
     @Optional() private readonly requestToolsets: readonly ToolsetName[] = [],
     @Optional() private readonly configService?: ConfigService,
-    @Optional() private readonly requestAccessMode: McpAccessMode = 'standard',
   ) {}
 
   /**
@@ -259,11 +246,7 @@ export class ToolRegistryService implements OnModuleInit {
    * cannot invoke.
    */
   getAllTools(): McpToolOutput[] {
-    return toMcpTools(getToolsForSurface('mcp'))
-      .filter((tool) =>
-        isToolAllowedInMcpAccessMode(this.requestAccessMode, tool.name),
-      )
-      .map(withCardMetadata);
+    return toMcpTools(getToolsForSurface('mcp')).map(withCardMetadata);
   }
 
   /**
@@ -298,16 +281,9 @@ export class ToolRegistryService implements OnModuleInit {
   getToolsForRoleAndToolsets(
     role: McpRole,
     toolsets: readonly ToolsetName[],
-    accessMode: McpAccessMode = this.requestAccessMode,
   ): McpToolOutput[] {
     return ToolRegistryService.filterToolsByRole(
-      toMcpTools(
-        accessMode === 'claude'
-          ? getToolsForSurface('mcp')
-          : getToolsForToolsets('mcp', toolsets),
-      )
-        .filter((tool) => isToolAllowedInMcpAccessMode(accessMode, tool.name))
-        .map(withCardMetadata),
+      toMcpTools(getToolsForToolsets('mcp', toolsets)).map(withCardMetadata),
       role,
     );
   }
@@ -321,7 +297,7 @@ export class ToolRegistryService implements OnModuleInit {
 
   /**
    * The role-filtered full catalog, ignoring the caller's `?toolsets=`
-   * selection. Backs `find_tools` — a
+   * selection. Backs `list_toolsets`/`search_tools`/`describe_tool` — a
    * client should be able to discover a tool outside its currently-loaded
    * toolset so it can reconnect with a broader selection.
    */
@@ -331,7 +307,7 @@ export class ToolRegistryService implements OnModuleInit {
 
   /**
    * Requested toolset names that exist in the catalog but have no MCP tools
-   * on this deploy. `find_tools` warns about them; they are not a failed
+   * on this deploy. `list_toolsets` warns about them; they are not a failed
    * connection. An empty request selection (`?profile=full`) warns about
    * nothing — the caller did not name a specific empty toolset.
    */
@@ -351,26 +327,11 @@ export class ToolRegistryService implements OnModuleInit {
   }
 
   async handleToolCall(params: ToolCallParams) {
-    const requestedArgs = params.arguments ?? {};
-    const brandCreation =
-      params.name === 'onboard_brand' &&
-      requestedArgs.action === 'create_from_url'
-        ? resolveOnboardBrandCall(requestedArgs)
-        : null;
-    const name = brandCreation?.agentToolName ?? params.name;
-    const args = brandCreation?.parameters ?? requestedArgs;
+    const { name, arguments: args } = params;
 
     this.logger.debug(`Handling tool call: ${name}`, args);
 
     try {
-      if (!isToolAllowedInMcpAccessMode(this.requestAccessMode, name)) {
-        return mcpToolErrorResult({
-          code: 'unavailable_in_connector',
-          message:
-            'This tool is unavailable through the Claude connector. Create images, video and audio in Genfeed Studio, then return here to manage your content.',
-          nextStepUrl: `${getPublicAppUrl()}${APP_ROUTES.STUDIO.PLAYGROUND}`,
-        });
-      }
       const canonicalTool = getToolByName(name);
       if (!canonicalTool?.surfaces.mcp) {
         throw new Error(`Unknown tool: ${name}`);
@@ -388,18 +349,13 @@ export class ToolRegistryService implements OnModuleInit {
         return await this.handleResolveApproval(args ?? {});
       }
 
-      // Rejected before any approval or charge: a generation always names its brand.
-      if (isMcpBrandRequiredTool(name) && !readMcpBrandId(args)) {
-        return await this.brandRequiredResult();
-      }
-
-      // Declared approvals and credit spenders wait for confirmation.
-      if (ToolRegistryService.requiresApproval(name, args)) {
+      // Mutating tools persist a pending approval instead of executing.
+      if (ToolRegistryService.requiresApproval(name)) {
         const approval = await this.clientService.createApproval(
           name,
           args ?? {},
         );
-        return this.pendingApprovalResult(approval, args ?? {});
+        return this.pendingApprovalResult(approval);
       }
 
       return await this.executeTool(name, args ?? {});
@@ -427,42 +383,18 @@ export class ToolRegistryService implements OnModuleInit {
     }
   }
 
-  private async brandRequiredResult() {
-    const brands = await this.listCallerBrands();
-    return mcpToolErrorResult({
-      brands,
-      code: 'brand_required',
-      message: brands.length
-        ? `Choose a brand for this generation. Available brands: ${brands.map((brand) => (brand.label === brand.id ? 'Unnamed brand' : brand.label)).join(', ')}.`
-        : 'Create a brand in Genfeed before starting this generation.',
-    });
-  }
-
-  private async listCallerBrands(): Promise<McpBrandOption[]> {
-    const result = await this.clientService.executeAgentTool('get_brands', {});
-    const brands = isRecord(result.data) ? result.data.brands : undefined;
-    if (!result.success || !Array.isArray(brands)) return [];
-    return brands.flatMap((brand): McpBrandOption[] => {
-      if (!isRecord(brand) || typeof brand.id !== 'string') return [];
-      const label =
-        typeof brand.label === 'string' && brand.label.trim()
-          ? brand.label
-          : typeof brand.name === 'string' && brand.name.trim()
-            ? brand.name
-            : brand.id;
-      return [{ id: brand.id, label }];
-    });
-  }
-
+  /**
+   * Classify a tool name to the executor that will run it, WITHOUT executing.
+   * Single source of truth for dispatch — used by {@link executeTool} and by the
+   * boot-time drift guard. Precedence is identical to the historical if/switch
+   * chain, so routing is behaviour-preserving.
+   */
   static classify(name: string): ExecutorKind {
     if (TOOL_DISCOVERY_TOOL_NAMES.has(name)) return 'tool-discovery';
     if (AGENT_CHAT_TOOL_NAMES.has(name)) return 'agent-chat';
     if (WORKFLOW_CONTROL_TOOL_NAMES.has(name)) return 'workflow-control';
     if (AGENT_EXECUTOR_TOOL_NAMES.has(name)) return 'agent-executor';
-    if (ONBOARDING_TOOL_NAMES.has(name)) return 'onboarding';
-    if (CONTENT_TOOL_NAMES.has(name)) return 'content';
-    if (ANALYTICS_TOOL_NAMES.has(name)) return 'analytics';
-    if (WORKFLOW_STATUS_TOOL_NAMES.has(name)) return 'workflow-status';
+    if (LEGACY_TOOL_NAMES.has(name)) return 'legacy';
     if (isMetaAdsTool(name)) return 'meta-ads';
     if (isGoogleAdsTool(name)) return 'google-ads';
     if (isTikTokAdsTool(name)) return 'tiktok-ads';
@@ -470,38 +402,16 @@ export class ToolRegistryService implements OnModuleInit {
     if (ACCOUNT_MANAGEMENT_TOOL_NAMES.has(name)) return 'account-management';
     if (SOCIAL_MESSAGES_TOOL_NAMES.has(name)) return 'social-messages';
     if (CLIP_PROJECTS_TOOL_NAMES.has(name)) return 'clip-projects';
-    if (EDITOR_TOOL_NAMES.has(name)) return 'editor';
-    if (STORYBOARD_TOOL_NAMES.has(name)) return 'storyboard-capabilities';
+    if (name === 'storyboard_run_capabilities')
+      return 'storyboard-capabilities';
     if (REMIX_TOOL_NAMES.has(name)) return 'remix';
     if (SCHEDULER_TOOL_NAMES.has(name)) return 'scheduler';
     if (SKILLS_PRO_TOOL_NAMES.has(name)) return 'skills-pro';
     return 'unknown';
   }
 
-  private static requiresApproval(
-    name: string,
-    args?: Record<string, unknown>,
-  ): boolean {
-    // These concrete calls cannot spend credits or dispatch publishing. The
-    // API still validates their arguments, actor, brand and key permissions.
-    if (name === 'create_post' && args && isMcpTextDraftCall(args))
-      return false;
-    if (name === 'repurpose_post' && args?.mode === 'deterministic')
-      return false;
-    const release = args?.release;
-    if (
-      name === 'create_scheduled_release' &&
-      isRecord(release) &&
-      (release.status === undefined || release.status === 'draft') &&
-      !release.scheduledDate &&
-      Array.isArray(release.targets) &&
-      release.targets.every(
-        (target) => isRecord(target) && !target.scheduledDate,
-      )
-    ) {
-      return false;
-    }
-    return requiresMcpApproval(getToolByName(name));
+  private static requiresApproval(name: string): boolean {
+    return getToolByName(name)?.mutationPolicy === 'approval-required';
   }
 
   private async executeTool(
@@ -509,15 +419,9 @@ export class ToolRegistryService implements OnModuleInit {
     args: Record<string, unknown>,
     approvedApprovalId?: string,
   ) {
-    const result = await this.dispatchTool(name, args, approvedApprovalId);
-    const kind = ToolRegistryService.classify(name);
-    return finalizeMcpToolResult(
+    return withCardResult(
       name,
-      result,
-      // Both run through the API agent executor, which already gates results.
-      kind === 'agent-executor' || kind === 'onboarding',
-      this.clientService,
-      this.logger,
+      await this.dispatchTool(name, args, approvedApprovalId),
     );
   }
 
@@ -539,25 +443,10 @@ export class ToolRegistryService implements OnModuleInit {
           args,
           approvedApprovalId ? { approvedApprovalId } : undefined,
         );
-        return this.toMcpResult(result, name);
+        return this.toMcpResult(result);
       }
-      case 'onboarding': {
-        const { agentToolName, parameters, timeoutMs } =
-          resolveOnboardBrandCall(args);
-        const result = await this.clientService.executeAgentTool(
-          agentToolName,
-          parameters,
-          undefined,
-          timeoutMs,
-        );
-        return this.toMcpResult(result, name);
-      }
-      case 'content':
-        return handleContentTool(this.clientService, name, args);
-      case 'analytics':
-        return handleAnalyticsTool(this.clientService, name, args);
-      case 'workflow-status':
-        return handleWorkflowStatusTool(this.clientService, name, args);
+      case 'legacy':
+        return this.handleLegacyTool(name, args);
       case 'meta-ads':
         return handleMetaAdsTool(this.clientService, name, args);
       case 'google-ads':
@@ -567,21 +456,21 @@ export class ToolRegistryService implements OnModuleInit {
       case 'ads-gateway':
         return handleAdsGatewayTool(this.clientService, name, args);
       case 'account-management':
-        return handleAccountManagementTool(
-          this.clientService,
-          name,
-          args,
-          this.mediaOrigins(),
-          this.logger,
-        );
+        return handleAccountManagementTool(this.clientService, name, args);
       case 'social-messages':
         return handleSocialMessagesTool(this.clientService, name, args);
       case 'clip-projects':
         return handleClipProjectsTool(this.clientService, name, args);
-      case 'editor':
-        return handleEditorTool(this.clientService, name, args);
-      case 'storyboard-capabilities':
-        return handleStoryboardTool(this.clientService, name, args);
+      case 'storyboard-capabilities': {
+        const result = await this.clientService.getStoryboardRunCapabilities(
+          storyboardToolSchemas.storyboard_run_capabilities.parse(args),
+        );
+        return {
+          content: [
+            { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      }
       case 'remix':
         return handleRemixTool(this.clientService, name, args);
       case 'scheduler':
@@ -616,7 +505,9 @@ export class ToolRegistryService implements OnModuleInit {
 
     if (decision === 'decline') {
       await this.clientService.resolveApproval(approvalId, 'decline');
-      return this.textResult('Approval declined. The action was not executed.');
+      return this.textResult(
+        `Approval ${approvalId} declined. The action was not executed.`,
+      );
     }
 
     // Atomically CLAIM the approval (PENDING -> APPROVED) BEFORE executing the
@@ -626,7 +517,10 @@ export class ToolRegistryService implements OnModuleInit {
     // once even though the MCP server is stateless and handles each request in
     // isolation. (Previously the claim happened AFTER execution, leaving a
     // TOCTOU window where two callers could both execute an irreversible tool.)
-    const approval = await this.claimApprovalOrRecoverRetry(approvalId);
+    const approval = await this.clientService.resolveApproval(
+      approvalId,
+      'approve',
+    );
 
     // Defense-in-depth: only execute tools that are actually approval-gated, so
     // a stray approval row created for a non-write tool cannot be run via the
@@ -637,13 +531,6 @@ export class ToolRegistryService implements OnModuleInit {
       throw new Error(message);
     }
 
-    // Agent-executor tools record their own outcome on the API, inside the
-    // execution fence. A failure that never reached that fence (identity or
-    // authorization check, transport) consumed nothing, so it must not be
-    // written onto the approval: that would make it permanently unredeemable.
-    const apiOwnsOutcome =
-      ToolRegistryService.classify(approval.toolName) === 'agent-executor';
-
     let result: Awaited<ReturnType<typeof this.executeTool>>;
     try {
       result = await this.executeTool(
@@ -652,18 +539,12 @@ export class ToolRegistryService implements OnModuleInit {
         approval.id,
       );
     } catch (error: unknown) {
-      if (!apiOwnsOutcome) {
-        // Direct-dispatch tools have no API-side fence, so the failure is
-        // recorded and the approval stays terminal to prevent a double run.
-        await this.attachApprovalResultSafe(approvalId, {
-          error: (error as Error)?.message ?? String(error),
-        });
-      }
+      // The approval is already claimed; record the failure on the audit row so
+      // the outcome is observable rather than a silently-APPROVED-but-failed row.
+      await this.attachApprovalResultSafe(approvalId, {
+        error: (error as Error)?.message ?? String(error),
+      });
       throw error;
-    }
-
-    if (apiOwnsOutcome && (result as { isError?: boolean }).isError) {
-      return result;
     }
 
     await this.attachApprovalResultSafe(
@@ -672,38 +553,6 @@ export class ToolRegistryService implements OnModuleInit {
     );
 
     return result;
-  }
-
-  /**
-   * Claim the approval for execution. An approval that is already APPROVED with
-   * no recorded outcome is a redemption that failed before the API consumed it
-   * (for example an identity check): its decision stands, so re-approving
-   * retries the execution instead of dead-ending on "already resolved". That
-   * recovery is limited to agent-executor tools, whose execution the API fences
-   * to at most one run; direct-dispatch tools have no such fence, so for them a
-   * lost claim always stays lost.
-   */
-  private async claimApprovalOrRecoverRetry(
-    approvalId: string,
-  ): Promise<McpApprovalResource> {
-    try {
-      return await this.clientService.resolveApproval(approvalId, 'approve');
-    } catch (claimError: unknown) {
-      let existing: McpApprovalResource | null = null;
-      try {
-        existing = await this.clientService.getApproval(approvalId);
-      } catch {
-        // Unreadable: keep the original claim failure.
-      }
-      if (
-        existing?.status === 'APPROVED' &&
-        !existing.result &&
-        ToolRegistryService.classify(existing.toolName) === 'agent-executor'
-      ) {
-        return existing;
-      }
-      throw claimError;
-    }
   }
 
   /**
@@ -724,68 +573,15 @@ export class ToolRegistryService implements OnModuleInit {
     }
   }
 
-  private pendingApprovalResult(
-    approval: McpApprovalResource,
-    args: Record<string, unknown>,
-  ) {
-    const tool = getToolByName(approval.toolName);
-    const canResolveApproval = this.getTools().some(
-      (candidate) => candidate.name === 'resolve_approval',
-    );
-    if (approval.toolName === 'generate') {
-      const quote = approval.generationQuote;
-      const estimatedCredits =
-        quote?.isAvailable === true &&
-        typeof quote.credits === 'number' &&
-        Number.isFinite(quote.credits) &&
-        quote.credits >= 0 &&
-        typeof quote.modelKey === 'string' &&
-        quote.modelKey.trim()
-          ? quote.credits
-          : null;
-      return approvalPendingToolResult(
-        approval,
-        {
-          estimatedCredits,
-          pricingSummary:
-            estimatedCredits === null
-              ? 'A model-specific credit quote is unavailable. Request fresh consent with a supported model and complete settings.'
-              : undefined,
-        },
-        canResolveApproval,
-      );
-    }
-    if (!tool?.creditPricing)
-      return approvalPendingToolResult(approval, undefined, canResolveApproval);
-    const estimatedCredits = estimateToolCreditCost(
-      approval.toolName,
-      args,
-      tool.creditPricing,
-    );
-    return approvalPendingToolResult(
-      approval,
-      {
-        estimatedCredits,
-        pricingSummary:
-          estimatedCredits === null
-            ? describeCreditPricing(tool.creditPricing)
-            : undefined,
-      },
-      canResolveApproval,
-    );
+  private pendingApprovalResult(approval: McpApprovalResource) {
+    return approvalPendingToolResult(approval);
   }
 
   private textResult(text: string) {
     return { content: [{ text, type: 'text' }] };
   }
 
-  private mediaOrigins(): string[] {
-    return [
-      this.configService?.get('GENFEEDAI_CDN_URL') || 'https://cdn.genfeed.ai',
-    ];
-  }
-
-  private toMcpResult(result: AgentToolResult, name: string) {
+  private toMcpResult(result: AgentToolResult) {
     if (!result.success) {
       const gated = toMcpToolErrorResult(
         result.error ?? 'Tool execution failed',
@@ -807,33 +603,356 @@ export class ToolRegistryService implements OnModuleInit {
 
     const payload = result.data ?? {};
     if (serializeMediaArtifact(payload)) {
-      return toNativeMcpMediaResult(
-        payload,
-        this.mediaOrigins(),
-        this.logger,
-      ).then((media) => this.stampCreditsDebited(media, result.creditsUsed));
+      return toMcpMediaToolResult(payload);
     }
-    const response = dataToolResult(
-      payload,
-      name === 'get_account' ? undefined : getToolByName(name)?.title,
-    );
-    if (name === 'get_account')
-      response.content[0].text = accountToolText(payload);
-    return this.stampCreditsDebited(response, result.creditsUsed);
+    return {
+      content: [
+        {
+          text: JSON.stringify(payload, null, 2),
+          type: 'text',
+        },
+      ],
+      structuredContent: { data: payload },
+    };
   }
 
-  private stampCreditsDebited<T extends { structuredContent?: object }>(
-    response: T,
-    creditsUsed: number,
-  ): T {
-    if (!response.structuredContent) return response;
-    return {
-      ...response,
-      structuredContent: {
-        ...response.structuredContent,
-        creditsDebited: creditsUsed,
-      },
-    } as T;
+  private async handleLegacyTool(name: string, args: Record<string, unknown>) {
+    switch (name) {
+      case 'get_video_status': {
+        if (!args?.videoId) {
+          throw new Error('videoId required');
+        }
+        const status = await this.clientService.getVideoStatus(
+          args.videoId as string,
+        );
+        return {
+          structuredContent: { data: { ...status, id: args.videoId } },
+          content: [
+            {
+              text: `Video Status: ${status.status}\nProgress: ${status.progress}%\n${status.message || ''}${status.url ? `\nURL: ${status.url}` : ''}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'list_videos': {
+        const limit = (args?.limit as number) || 10;
+        const offset = (args?.offset as number) || 0;
+        const videos = await this.clientService.listVideos(limit, offset);
+        return {
+          structuredContent: { data: videos },
+          content: [
+            {
+              text: formatListResult(videos, 'videos'),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_video_analytics': {
+        if (!args?.videoId) {
+          throw new Error('videoId required');
+        }
+        const videoId = args.videoId as string;
+        const timeRange = (args.timeRange as string) || '7d';
+        const analytics = await this.clientService.getVideoAnalytics(
+          videoId,
+          timeRange,
+        );
+        return {
+          content: [
+            {
+              text: `Video Analytics (${timeRange}):\n\n${JSON.stringify(analytics, null, 2)}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'create_article': {
+        if (!args?.topic) {
+          throw new Error('topic required');
+        }
+        const article = await this.clientService.createArticle({
+          keywords: args.keywords as string[] | undefined,
+          length: args.length as 'short' | 'medium' | 'long' | undefined,
+          targetAudience: args.targetAudience as string | undefined,
+          tone: args.tone as
+            | 'professional'
+            | 'casual'
+            | 'humorous'
+            | 'technical'
+            | 'storytelling'
+            | undefined,
+          topic: args.topic as string,
+        });
+
+        return {
+          structuredContent: { data: article },
+          content: [
+            {
+              text: `Article created successfully!\n\nArticle ID: ${article.id}\nTitle: ${article.title}\nStatus: ${article.status}\nWord Count: ${article.wordCount}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'search_articles': {
+        if (!args?.query) {
+          throw new Error('query required');
+        }
+        const articles = await this.clientService.searchArticles({
+          category: args.category as string | undefined,
+          limit: args.limit as number | undefined,
+          query: args.query as string,
+        });
+
+        return {
+          structuredContent: { data: articles },
+          content: [
+            {
+              text: formatListResult(
+                articles,
+                'articles',
+                ` matching "${args.query}"`,
+              ),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_article': {
+        if (!args?.articleId) {
+          throw new Error('articleId required');
+        }
+        const article = await this.clientService.getArticle(
+          args.articleId as string,
+        );
+        return {
+          structuredContent: { data: article },
+          content: [
+            {
+              text: `Article: ${article.title}\n\nID: ${article.id}\nStatus: ${article.status}\nWord Count: ${article.wordCount}\nCreated: ${article.createdAt}\n\nContent Preview:\n${article.content?.substring(0, 500)}...`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'list_images': {
+        const images = await this.clientService.listImages({
+          limit: args?.limit as number | undefined,
+          offset: args?.offset as number | undefined,
+        });
+        return {
+          structuredContent: { data: images },
+          content: [
+            {
+              text: formatListResult(images, 'images'),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'list_avatars': {
+        const avatars = await this.clientService.listAvatars({
+          limit: args?.limit as number | undefined,
+        });
+        return {
+          structuredContent: { data: avatars },
+          content: [
+            {
+              text: formatListResult(avatars, 'avatars'),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'list_music': {
+        const musicTracks = await this.clientService.listMusic({
+          limit: args?.limit as number | undefined,
+        });
+        return {
+          structuredContent: { data: musicTracks },
+          content: [
+            {
+              text: formatListResult(musicTracks, 'music tracks'),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_workflow_status': {
+        if (!args?.workflowId) {
+          throw new Error('workflowId required');
+        }
+        const workflow = await this.clientService.getWorkflowStatus(
+          args.workflowId as string,
+        );
+
+        return {
+          content: [
+            {
+              text: `Workflow Status: ${workflow.name}\n\nID: ${workflow.id}\nStatus: ${workflow.status}\nVersion: ${workflow.version ?? 'N/A'}\nNodes: ${workflow.nodeCount ?? 0}\nLast Run: ${workflow.lastRunAt || 'Never'}\nNext Run: ${workflow.nextRunAt || 'Not scheduled'}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'list_workflow_templates': {
+        const templates = await this.clientService.listWorkflowTemplates();
+
+        return {
+          content: [
+            {
+              text:
+                templates.length > 0
+                  ? `Available Workflow Templates:\n\n${templates.map((t) => `- ${t.name} (${t.id})\n  ${t.description}\n  Category: ${t.category}${t.creditsRequired ? `\n  Credits: ${t.creditsRequired}` : ''}`).join('\n\n')}`
+                  : 'No workflow templates available.',
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_content_analytics': {
+        if (!args?.contentId || !args.contentType) {
+          throw new Error('contentId and contentType required');
+        }
+
+        const contentId = args.contentId as string;
+        const contentType = args.contentType as string;
+
+        if (contentType === 'video') {
+          const analytics = await this.clientService.getVideoAnalytics(
+            contentId,
+            (args.timeRange as string) || '7d',
+          );
+          return {
+            content: [
+              {
+                text: `Analytics for ${contentType} ${contentId}:\n\n${JSON.stringify(analytics, null, 2)}`,
+                type: 'text',
+              },
+            ],
+          };
+        }
+
+        // Articles and images route through the canonical agent executor
+        // (`get_analytics`), which already owns content→published-post
+        // resolution, per-collection analytics rollups, and tenant scoping.
+        // Reusing it keeps the MCP and agent surfaces on one implementation
+        // rather than two that drift — this branch used to return a hardcoded
+        // "data is being compiled" string for exactly these two types.
+        const result = await this.clientService.executeAgentTool(
+          'get_analytics',
+          { contentId },
+        );
+
+        if (!result.success) {
+          throw new Error(
+            result.error ||
+              `Failed to get analytics for ${contentType} ${contentId}`,
+          );
+        }
+
+        // `getPostAnalyticsSummary` and `getArticleAnalyticsSummary` both roll
+        // up every recorded day, so this is a lifetime total; the declared
+        // `timeRange` argument does not narrow it. Say so rather than stamping
+        // a range the numbers do not honor.
+        return {
+          content: [
+            {
+              text: `Analytics for ${contentType} ${contentId} (lifetime totals):\n\n${JSON.stringify(result.data, null, 2)}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_usage_stats': {
+        const stats = await this.clientService.getUsageStats(
+          (args?.timeRange as string) || '30d',
+        );
+        return {
+          structuredContent: { data: stats },
+          content: [
+            {
+              text: `Usage Statistics (${stats.timeRange}):\n\nContent Created:\n- Videos: ${stats.contentCreated.videos}\n- Articles: ${stats.contentCreated.articles}\n- Images: ${stats.contentCreated.images}\n- Music: ${stats.contentCreated.music}\n- Avatars: ${stats.contentCreated.avatars}\n\nCredits Used: ${stats.creditsUsed}\nPosts Published: ${stats.postsPublished}\nTotal Engagement: ${stats.totalEngagement}`,
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'generate_linkedin_content': {
+        if (!args?.topic) {
+          throw new Error('topic is required');
+        }
+        const linkedInContent =
+          await this.clientService.generateLinkedInContent({
+            brandId: args.brandId as string | undefined,
+            topic: args.topic as string,
+            variationsCount: (args.variationsCount as number) || 3,
+          });
+        return {
+          content: [
+            {
+              text:
+                linkedInContent.length > 0
+                  ? `Generated ${linkedInContent.length} LinkedIn content variations:\n\n${JSON.stringify(linkedInContent, null, 2)}`
+                  : 'No content generated.',
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_linkedin_connection_status': {
+        const connectionStatus =
+          await this.clientService.getLinkedInConnectionStatus();
+        return {
+          content: [
+            {
+              text: JSON.stringify(connectionStatus, null, 2),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      case 'get_linkedin_analytics': {
+        if (!args?.contentId) {
+          throw new Error('contentId is required');
+        }
+        const linkedInAnalytics = await this.clientService.getLinkedInAnalytics(
+          args.contentId as string,
+          (args.timeRange as string) || '7d',
+        );
+        return {
+          content: [
+            {
+              text: JSON.stringify(linkedInAnalytics, null, 2),
+              type: 'text',
+            },
+          ],
+        };
+      }
+
+      default:
+        // `executeTool` only routes `LEGACY_TOOL_NAMES` here, so this is
+        // unreachable in practice; throw rather than silently returning
+        // undefined if the two ever drift.
+        throw new Error(`Unknown legacy tool: ${name}`);
+    }
   }
 
   async handleResourceRead(params: ResourceReadParams) {
@@ -846,25 +965,16 @@ export class ToolRegistryService implements OnModuleInit {
         case MCP_CARD_RESOURCE_URI:
           return {
             contents: [
-              cardResource(
-                [
-                  this.configService?.get('GENFEEDAI_CDN_URL') ||
-                    'https://cdn.genfeed.ai',
-                  this.configService?.get(
-                    'GENFEEDAI_MICROSERVICES_FILES_URL',
-                  ) || '',
-                ],
-                `${new URL(SATOSHI_FONT_RESOURCE_PATH, getPublicMcpUrl()).href}?v=${MCP_CARD_RESOURCE_HASH}`,
-              ),
+              cardResource([
+                this.configService?.get('GENFEEDAI_CDN_URL') ||
+                  'https://cdn.genfeed.ai',
+                this.configService?.get('GENFEEDAI_MICROSERVICES_FILES_URL') ||
+                  '',
+              ]),
             ],
           };
         case McpResourceUri.AGENT_GUIDE:
-          return this.requestAccessMode === 'claude'
-            ? markdownResource(
-                uri,
-                `# Genfeed for Claude\nManage brands, drafts, scheduling and analytics with existing assets. Create images, video and audio in [Genfeed Studio](${getPublicAppUrl()}${APP_ROUTES.STUDIO.PLAYGROUND}). This connector cannot run generation, workflows, batches, remix or approval redemption.`,
-              )
-            : agentGuideResource(uri);
+          return agentGuideResource(uri);
 
         case McpResourceUri.VIDEO_ANALYTICS:
           return jsonResource(

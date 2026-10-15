@@ -34,7 +34,9 @@ describe('ToolRegistryService.classify', () => {
   it.each([
     // Tool discovery meta tools are handled entirely in-process (no API
     // call); they classify first so nothing else can shadow them.
-    ['find_tools', 'tool-discovery'],
+    ['list_toolsets', 'tool-discovery'],
+    ['search_tools', 'tool-discovery'],
+    ['describe_tool', 'tool-discovery'],
     ['send_chat_message', 'agent-chat'],
     // inspect_workflow is BOTH an CuratedActionName and a workflow-control tool;
     // precedence must keep it on workflow-control (checked first).
@@ -44,48 +46,11 @@ describe('ToolRegistryService.classify', () => {
     // they are also CuratedActionName members.
     ['list_system_workflow_catalog', 'workflow-control'],
     ['install_system_workflow', 'workflow-control'],
-    ['generate', 'agent-executor'],
-    ['create_brand_from_url', 'agent-executor'],
-    ['get_brand_scan_status', 'agent-executor'],
-    ['generate_visual_code', 'agent-executor'],
-    ['get_visual_code_catalog', 'agent-executor'],
-    ['get_visual_code_project', 'agent-executor'],
-    ['quote_visual_code_generation', 'agent-executor'],
-    ['revise_visual_code_project', 'agent-executor'],
-    ['export_visual_code_project', 'agent-executor'],
-    ['cancel_visual_code_project', 'agent-executor'],
-    ['retry_visual_code_project', 'agent-executor'],
+    ['generate_image', 'agent-executor'],
     ['enhance_prompt', 'agent-executor'],
-    ['get_generation_options', 'agent-executor'],
-    ['transform_media', 'agent-executor'],
-    ['generate_content', 'agent-executor'],
-    ['edit_image', 'unknown'],
-    ['reframe_image', 'unknown'],
-    ['upscale_image', 'unknown'],
-    ['get_generation_cost', 'unknown'],
-    ['get_generation_settings', 'unknown'],
-    ['generate_linkedin_content', 'unknown'],
+    ['get_generation_settings', 'agent-executor'],
     ['set_generation_settings', 'agent-executor'],
-    ['get_job_status', 'account-management'],
-    // Removed in favour of get_job_status: no executor claims it any more.
-    ['get_video_status', 'unknown'],
-    ['list_assets', 'agent-executor'],
-    ['get_account', 'agent-executor'],
-    ['get_brands', 'agent-executor'],
-    ['get_posts', 'agent-executor'],
-    // MCP-only; maps each action onto an in-app onboarding agent tool.
-    ['onboard_brand', 'onboarding'],
-    // Merged into get_account / get_brands / get_posts / list_assets.
-    ['get_usage_stats', 'unknown'],
-    ['list_videos', 'unknown'],
-    ['list_images', 'unknown'],
-    ['merge_videos', 'unknown'],
-    ['create_article', 'unknown'],
-    ['create_article_draft', 'content'],
-    ['get_articles', 'content'],
-    ['get_video_analytics', 'analytics'],
-    ['get_workflow_status', 'workflow-status'],
-    ['list_workflow_templates', 'workflow-status'],
+    ['get_video_status', 'legacy'],
     ['list_meta_campaigns', 'meta-ads'],
     ['get_google_ads_campaign_metrics', 'google-ads'],
     ['list_tiktok_campaigns', 'tiktok-ads'],
@@ -95,14 +60,14 @@ describe('ToolRegistryService.classify', () => {
     // per-platform prefixes are checked first so they cannot be captured here.
     ['get_ads_adset_insights', 'ads-gateway'],
     ['get_ads_ad_insights', 'ads-gateway'],
-    ['get_account_info', 'unknown'],
-    ['list_brands', 'unknown'],
+    ['get_account_info', 'account-management'],
     ['post_social_reply', 'social-messages'],
-    // generate_turbo_content is an CuratedActionName, so it routes through the
+    // generate_content_batch is an CuratedActionName, so it routes through the
     // agent-executor to /agent-tools/:name/execute (re-surfaced in PR 5/6).
-    ['generate_turbo_content', 'agent-executor'],
+    ['generate_content_batch', 'agent-executor'],
     ['list_instagram_inspiration', 'agent-executor'],
-    ['get_x_posts', 'agent-executor'],
+    ['search_x_posts', 'agent-executor'],
+    ['fetch_x_post', 'agent-executor'],
     ['list_x_account_activity', 'agent-executor'],
     ['create_instagram_remix_workflow', 'agent-executor'],
     ['create_ad_remix_workflow', 'agent-executor'],
@@ -112,18 +77,16 @@ describe('ToolRegistryService.classify', () => {
     ['import_source_post', 'remix'],
     ['create_remix_concept', 'remix'],
     ['get_remix_run', 'remix'],
-    ['open_in_editor', 'editor'],
     ['storyboard_run_capabilities', 'storyboard-capabilities'],
-    ['create_storyboard_remix', 'storyboard-capabilities'],
-    ['replace_storyboard_character', 'storyboard-capabilities'],
     ['update_remix_concept', 'remix'],
     ['attach_remix_analysis_source', 'remix'],
     ['quote_remix_generation', 'remix'],
     ['start_remix_generation', 'remix'],
     ['control_remix_generation', 'remix'],
     ['get_scheduled_release', 'scheduler'],
-    ['get_scheduler_capabilities', 'scheduler'],
+    ['get_scheduler_capability', 'scheduler'],
     ['list_brand_publishing_readiness', 'scheduler'],
+    ['list_scheduler_capabilities', 'scheduler'],
     ['update_scheduled_release', 'scheduler'],
     ['validate_scheduler_target', 'scheduler'],
     ['verify_skills_pro_entitlement', 'skills-pro'],
@@ -148,23 +111,19 @@ describe('ToolRegistryService.classify', () => {
 describe('ToolRegistryService.validateDispatchCoverage', () => {
   it('passes when every surfaced tool routes (resolve_approval excepted)', () => {
     mockState.tools = [
-      { name: 'generate' },
-      { name: 'create_brand_from_url' },
-      { name: 'get_brand_scan_status' },
-      { name: 'get_job_status' },
+      { name: 'generate_image' },
+      { name: 'get_video_status' },
       { name: 'list_meta_campaigns' },
       { name: 'resolve_approval' },
       { name: 'create_post' },
-      { name: 'find_tools' },
+      { name: 'list_toolsets' },
     ];
     expect(() => ToolRegistryService.validateDispatchCoverage()).not.toThrow();
   });
 
   it('throws when a surfaced tool has no executor', () => {
     mockState.tools = [
-      { name: 'generate' },
-      { name: 'create_brand_from_url' },
-      { name: 'get_brand_scan_status' },
+      { name: 'generate_image' },
       { name: 'totally_unrouted_tool' },
     ];
     expect(() => ToolRegistryService.validateDispatchCoverage()).toThrow(

@@ -1,16 +1,9 @@
-import { storyboardCharacterReplacementSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-character-replace.contract';
-import { storyboardRunSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import { storyboardRunCapabilitiesSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-run-capabilities.contract';
 import type {
   AgentToolResult,
-  AgentUntrustedContentGateResult,
   IPublishingProviderReadiness,
   IReleaseGroup,
 } from '@genfeedai/contracts/interfaces';
-import type {
-  ArticleDraftInput,
-  ArticlePreviewLink,
-} from '@genfeedai/contracts/interfaces/content/article-publishing.interface';
 import { LoggerService } from '@libs/logger/logger.service';
 import { ConfigService } from '@mcp/config/config.service';
 import { AdsClient } from '@mcp/services/client/ads.client';
@@ -19,8 +12,9 @@ import { AnalyticsClient } from '@mcp/services/client/analytics.client';
 import { BaseApiClient } from '@mcp/services/client/base-api-client';
 import type {
   AdsGatewayInsightsParams,
-  CreateTurboRunParams,
-  ListTurboRunsParams,
+  BrandResponse,
+  CreateBatchParams,
+  ListBatchesParams,
   PersonaResponse,
 } from '@mcp/services/client/client.types';
 import {
@@ -31,10 +25,6 @@ import {
   type ListClipProjectsParams,
 } from '@mcp/services/client/clips.client';
 import { ContentClient } from '@mcp/services/client/content.client';
-import {
-  EditorClient,
-  type OpenInEditorParams,
-} from '@mcp/services/client/editor.client';
 import { LinkedInClient } from '@mcp/services/client/linkedin.client';
 import type { LinkedInConnectionStatus } from '@mcp/services/client/linkedin.client.types';
 import { MediaClient } from '@mcp/services/client/media.client';
@@ -65,16 +55,23 @@ import type {
   McpApprovalResource,
 } from '@mcp/shared/interfaces/approval.interface';
 import type {
+  ArticleCreationParams,
   ArticleResponse,
   ArticleSearchParams,
   ArticleSearchResult,
 } from '@mcp/shared/interfaces/article.interface';
 import type {
+  AvatarListParams,
+  AvatarResponse,
+} from '@mcp/shared/interfaces/avatar.interface';
+import type {
   ImageCreationParams,
+  ImageListParams,
   ImageResponse,
 } from '@mcp/shared/interfaces/image.interface';
 import type {
   MusicCreationParams,
+  MusicListParams,
   MusicResponse,
 } from '@mcp/shared/interfaces/music.interface';
 import type {
@@ -84,6 +81,7 @@ import type {
   PublishContentParams,
   TrendingTopic,
   TrendingTopicsParams,
+  UsageStats,
 } from '@mcp/shared/interfaces/post.interface';
 import type {
   SkillsProEntitlement,
@@ -92,6 +90,7 @@ import type {
 import type {
   VideoCreationParams,
   VideoResponse,
+  VideoStatus,
 } from '@mcp/shared/interfaces/video.interface';
 import type {
   SystemWorkflowCatalogEntry,
@@ -132,7 +131,6 @@ export class ClientService {
   private readonly analytics: AnalyticsClient;
   private readonly content: ContentClient;
   private readonly clips: ClipsClient;
-  private readonly editor: EditorClient;
   private readonly scheduler: SchedulerClient;
   private readonly remix: RemixClient;
   private readonly workflows: WorkflowClient;
@@ -155,7 +153,6 @@ export class ClientService {
     this.analytics = new AnalyticsClient(this.base);
     this.content = new ContentClient(this.base);
     this.clips = new ClipsClient(this.base);
-    this.editor = new EditorClient(this.base);
     this.scheduler = new SchedulerClient(this.base);
     this.remix = new RemixClient(this.base);
     this.workflows = new WorkflowClient(this.base);
@@ -216,21 +213,12 @@ export class ClientService {
 
   // ── Agent tools & approvals ──
 
-  evaluateMcpToolResult(
-    name: string,
-    content: string,
-    isPartial = false,
-  ): Promise<AgentUntrustedContentGateResult> {
-    return this.agent.evaluateMcpToolResult(name, content, isPartial);
-  }
-
   executeAgentTool(
     name: string,
     parameters: Record<string, unknown>,
     context?: Record<string, unknown>,
-    timeoutMs?: number,
   ): Promise<AgentToolResult> {
-    return this.agent.executeAgentTool(name, parameters, context, timeoutMs);
+    return this.agent.executeAgentTool(name, parameters, context);
   }
 
   createApproval(
@@ -265,12 +253,32 @@ export class ClientService {
     return this.media.createVideo(params);
   }
 
+  getVideoStatus(videoId: string): Promise<VideoStatus> {
+    return this.media.getVideoStatus(videoId);
+  }
+
+  listVideos(limit: number = 10, offset: number = 0): Promise<VideoResponse[]> {
+    return this.media.listVideos(limit, offset);
+  }
+
   createImage(params: ImageCreationParams): Promise<ImageResponse> {
     return this.media.createImage(params);
   }
 
+  listImages(params: ImageListParams = {}): Promise<ImageResponse[]> {
+    return this.media.listImages(params);
+  }
+
+  listAvatars(params: AvatarListParams = {}): Promise<AvatarResponse[]> {
+    return this.media.listAvatars(params);
+  }
+
   createMusic(params: MusicCreationParams): Promise<MusicResponse> {
     return this.media.createMusic(params);
+  }
+
+  listMusic(params: MusicListParams = {}): Promise<MusicResponse[]> {
+    return this.media.listMusic(params);
   }
 
   // ── Analytics ──
@@ -288,16 +296,8 @@ export class ClientService {
 
   // ── Content (articles / posts / trends) ──
 
-  createArticleDraft(params: ArticleDraftInput): Promise<ArticleResponse> {
-    return this.content.createArticleDraft(params);
-  }
-
-  getArticlePreview(articleId: string): Promise<ArticlePreviewLink> {
-    return this.content.getArticlePreview(articleId);
-  }
-
-  publishArticle(articleId: string): Promise<ArticleResponse> {
-    return this.content.publishArticle(articleId);
+  createArticle(params: ArticleCreationParams): Promise<ArticleResponse> {
+    return this.content.createArticle(params);
   }
 
   searchArticles(params: ArticleSearchParams): Promise<ArticleSearchResult[]> {
@@ -354,62 +354,12 @@ export class ClientService {
     return this.clips.listClipProjects(params);
   }
 
-  openInEditor(params: OpenInEditorParams): Promise<Record<string, unknown>> {
-    return this.editor.openInEditor(params);
-  }
-
   importSourcePost(input: RemixToolInput<'import_source_post'>) {
     return this.remix.importSourcePost(input);
   }
   createRemixConcept(input: RemixToolInput<'create_remix_concept'>) {
     return this.remix.createRemixConcept(input);
   }
-  createStoryboardRemix(input: StoryboardToolInput<'create_storyboard_remix'>) {
-    const { assetId, brandId, clientRequestId } =
-      storyboardToolSchemas.create_storyboard_remix.parse(input);
-    return this.base.request(
-      'creating a storyboard remix',
-      async (http) => {
-        const response = await http.post(
-          `/brands/${encodeURIComponent(brandId)}/storyboard-runs`,
-          {
-            clientRequestId,
-            source: { kind: 'uploaded_video', assetId },
-          },
-        );
-        const resource =
-          this.base.unwrapObject<Record<string, unknown>>(response);
-        const attributes = storyboardRecord(resource.attributes);
-        return storyboardRunSchema.parse({
-          ...attributes,
-          ...(typeof resource.id === 'string' ? { id: resource.id } : {}),
-        });
-      },
-      this.base.failWithDetail('Failed to create a storyboard remix'),
-    );
-  }
-
-  replaceStoryboardCharacter(
-    input: StoryboardToolInput<'replace_storyboard_character'>,
-  ) {
-    const { brandId, imageAssetIds, prompt, runId, shotId } =
-      storyboardToolSchemas.replace_storyboard_character.parse(input);
-    return this.base.request(
-      'replacing a storyboard character',
-      async (http) => {
-        const response = await http.post(
-          `/brands/${encodeURIComponent(brandId)}/storyboard-runs/${encodeURIComponent(runId)}/shots/${encodeURIComponent(shotId)}/character-replacement`,
-          {
-            imageAssetIds,
-            ...(prompt === undefined ? {} : { prompt }),
-          },
-        );
-        return storyboardCharacterReplacementSchema.parse(response.data);
-      },
-      this.base.failWithDetail('Failed to replace the storyboard character'),
-    );
-  }
-
   getStoryboardRunCapabilities(
     input: StoryboardToolInput<'storyboard_run_capabilities'>,
   ) {
@@ -504,22 +454,32 @@ export class ClientService {
     return this.workspace.getCredits();
   }
 
+  getUsageStats(timeRange: string = '30d'): Promise<UsageStats> {
+    return this.workspace.getUsageStats(timeRange);
+  }
+
+  listBrands(): Promise<BrandResponse[]> {
+    return this.workspace.listBrands();
+  }
+
   listPersonas(
     params: { status?: string; limit?: number; offset?: number } = {},
   ): Promise<PersonaResponse[]> {
     return this.workspace.listPersonas(params);
   }
 
-  createTurboRun(
-    params: CreateTurboRunParams,
-  ): Promise<Record<string, unknown>> {
-    return this.workspace.createTurboRun(params);
+  createBatch(params: CreateBatchParams): Promise<Record<string, unknown>> {
+    return this.workspace.createBatch(params);
   }
 
-  listTurboRuns(
-    params: ListTurboRunsParams = {},
+  listBatches(
+    params: ListBatchesParams = {},
   ): Promise<Array<Record<string, unknown>>> {
-    return this.workspace.listTurboRuns(params);
+    return this.workspace.listBatches(params);
+  }
+
+  getAccountInfo(): Promise<Record<string, unknown>> {
+    return this.workspace.getAccountInfo();
   }
 
   getJobStatus(jobId: string): Promise<Record<string, unknown>> {
@@ -891,6 +851,22 @@ export class ClientService {
 
   // ── LinkedIn ──
 
+  generateLinkedInContent(params: {
+    brandId?: string;
+    topic: string;
+    variationsCount?: number;
+  }): Promise<
+    Array<{
+      body: string;
+      content: string;
+      cta: string;
+      hashtags: string[];
+      hook: string;
+    }>
+  > {
+    return this.linkedin.generateLinkedInContent(params);
+  }
+
   getLinkedInConnectionStatus(): Promise<LinkedInConnectionStatus> {
     return this.linkedin.getLinkedInConnectionStatus();
   }
@@ -901,11 +877,4 @@ export class ClientService {
   ): Promise<Record<string, unknown>> {
     return this.linkedin.getLinkedInAnalytics(contentId, timeRange);
   }
-}
-
-function storyboardRecord(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return Object.fromEntries(Object.entries(value));
 }

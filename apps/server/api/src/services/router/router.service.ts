@@ -11,20 +11,9 @@ import type {
   PromptAnalysis,
 } from '@api/services/router/interfaces/router.interfaces';
 import { ModelCategory, ModelLifecycle } from '@genfeedai/contracts';
-import {
-  DEFAULT_CONTEXT_EMBEDDING_MODEL,
-  hasEndFrame,
-} from '@genfeedai/contracts/constants';
-import {
-  getRuntimeMarginMultiplier,
-  quoteModelBillablePricing,
-} from '@genfeedai/pricing';
+import { DEFAULT_CONTEXT_EMBEDDING_MODEL } from '@genfeedai/contracts/constants';
 import { LoggerService } from '@libs/logger/logger.service';
-import {
-  ForbiddenException,
-  Injectable,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 /** Registry-backed model selection and recommendation policy. */
 @Injectable()
@@ -65,16 +54,6 @@ export class RouterService {
     standard: 2,
     ultra: 4,
   };
-
-  /** Categories whose dispatch is admitted through the authoritative quote. */
-  private static readonly QUOTE_ADMITTED_CATEGORIES: ReadonlySet<ModelCategory> =
-    new Set([
-      ModelCategory.IMAGE,
-      ModelCategory.IMAGE_EDIT,
-      ModelCategory.VIDEO,
-      ModelCategory.VOICE,
-      ModelCategory.AVATAR,
-    ]);
 
   /** Cheaper wins the tiebreak between two models of equal quality. */
   private static readonly COST_TIER_RANKS: Record<string, number> = {
@@ -237,62 +216,6 @@ export class RouterService {
   }
 
   /**
-   * Media admission prices every dispatch through the authoritative quote
-   * (`ModelCreditQuoteService`) and refuses an unpriceable model with 503.
-   * Auto must not pick a model admission will refuse, so drop rows whose
-   * tariff cannot quote a single default output. Reviewed variant rates stay
-   * eligible: their selectors come from the dispatched input, not this sample.
-   */
-  private async restrictToQuotableModels(
-    models: ModelDocument[],
-    category: ModelCategory,
-    organizationId?: string,
-  ): Promise<ModelDocument[]> {
-    if (!RouterService.QUOTE_ADMITTED_CATEGORIES.has(category)) {
-      return models;
-    }
-
-    const marginMultiplier = getRuntimeMarginMultiplier();
-    const quotedAt = new Date().toISOString();
-    const isQuotable = await Promise.all(
-      models.map(async (model) => {
-        const modelKey = this.readString(model.key);
-        if (!modelKey) {
-          return false;
-        }
-        const profile = await this.modelsService.findBillablePricingProfile(
-          modelKey,
-          organizationId,
-        );
-        // A pending provider price change (orange) keeps charging its approved
-        // rate, so it stays routable; only an unpriceable model is skipped.
-        if (!profile) {
-          return false;
-        }
-        if (profile.reviewedPricing) {
-          return true;
-        }
-        return (
-          quoteModelBillablePricing(
-            profile,
-            {
-              duration: model.defaultDuration ?? model.durations?.[0] ?? 5,
-              height: 1024,
-              modelKey,
-              provider: profile.provider,
-              width: 1024,
-            },
-            marginMultiplier,
-            quotedAt,
-          ).status === 'priced'
-        );
-      }),
-    );
-
-    return models.filter((_, index) => isQuotable[index]);
-  }
-
-  /**
    * Rank a registry row when the category has no explicit default. Highlighted
    * rows outrank everything, then quality tier, then the cheaper option.
    */
@@ -424,7 +347,7 @@ export class RouterService {
   /**
    * Cost priority: prefer low tiers, then fall back to numeric provider/list
    * cost so registries with null costTier (common before re-seed) still pick
-   * the cheaper eligible Recommended row. Legacy models stay outside Auto.
+   * FLUX Schnell ($0.003) over Nano Banana ($0.039).
    */
   private scoreCostPriority(model: ModelDocument): number {
     if (model.costTier === 'low') {
@@ -472,13 +395,7 @@ export class RouterService {
   }
 
   private scoreQualityTier(model: ModelDocument, prioritize: string): number {
-    // Quality already scored ultra/high in scorePriority. Balanced is the
-    // category default — quality labels must not override isDefault.
-    if (
-      prioritize === 'quality' ||
-      prioritize === 'balanced' ||
-      !model.qualityTier
-    ) {
+    if (prioritize === 'quality' || !model.qualityTier) {
       return 0;
     }
     return RouterService.QUALITY_TIER_SCORES[model.qualityTier] || 0;
@@ -765,27 +682,10 @@ export class RouterService {
       // Analyze prompt
       const analysis = this.analyzePrompt(options.prompt);
 
-      const enabledModels = await this.restrictToEnabledModels(
+      const models = await this.restrictToEnabledModels(
         await this.getUsableModels(options.category, options.organizationId),
         options.organizationId,
       );
-      const eligibleModels = enabledModels.filter(
-        (model) =>
-          (options.eligibleModelKeys === undefined ||
-            options.eligibleModelKeys.includes(model.key)) &&
-          (!options.requiresEndFrame || hasEndFrame(model.key)),
-      );
-      const models = await this.restrictToQuotableModels(
-        eligibleModels,
-        options.category,
-        options.organizationId,
-      );
-
-      if (eligibleModels.length > 0 && models.length === 0) {
-        throw new ServiceUnavailableException(
-          'No Recommended model enabled for this workspace can be priced right now',
-        );
-      }
 
       if (models.length === 0) {
         this.logger.warn(`${url} no models found for category`, {

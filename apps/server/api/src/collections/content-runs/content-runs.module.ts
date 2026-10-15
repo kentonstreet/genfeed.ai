@@ -33,19 +33,14 @@ import { ContentRunRecommendationsService } from '@api/collections/content-runs/
 import { ContentRunsService } from '@api/collections/content-runs/services/content-runs.service';
 import { PausedMetaCampaignDraftService } from '@api/collections/content-runs/services/paused-meta-campaign-draft.service';
 import { PausedXAdsCampaignDraftService } from '@api/collections/content-runs/services/paused-x-ads-campaign-draft.service';
-import { StoryboardCharacterReplaceService } from '@api/collections/content-runs/services/storyboard-character-replace.service';
-import { StoryboardPlanDraftService } from '@api/collections/content-runs/services/storyboard-plan-draft.service';
 import { StoryboardRunCapabilitiesService } from '@api/collections/content-runs/services/storyboard-run-capabilities.service';
 import { StoryboardRunStoreService } from '@api/collections/content-runs/services/storyboard-run-store.service';
 import { StoryboardRunsService } from '@api/collections/content-runs/services/storyboard-runs.service';
 import { StoryboardSourceService } from '@api/collections/content-runs/services/storyboard-source.service';
-import { StoryboardStillsService } from '@api/collections/content-runs/services/storyboard-stills.service';
 import { CreditsModule } from '@api/collections/credits/credits.module';
 import { ImagesModule } from '@api/collections/images/images.module';
 import { ModelsModule } from '@api/collections/models/models.module';
 import { OrganizationSettingsModule } from '@api/collections/organization-settings/organization-settings.module';
-import { PersonasCoreModule } from '@api/collections/personas/personas-core.module';
-import { PlatformSettingsModule } from '@api/collections/platform-settings/platform-settings.module';
 import { TrendsModule } from '@api/collections/trends/trends.module';
 import { VideoGenerationModule } from '@api/collections/videos/video-generation.module';
 import { VideosModule } from '@api/collections/videos/videos.module';
@@ -53,17 +48,17 @@ import { WorkflowsCoreModule } from '@api/collections/workflows/workflows-core.m
 import { AdsResearchModule } from '@api/endpoints/ads-research/ads-research.module';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
+import { BatchGenerationModule } from '@api/services/batch-generation/batch-generation.module';
 import { ByokModule } from '@api/services/byok/byok.module';
 import { ContentOptimizationModule } from '@api/services/content-optimization/content-optimization.module';
 import { FilesClientModule } from '@api/services/files-microservice/client/files-client.module';
 import { FileQueueModule } from '@api/services/files-microservice/queue/file-queue.module';
-import { HiggsFieldModule } from '@api/services/integrations/higgsfield/higgsfield.module';
 import { MetaAdsModule } from '@api/services/integrations/meta-ads/meta-ads.module';
 import { OpenRouterModule } from '@api/services/integrations/openrouter/openrouter.module';
 import { XAdsModule } from '@api/services/integrations/x-ads/x-ads.module';
 import { MediaUrlsModule } from '@api/services/media-urls/media-urls.module';
+import { AgentGenerationEstimateService } from '@api/services/router/agent-generation-estimate.service';
 import { RouterModule } from '@api/services/router/router.module';
-import { TurboRunModule } from '@api/services/turbo-run/turbo-run.module';
 import { VideoStitchModule } from '@api/services/video-stitch/video-stitch.module';
 import { WhisperModule } from '@api/services/whisper/whisper.module';
 import { Module } from '@nestjs/common';
@@ -82,8 +77,6 @@ import { Module } from '@nestjs/common';
     ContentRunRecommendationsService,
   ],
   imports: [
-    PersonasCoreModule,
-    PlatformSettingsModule,
     FileQueueModule,
     MediaUrlsModule,
     RouterModule,
@@ -92,14 +85,13 @@ import { Module } from '@nestjs/common';
     VideoStitchModule,
     AdsResearchModule,
     AdCreativeMappingsModule,
-    TurboRunModule,
+    BatchGenerationModule,
     BrandsCoreModule,
     ByokModule,
     ContentIntelligenceModule,
     CreditsModule,
     ContentOptimizationModule,
     FilesClientModule,
-    HiggsFieldModule,
     ImagesModule,
     MetaAdsModule,
     ModelsModule,
@@ -111,13 +103,11 @@ import { Module } from '@nestjs/common';
     XAdsModule,
   ],
   providers: [
-    StoryboardCharacterReplaceService,
-    StoryboardPlanDraftService,
     StoryboardRunCapabilitiesService,
     StoryboardRunsService,
     StoryboardRunStoreService,
     StoryboardSourceService,
-    StoryboardStillsService,
+    AgentGenerationEstimateService,
     BrandRemixSceneService,
     BrandRemixSceneStoreService,
     BrandRemixSceneQuoteService,

@@ -1,4 +1,3 @@
-import { replaceStoryboardCharacterSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-character-replace.contract';
 import { updateStoryboardPlanSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
 import {
   controlStoryboardRunSchema,
@@ -6,7 +5,6 @@ import {
   updateStoryboardSourceSchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import {
-  controlStoryboardOperationSchema,
   createStoryboardRunQuoteSchema,
   executeStoryboardRunSchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-run-quote.contract';
@@ -18,16 +16,6 @@ const scope = { brandId: storyboardIdSchema };
 const run = { ...scope, runId: storyboardIdSchema };
 // Exported schemas do not register unfinished paid tools. API ownership gates remain authoritative.
 export const storyboardToolSchemas = {
-  create_storyboard_remix: z
-    .object({
-      ...scope,
-      assetId: storyboardIdSchema,
-      clientRequestId: z.string().uuid(),
-    })
-    .strict(),
-  replace_storyboard_character: replaceStoryboardCharacterSchema
-    .extend({ ...run, shotId: storyboardIdSchema })
-    .strict(),
   storyboard_run_capabilities: z.object(run).strict(),
   storyboard_run_create: createStoryboardRunSchema.extend(scope).strict(),
   storyboard_run_list: listStoryboardRunsSchema.extend(scope).strict(),
@@ -38,8 +26,8 @@ export const storyboardToolSchemas = {
   storyboard_source_update: updateStoryboardSourceSchema.extend(run).strict(),
   storyboard_run_quote: createStoryboardRunQuoteSchema.safeExtend(run).strict(),
   storyboard_run_execute: executeStoryboardRunSchema.extend(run).strict(),
-  storyboard_run_cancel: controlStoryboardOperationSchema.extend(run).strict(),
-  storyboard_run_resume: controlStoryboardOperationSchema.extend(run).strict(),
+  storyboard_run_cancel: controlStoryboardRunSchema.extend(run).strict(),
+  storyboard_run_resume: controlStoryboardRunSchema.extend(run).strict(),
 };
 export type StoryboardToolName = keyof typeof storyboardToolSchemas;
 export type StoryboardToolInput<Name extends StoryboardToolName> = z.infer<

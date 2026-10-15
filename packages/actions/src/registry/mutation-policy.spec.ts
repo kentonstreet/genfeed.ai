@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getActionDefinition } from './action-registry';
 import { CURATED_ACTION_CATALOG } from './curated-action-catalog';
 import {
+  buildLogicalWriteKey,
   evaluateMutationPolicy,
   getDeclaredMutationPolicy,
   isApprovalRequiredToolName,
@@ -18,14 +19,13 @@ const MCP_QUEUED_WRITES = [
   'approve_social_draft',
   'control_scheduled_release',
   'create_ad_remix_workflow',
-  'create_article_draft',
-  'publish_article',
+  'create_article',
   'create_clip_project_from_youtube',
   'create_instagram_remix_workflow',
   'create_post',
   'create_scheduled_release',
   'generate_clips',
-  'generate_turbo_content',
+  'generate_content_batch',
   'install_skills_pro_skill',
   'post_social_reply',
   'send_social_dm',
@@ -36,37 +36,6 @@ const MCP_QUEUED_WRITES = [
 ] as const;
 
 describe('mutation policy map', () => {
-  it('keeps the zero-cost Expert handoff a direct agent-only onboarding tool', () => {
-    expect(getToolByName('complete_brand_onboarding_step')).toMatchObject({
-      creditCost: 0,
-      mutationPolicy: 'direct',
-    });
-    expect(
-      CURATED_ACTION_CATALOG.find(
-        (tool) => tool.name === 'complete_brand_onboarding_step',
-      )?.surfaces,
-    ).toEqual(['agent']);
-  });
-  it('creates brands directly and reads scan status without mutation', () => {
-    expect(getToolByName('create_brand_from_url')).toMatchObject({
-      creditCost: 1,
-      mutationPolicy: 'direct',
-    });
-    expect(getToolByName('get_brand_scan_status')).toMatchObject({
-      creditCost: 0,
-    });
-    expect(toolRequiresMutationPolicy('get_brand_scan_status')).toBe(false);
-  });
-  it('opens existing videos in the Editor as a free direct write', () => {
-    expect(getToolByName('open_in_editor')).toMatchObject({
-      creditCost: 0,
-      mutationPolicy: 'direct',
-      toolset: 'clips',
-    });
-    expect(isReadOnlyToolName('open_in_editor')).toBe(false);
-    expect(toolRequiresMutationPolicy('open_in_editor')).toBe(true);
-  });
-
   it('exposes Storyboard capabilities as a free read-only MCP tool', () => {
     expect(getToolByName('storyboard_run_capabilities')).toMatchObject({
       creditCost: 0,
@@ -118,10 +87,12 @@ describe('mutation policy map', () => {
     for (const [name, policy] of Object.entries(MUTATION_POLICY_BY_NAME)) {
       expect(getToolByName(name)?.mutationPolicy, name).toBe(policy);
     }
-    expect(getToolByName('get_account')?.mutationPolicy).toBeUndefined();
+    expect(
+      getToolByName('get_credits_balance')?.mutationPolicy,
+    ).toBeUndefined();
     expect(getToolByName('resolve_approval')?.mutationPolicy).toBeUndefined();
     expect(getActionDefinition('create_post')?.approval).toBe('required');
-    expect(getActionDefinition('generate')?.approval).toBe('none');
+    expect(getActionDefinition('generate_image')?.approval).toBe('none');
   });
 
   it('keeps the MCP queued write set approval-required', () => {
@@ -135,18 +106,13 @@ describe('mutation policy map', () => {
 });
 
 describe('discovery meta tools', () => {
-  it('treats every find_-prefixed tool as read-only', () => {
-    expect(isReadOnlyToolName('find_tools')).toBe(true);
-    expect(toolRequiresMutationPolicy('find_tools')).toBe(false);
-  });
-
   it('treats every describe_-prefixed tool as read-only', () => {
-    expect(isReadOnlyToolName('describe_anything')).toBe(true);
-    expect(toolRequiresMutationPolicy('describe_anything')).toBe(false);
+    expect(isReadOnlyToolName('describe_tool')).toBe(true);
+    expect(toolRequiresMutationPolicy('describe_tool')).toBe(false);
   });
 
-  it('treats the discovery tool as read-only with no declared policy', () => {
-    for (const name of ['find_tools']) {
+  it('treats the full discovery tool set as read-only with no declared policy', () => {
+    for (const name of ['list_toolsets', 'search_tools', 'describe_tool']) {
       expect(isReadOnlyToolName(name), name).toBe(true);
       expect(toolRequiresMutationPolicy(name), name).toBe(false);
       expect(getDeclaredMutationPolicy(name), name).toBeUndefined();
@@ -261,19 +227,64 @@ describe('evaluateMutationPolicy', () => {
   });
 });
 
-it('records external publication directly', () => {
-  expect(getDeclaredMutationPolicy('record_external_publication')).toBe(
-    'direct',
-  );
-});
+describe('buildLogicalWriteKey', () => {
+  it('distinguishes scoped intents while preserving absent-scope keys', () => {
+    const input = {
+      arguments: { count: 3 },
+      organizationId: 'org-1',
+      userId: 'user-1',
+      threadId: 'thread-1',
+      toolName: 'generate_content_batch',
+    };
+    const original = buildLogicalWriteKey(input);
+    expect(buildLogicalWriteKey({ ...input, scope: undefined })).toBe(original);
+    const scoped = buildLogicalWriteKey({
+      ...input,
+      scope: { brandId: 'brand-1', contextVersion: 1 },
+    });
+    expect(scoped).not.toBe(original);
+    expect(
+      buildLogicalWriteKey({
+        ...input,
+        scope: { brandId: 'brand-1', contextVersion: 2 },
+      }),
+    ).not.toBe(scoped);
+    expect(
+      buildLogicalWriteKey({
+        ...input,
+        scope: { brandId: 'brand-2', contextVersion: 1 },
+      }),
+    ).not.toBe(scoped);
+  });
 
-it('declares account recovery a free direct mutation', () => {
-  expect(
-    getDeclaredMutationPolicy('link_external_publication_credential'),
-  ).toBe('direct');
-  expect(getToolByName('link_external_publication_credential')).toMatchObject({
-    creditCost: 0,
-    mutationPolicy: 'direct',
-    toolset: 'content',
+  it('is stable across key order and distinct across arguments', () => {
+    const base = {
+      organizationId: 'org-1',
+      threadId: 'thread-1',
+      toolName: 'create_post',
+      userId: 'user-1',
+    };
+    expect(
+      buildLogicalWriteKey({
+        ...base,
+        arguments: { b: 2, a: 1 },
+      }),
+    ).toBe(
+      buildLogicalWriteKey({
+        ...base,
+        arguments: { a: 1, b: 2 },
+      }),
+    );
+    expect(
+      buildLogicalWriteKey({
+        ...base,
+        arguments: { a: 1 },
+      }),
+    ).not.toBe(
+      buildLogicalWriteKey({
+        ...base,
+        arguments: { a: 2 },
+      }),
+    );
   });
 });

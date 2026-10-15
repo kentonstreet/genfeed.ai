@@ -59,8 +59,6 @@ function setup() {
     source as unknown as StoryboardSourceService,
     {} as StoryboardRunStoreService,
     {} as StoryboardRunCapabilitiesService,
-    { warn: vi.fn() } as never,
-    {} as never,
   );
   return { service, prisma, planning, source, create, findFirst };
 }
@@ -68,9 +66,6 @@ describe('Durable storyboard creation', () => {
   it('saves a seeded image shell without paid work or invented action/duration', async () => {
     const { service, prisma } = setup();
     const run = await service.create('org-1', 'brand-1', 'user-1', input);
-    expect(run.config.origin).toBe('native');
-    if (run.config.origin !== 'native')
-      throw new Error('Expected native draft');
     expect(run.config.plan.runtimeBudgetSeconds).toBeNull();
     expect(run.config.plan.shots[0]).toMatchObject({
       action: '',
@@ -140,95 +135,5 @@ describe('Durable storyboard creation', () => {
     await service.create('org-1', 'brand-1', 'user-1', input);
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(create).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('Storyboard run list', () => {
-  const nativeConfig = {
-    origin: 'native' as const,
-    contract: 'storyboard-run' as const,
-    version: 1 as const,
-    revision: 1,
-    state: 'storyboard' as const,
-    clientRequestId: 'd160833e-d602-4617-a21b-721eb9aa7da8',
-    createdByUserId: 'user-1',
-    submittedInputHash: 'a'.repeat(64),
-    sourceSnapshot: {
-      selector: { kind: 'brief' as const, brief: 'A product' },
-      capturedAt: '2026-09-30T12:00:00.000Z',
-    },
-    plan: {
-      videoModelKey: null,
-      title: 'Valid',
-      logline: '',
-      format: '9:16' as const,
-      runtimeBudgetSeconds: 10,
-      cast: [],
-      styleReferenceAssetIds: [],
-      shots: [
-        {
-          id: 'shot-1',
-          ordinal: 1,
-          action: 'Action',
-          onScreenSpeaker: false,
-          durationSeconds: 5,
-          stillFreshness: 'fresh' as const,
-          stillAssetId: 'image-1',
-          transition: 'cut' as const,
-        },
-      ],
-    },
-  };
-
-  it('returns valid neighbors when one stored config is malformed', async () => {
-    const warn = vi.fn();
-    const findMany = vi.fn(async () => [
-      {
-        id: 'run-valid',
-        brandId: 'brand-1',
-        config: nativeConfig,
-        updatedAt: new Date('2026-09-30T12:00:00.000Z'),
-      },
-      {
-        id: 'run-bad',
-        brandId: 'brand-1',
-        config: { contract: 'storyboard-run', broken: true },
-        updatedAt: new Date('2026-09-30T11:00:00.000Z'),
-      },
-      {
-        id: 'run-valid-2',
-        brandId: 'brand-1',
-        config: {
-          ...nativeConfig,
-          clientRequestId: 'e160833e-d602-4617-a21b-721eb9aa7da8',
-          plan: { ...nativeConfig.plan, title: 'Also valid' },
-        },
-        updatedAt: new Date('2026-09-30T10:00:00.000Z'),
-      },
-    ]);
-    const service = new StoryboardRunsService(
-      { contentRun: { findMany } } as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      { warn } as never,
-      {} as never,
-    );
-
-    const summaries = await service.list('org-1', 'brand-1', {});
-
-    expect(summaries.map((item) => item.id)).toEqual([
-      'run-valid',
-      'run-valid-2',
-    ]);
-    expect(warn).toHaveBeenCalledWith(
-      'Skipping malformed storyboard run in list',
-      expect.objectContaining({
-        brandId: 'brand-1',
-        organizationId: 'org-1',
-        runId: 'run-bad',
-      }),
-    );
   });
 });

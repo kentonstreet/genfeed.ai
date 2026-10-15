@@ -3,9 +3,5 @@ export const storyboardRunAttributes = [
   'brandId',
   'createdAt',
   'updatedAt',
-  'migrationReview',
-  'importedPresentation',
-
   'config',
-  'operation',
 ];

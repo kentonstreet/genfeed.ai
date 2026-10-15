@@ -1,11 +1,10 @@
-import type { StoryboardNativeRunConfig } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
+import type { StoryboardRunConfig } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import type { StoryboardRunCapabilities } from '@genfeedai/contracts/api-types/contracts/storyboard-run-capabilities.contract';
 import { describe, expect, it, vi } from 'vitest';
 import { StoryboardRunsService } from './storyboard-runs.service';
 
 function setup() {
-  const config: StoryboardNativeRunConfig = {
-    origin: 'native',
+  const config: StoryboardRunConfig = {
     contract: 'storyboard-run',
     version: 1,
     revision: 1,
@@ -69,8 +68,6 @@ function setup() {
     source as never,
     store as never,
     capabilities as never,
-    { warn: vi.fn() } as never,
-    {} as never,
   );
   return { service, store, config, capabilities, capability, source };
 }
@@ -116,11 +113,6 @@ describe('Storyboard capabilities at the durable edit boundary', () => {
       ...structuredClone(config.plan),
       videoModelKey: 'custom/video',
       runtimeBudgetSeconds: 7,
-      // Input fits the budget; snapping each shot to four seconds exceeds it.
-      shots: config.plan.shots.map((shot) => ({
-        ...shot,
-        durationSeconds: 3.5,
-      })),
     };
     await expect(
       service.updatePlan('org-1', 'brand-1', 'run-1', {

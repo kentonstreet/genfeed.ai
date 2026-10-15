@@ -1,9 +1,5 @@
 import { createHash } from 'node:crypto';
 import { BrandRemixRunPlanningService } from '@api/collections/content-runs/services/brand-remix-run-planning.service';
-import {
-  type StoryboardStoredRunConfig,
-  storyboardLegacyState,
-} from '@api/collections/content-runs/services/storyboard-imported-run-state.schema';
 import { StoryboardRunStoreService } from '@api/collections/content-runs/services/storyboard-run-store.service';
 import type { ModelDocument } from '@api/collections/models/schemas/model.schema';
 import { ModelsService } from '@api/collections/models/services/models.service';
@@ -18,7 +14,7 @@ import {
   ModelLifecycle,
   ModelProvider,
 } from '@genfeedai/contracts';
-import type { StoryboardPlan } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
+import type { StoryboardRunConfig } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
 import {
   type CapabilityReason,
   type StoryboardRunCapabilities,
@@ -34,11 +30,6 @@ import {
 import type { IModel } from '@genfeedai/contracts/interfaces';
 import { getModelCapability } from '@genfeedai/helpers/model-capability.helper';
 import { Injectable } from '@nestjs/common';
-
-type StoryboardCapabilityConfig = Pick<
-  StoryboardStoredRunConfig,
-  'revision' | 'origin' | 'importedState'
-> & { plan: Pick<StoryboardPlan, 'videoModelKey' | 'format'> | null };
 
 function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object')
@@ -184,7 +175,7 @@ export class StoryboardRunCapabilitiesService {
     organizationId: string,
     brandId: string,
     runId: string,
-    config: StoryboardCapabilityConfig,
+    config: StoryboardRunConfig,
   ): Promise<StoryboardRunCapabilities> {
     const [context, settings, catalog] = await Promise.all([
       this.planning.resolveBrandContext(organizationId, brandId),
@@ -196,18 +187,7 @@ export class StoryboardRunCapabilitiesService {
       }),
     ]);
     const enabled = settings?.enabledModelIds ?? [];
-    const legacy = storyboardLegacyState(config);
-    const legacyOutput = legacy?.draft.output;
-    const format =
-      config.plan?.format ??
-      (legacyOutput && 'aspectRatio' in legacyOutput
-        ? legacyOutput.aspectRatio
-        : null);
-    const requestedModelKey =
-      config.plan?.videoModelKey ??
-      legacy?.scenePipeline?.quote?.items.find((line) => line.stage === 'video')
-        ?.model ??
-      null;
+    const requestedModelKey = config.plan.videoModelKey ?? null;
     const visible = catalog.filter(
       (model) =>
         !model.organizationId || model.organizationId === organizationId,
@@ -222,7 +202,7 @@ export class StoryboardRunCapabilitiesService {
       )
       .flatMap((model) => {
         const capability = storyboardCatalogCapability(model).capability;
-        return capability?.supportedFormats.some((value) => value === format)
+        return capability?.supportedFormats.includes(config.plan.format)
           ? [capability]
           : [];
       })
@@ -231,14 +211,17 @@ export class StoryboardRunCapabilitiesService {
     let reasonCode: CapabilityReason | null = null;
     let selected: ModelDocument | null = null;
     if (key) {
-      // ModelsService.findOne widens a supplied organizationId to the
-      // org-or-platform registry (`OR [org, null]`), so one lookup covers both;
-      // a null-only lookup carries no tenant proof.
-      selected = await this.models.findOne({
-        key,
-        organizationId,
-        isDeleted: false,
-      });
+      selected =
+        (await this.models.findOne({
+          key,
+          organizationId,
+          isDeleted: false,
+        })) ??
+        (await this.models.findOne({
+          key,
+          organizationId: null,
+          isDeleted: false,
+        }));
       if (!selected || selected.category !== ModelCategory.VIDEO)
         reasonCode = 'MODEL_UNAVAILABLE';
       else if (selected.lifecycle === ModelLifecycle.RETIRED)
@@ -272,7 +255,7 @@ export class StoryboardRunCapabilitiesService {
     const effectiveModel = result?.capability ?? null;
     if (
       effectiveModel &&
-      !effectiveModel.supportedFormats.some((value) => value === format)
+      !effectiveModel.supportedFormats.includes(config.plan.format)
     )
       reasonCode = 'FORMAT_UNSUPPORTED';
     const capabilityVersion = createHash('sha256')
@@ -283,7 +266,7 @@ export class StoryboardRunCapabilitiesService {
           runId,
           requestedModelKey,
           effectiveKey: key,
-          format,
+          format: config.plan.format,
           eligibleModels,
           effectiveModel,
           reasonCode,

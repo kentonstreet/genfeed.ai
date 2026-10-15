@@ -2,25 +2,17 @@ import type {
   StoryboardPlan,
   StoryboardPlanSettings,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
-import type { CreateStoryboardRunQuote } from '@genfeedai/contracts/api-types/contracts/storyboard-run-quote.contract';
-import { storyboardOperationSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-run-quote.contract';
 import type { StoryboardSourceSelector } from '@genfeedai/contracts/api-types/contracts/storyboard-source.contract';
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize,
-  ArrayMinSize,
-  IsArray,
-  IsIn,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Max,
-  MaxLength,
   Min,
-  MinLength,
 } from 'class-validator';
 
 export class CreateStoryboardRunDto {
@@ -55,14 +47,6 @@ export class UpdateStoryboardPlanDto extends ControlStoryboardRunDto {
 }
 export class ResetStoryboardPlanDto extends ControlStoryboardRunDto {}
 export class ApproveStoryboardPlanDto extends ControlStoryboardRunDto {}
-export class DraftStoryboardPlanDto extends ControlStoryboardRunDto {
-  @ApiProperty({ maxLength: 2_000, minLength: 1, required: false })
-  @IsOptional()
-  @IsString()
-  @MinLength(1)
-  @MaxLength(2_000)
-  instruction?: string;
-}
 export class UpdateStoryboardSourceDto extends ControlStoryboardRunDto {
   @ApiProperty({ type: Object })
   @IsObject()
@@ -83,70 +67,4 @@ export class ListStoryboardRunsDto {
   @Min(1)
   @Max(100)
   limit?: number;
-}
-
-export class CreateStoryboardRunQuoteDto extends ControlStoryboardRunDto {
-  @ApiProperty({ enum: storyboardOperationSchema.options })
-  @IsIn(storyboardOperationSchema.options)
-  operation!: CreateStoryboardRunQuote['operation'];
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  shotId?: string;
-  @ApiProperty({ enum: ['image', 'video'], required: false })
-  @IsOptional()
-  @IsIn(['image', 'video'])
-  repairStage?: 'image' | 'video';
-}
-export class ExecuteStoryboardRunDto extends ControlStoryboardRunDto {
-  @ApiProperty()
-  @IsString()
-  quoteId!: string;
-}
-export class CancelStoryboardRunDto extends ControlStoryboardRunDto {
-  @ApiProperty()
-  @IsString()
-  operationId!: string;
-}
-export class ResumeStoryboardRunDto extends ControlStoryboardRunDto {
-  @ApiProperty()
-  @IsString()
-  operationId!: string;
-}
-
-export class ReplaceStoryboardCharacterDto {
-  @ApiProperty({ maxItems: 8, minItems: 1, type: [String] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(8)
-  @IsString({ each: true })
-  imageAssetIds!: string[];
-
-  @ApiProperty({ maxLength: 1000, required: false })
-  @IsOptional()
-  @IsString()
-  @MaxLength(1000)
-  prompt?: string;
-}
-
-export class QuoteStoryboardStillsDto extends ControlStoryboardRunDto {
-  @ApiProperty({ maxItems: 12, minItems: 1, required: false, type: [String] })
-  @IsOptional()
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(12)
-  @IsString({ each: true })
-  shotIds?: string[];
-}
-export class GenerateStoryboardStillsDto extends ControlStoryboardRunDto {
-  @ApiProperty({ maxItems: 12, minItems: 1, type: [String] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(12)
-  @IsString({ each: true })
-  shotIds!: string[];
-
-  @ApiProperty()
-  @IsString()
-  inputHash!: string;
 }

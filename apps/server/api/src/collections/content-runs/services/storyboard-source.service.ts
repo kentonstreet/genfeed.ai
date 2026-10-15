@@ -1,6 +1,5 @@
 import { BrandRemixRunPlanningService } from '@api/collections/content-runs/services/brand-remix-run-planning.service';
 import { BrandRemixSceneSourceService } from '@api/collections/content-runs/services/brand-remix-scene-source.service';
-import { PersonasService } from '@api/collections/personas/services/personas.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { scopedWhere } from '@api/index';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
@@ -17,7 +16,6 @@ export class StoryboardSourceService {
     private readonly prisma: PrismaService,
     private readonly planning: BrandRemixRunPlanningService,
     private readonly videos: BrandRemixSceneSourceService,
-    private readonly personasService: PersonasService,
   ) {}
 
   async resolve(
@@ -43,7 +41,7 @@ export class StoryboardSourceService {
       );
       const asset = await this.prisma.ingredient.findFirst({
         where: scopedWhere(organizationId, { brandId, id: source.assetId }),
-        select: { metadata: { select: { label: true } }, updatedAt: true },
+        select: { label: true, updatedAt: true },
       });
       if (!asset || asset.updatedAt.toISOString() !== video.assetUpdatedAt)
         throw new ConflictException(
@@ -54,7 +52,7 @@ export class StoryboardSourceService {
         capturedAt,
         assetId: source.assetId,
         assetUpdatedAt: video.assetUpdatedAt,
-        title: asset.metadata?.label ?? '',
+        title: asset.label ?? '',
         durationSeconds: video.durationSeconds,
         sizeBytes: video.sizeBytes,
       };
@@ -131,23 +129,10 @@ export class StoryboardSourceService {
       ]),
     ];
     if (!ids.length) return;
-    // A character the brand can no longer use reads as not found; a shared
-    // character's reference image belongs to its owning brand (#6040).
-    const { availableAvatarIds } =
-      await this.personasService.resolveCharacterReferences({
-        brandId,
-        ingredientIds: ids,
-        organizationId,
-        path: 'storyboard',
-      });
     const [ingredients, references] = await Promise.all([
       this.prisma.ingredient.findMany({
         where: scopedWhere(organizationId, {
-          OR: [
-            { brandId },
-            { brandId: null },
-            { id: { in: [...availableAvatarIds] } },
-          ],
+          OR: [{ brandId }, { brandId: null }],
           id: { in: ids },
           status: {
             in: [

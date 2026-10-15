@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ToolMutationPolicy } from '../interfaces/tool-definition.interface';
 
 export type { ToolMutationPolicy } from '../interfaces/tool-definition.interface';
@@ -27,7 +28,6 @@ const READ_ONLY_PREFIXES = [
   'describe_',
   'discover_',
   'fetch_',
-  'find_',
   'get_',
   'inspect_',
   'list_',
@@ -42,15 +42,8 @@ const READ_ONLY_PREFIXES = [
 
 const WRITE_NAMES_WITH_READ_PREFIX = new Set(['present_work_object']);
 
-/** Read-shaped names that spend credits, so they can carry a mutation policy. */
-const SPENDING_NAMES_WITH_READ_PREFIX = new Set([
-  'get_x_posts',
-  'list_x_account_activity',
-]);
-
 const READ_ONLY_NAMES = new Set<string>([
   'storyboard_run_capabilities',
-  'quote_visual_code_generation',
   'analyze_performance',
   'export_skill',
   'read_knowledge_source',
@@ -67,21 +60,13 @@ const READ_ONLY_NAMES = new Set<string>([
 export const MUTATION_POLICY_BY_NAME: Readonly<
   Record<string, ToolMutationPolicy>
 > = {
-  cancel_visual_code_project: 'direct',
-  generate_visual_code: 'approval-required',
-  revise_visual_code_project: 'approval-required',
-  export_visual_code_project: 'approval-required',
-  retry_visual_code_project: 'approval-required',
   attach_remix_analysis_source: 'direct',
   control_remix_generation: 'approval-required',
   create_remix_concept: 'direct',
-  create_brand_from_url: 'direct',
   import_source_post: 'approval-required',
   quote_remix_generation: 'direct',
   start_remix_generation: 'approval-required',
   update_remix_concept: 'direct',
-  add_first_comment: 'approval-required',
-  add_thread_posts: 'approval-required',
   ai_action: 'direct',
   enhance_prompt: 'direct',
   set_generation_settings: 'direct',
@@ -91,18 +76,16 @@ export const MUTATION_POLICY_BY_NAME: Readonly<
   archive_skill: 'direct',
   assign_knowledge_purpose: 'direct',
   assign_social_conversation: 'direct',
-  review_turbo_items: 'direct',
+  batch_approve_reject: 'direct',
   capture_knowledge: 'direct',
   capture_memory: 'direct',
   complete_media_upload: 'direct',
-  complete_brand_onboarding_step: 'direct',
   complete_onboarding: 'direct',
   complete_outreach_sequence: 'direct',
   connect_social_account: 'direct',
   control_scheduled_release: 'approval-required',
   create_ad_remix_workflow: 'approval-required',
-  create_article_draft: 'approval-required',
-  publish_article: 'approval-required',
+  create_article: 'approval-required',
   create_brand: 'approval-required',
   create_chat: 'direct',
   create_clip_project_from_youtube: 'approval-required',
@@ -114,37 +97,32 @@ export const MUTATION_POLICY_BY_NAME: Readonly<
   create_scheduled_release: 'approval-required',
   create_skill: 'direct',
   create_social_reply_draft: 'direct',
-  create_storyboard_remix: 'direct',
   create_workflow: 'direct',
   draft_brand_voice_profile: 'direct',
   draft_engagement_reply: 'direct',
-  draft_thread: 'direct',
   draft_x_quote: 'direct',
   draft_x_repost: 'direct',
   duplicate_workflow: 'direct',
   fork_skill: 'direct',
   execute_workflow: 'direct',
-  generate: 'direct',
   generate_ad_pack: 'direct',
   generate_as_identity: 'direct',
   generate_clips: 'approval-required',
   generate_content: 'direct',
-  get_x_posts: 'direct',
-  list_x_account_activity: 'direct',
-  generate_turbo_content: 'approval-required',
+  generate_content_batch: 'approval-required',
+  generate_image: 'direct',
+  generate_linkedin_content: 'direct',
   generate_monthly_content: 'direct',
-  generate_reply_variants: 'direct',
+  generate_music: 'direct',
   generate_onboarding_content: 'direct',
-  onboard_brand: 'direct',
-  scan_brand_url: 'direct',
-  save_onboarding_answers: 'direct',
+  generate_video: 'direct',
+  generate_voice: 'direct',
   initiate_oauth_connect: 'direct',
   install_official_workflow: 'approval-required',
   install_skills_pro_skill: 'approval-required',
   install_system_workflow: 'direct',
   manage_livestream_bot: 'direct',
   mark_social_conversation_resolved: 'direct',
-  open_in_editor: 'direct',
   pause_outreach_sequence: 'approval-required',
   post_social_reply: 'approval-required',
   prepare_ad_launch_review: 'direct',
@@ -157,13 +135,10 @@ export const MUTATION_POLICY_BY_NAME: Readonly<
   prepare_voice_clone: 'direct',
   prepare_workflow_trigger: 'direct',
   publish_skill: 'direct',
-  link_external_publication_credential: 'direct',
-  record_external_publication: 'direct',
   rate_content: 'direct',
   rate_ingredient: 'direct',
-  replace_storyboard_character: 'approval-required',
+  reframe_image: 'direct',
   reject_social_draft: 'direct',
-  refine_text: 'direct',
   rename_brand: 'approval-required',
   replicate_top_ingredient: 'direct',
   repurpose_post: 'direct',
@@ -171,7 +146,6 @@ export const MUTATION_POLICY_BY_NAME: Readonly<
   retry_knowledge_ingestion: 'direct',
   rollback_skill: 'direct',
   save_brand_voice_profile: 'direct',
-  save_content_agent: 'direct',
   save_dashboard_layout: 'direct',
   schedule_post: 'direct',
   select_ingredient: 'direct',
@@ -185,15 +159,14 @@ export const MUTATION_POLICY_BY_NAME: Readonly<
   submit_brand_interview_answer: 'approval-required',
   tag_social_conversation: 'direct',
   transfer_agent_conversation: 'approval-required',
-  transform_media: 'direct',
   update_goal: 'direct',
   update_scheduled_release: 'approval-required',
   update_strategy_state: 'direct',
+  upscale_image: 'direct',
 };
 
 export function isReadOnlyToolName(name: string): boolean {
   if (WRITE_NAMES_WITH_READ_PREFIX.has(name)) return false;
-  if (SPENDING_NAMES_WITH_READ_PREFIX.has(name)) return false;
   if (READ_ONLY_NAMES.has(name)) {
     return true;
   }
@@ -245,4 +218,52 @@ export function evaluateMutationPolicy(input: {
   }
 
   return { kind: 'queue' };
+}
+
+export interface MutationApprovalScope {
+  brandId?: string;
+  contextVersion: number;
+}
+
+export function buildLogicalWriteKey(input: {
+  arguments: Record<string, unknown>;
+  organizationId: string;
+  threadId?: string;
+  scope?: MutationApprovalScope;
+  toolName: string;
+  userId: string;
+}): string {
+  return createHash('sha256')
+    .update(
+      stableStringify({
+        arguments: input.arguments,
+        organizationId: input.organizationId,
+        threadId: input.threadId ?? '',
+        ...(input.scope
+          ? {
+              scope: {
+                brandId: input.scope.brandId ?? null,
+                contextVersion: input.scope.contextVersion,
+              },
+            }
+          : {}),
+        toolName: input.toolName,
+        userId: input.userId,
+      }),
+    )
+    .digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
 }

@@ -36,10 +36,6 @@ describe('Canonical Storyboard MCP boundary', () => {
           brandId: 'brand-1',
           runId: 'run-1',
           expectedRevision: 1,
-          ...(name === 'storyboard_run_cancel' ||
-          name === 'storyboard_run_resume'
-            ? { operationId: 'operation:original' }
-            : {}),
         }).success,
       ).toBe(true);
       expect(
@@ -49,86 +45,6 @@ describe('Canonical Storyboard MCP boundary', () => {
         }).success,
       ).toBe(false);
     }
-  });
-  it('requires accepted operation identity for cancel and resume independently of approval/reset', () => {
-    for (const name of [
-      'storyboard_run_cancel',
-      'storyboard_run_resume',
-    ] as const) {
-      expect(
-        storyboardToolSchemas[name].safeParse({
-          brandId: 'brand-1',
-          runId: 'run-1',
-          expectedRevision: 2,
-        }).success,
-      ).toBe(false);
-      expect(
-        storyboardToolSchemas[name].safeParse({
-          brandId: 'brand-1',
-          runId: 'run-1',
-          expectedRevision: 2,
-          operationId: 'operation:Mixed-ID',
-        }).success,
-      ).toBe(true);
-    }
-  });
-  it('preserves accepted historical operation bytes through cancel and resume', () => {
-    for (const name of [
-      'storyboard_run_cancel',
-      'storyboard_run_resume',
-    ] as const) {
-      for (const operationId of ['operation/old key', ' operation/old key ']) {
-        expect(
-          storyboardToolSchemas[name].parse({
-            brandId: 'brand-1',
-            runId: 'run-1',
-            expectedRevision: 4,
-            operationId,
-          }).operationId,
-        ).toBe(operationId);
-      }
-      expect(
-        storyboardToolSchemas[name].safeParse({
-          brandId: 'brand-1',
-          runId: 'run-1',
-          expectedRevision: 4,
-          operationId: 's'.repeat(201),
-        }).success,
-      ).toBe(false);
-    }
-  });
-  it('accepts an owned-video remix and one Genjutsu character replacement', () => {
-    expect(
-      storyboardToolSchemas.create_storyboard_remix.safeParse({
-        assetId: 'video-1',
-        brandId: 'brand-1',
-        clientRequestId: 'd160833e-d602-4617-a21b-721eb9aa7da8',
-      }).success,
-    ).toBe(true);
-    expect(
-      storyboardToolSchemas.create_storyboard_remix.safeParse({
-        assetId: 'video-1',
-        brandId: 'brand-1',
-        clientRequestId: 'd160833e-d602-4617-a21b-721eb9aa7da8',
-        source: { kind: 'brief', brief: 'Idea' },
-      }).success,
-    ).toBe(false);
-    expect(
-      storyboardToolSchemas.replace_storyboard_character.safeParse({
-        brandId: 'brand-1',
-        imageAssetIds: ['image-1'],
-        runId: 'run-1',
-        shotId: 'shot-1',
-      }).success,
-    ).toBe(true);
-    expect(
-      storyboardToolSchemas.replace_storyboard_character.safeParse({
-        brandId: 'brand-1',
-        imageAssetIds: [],
-        runId: 'run-1',
-        shotId: 'shot-1',
-      }).success,
-    ).toBe(false);
   });
   it('quotes reject ambiguous stages and execute requires an accepted quote identity', () => {
     expect(
