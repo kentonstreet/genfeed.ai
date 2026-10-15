@@ -24,16 +24,7 @@ const ONBOARD_BRAND_ACTIONS = {
   },
   save_answers: {
     agentToolName: 'save_onboarding_answers',
-    fields: [
-      'brandId',
-      'goals',
-      'audience',
-      'offer',
-      'competitors',
-      'platforms',
-      'cadence',
-      'toneAdjustment',
-    ],
+    fields: ['brandId', 'goals', 'platforms', 'cadence', 'toneAdjustment'],
   },
   scan_url: {
     agentToolName: 'scan_brand_url',

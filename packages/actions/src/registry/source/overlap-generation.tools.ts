@@ -1,9 +1,9 @@
+import { BATCH_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants/batch-generation-pricing.constant';
 import { ENHANCE_PROMPT_CREDIT_COST } from '@genfeedai/contracts/constants/tool-credit.constant';
-import { TURBO_RUN_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants/turbo-run-pricing.constant';
 import type { SourceTool } from '../../interfaces/source-tool.interface';
 
 /**
- * Turbo run definition split out of `overlap.tools.ts` to keep that
+ * Batch-generation definition split out of `overlap.tools.ts` to keep that
  * module under the per-file line budget (`source-tools.test.ts`). Its Agent/MCP
  * availability is declared only in `curated-action-catalog.ts`.
  */
@@ -42,7 +42,7 @@ export const OVERLAP_GENERATION_TOOLS: SourceTool[] = [
   {
     name: 'get_generation_options',
     description:
-      "Read what generation can do right now, for free and without paid confirmation. models is always returned: this account's callable catalog. Pass an image, video or music models key as generate.model, and an image-edit key as transform_media.model. Voice rows are not generate.model; voice generation uses voiceId. settings is the effective image/video prompt enhancement with organization or brand overrides, always returned. cost is the Studio credit estimate and organization balance, only when type is given. Returns the same catalog estimate the Generate composer shows and the same Genfeed balance as the credits bar. Does not charge credits, change a price, or authorize a generation. Omit modelKey, or pass Auto, for image, image-edit and video estimate status auto. Music Auto quotes the registry music default. Voice, unsupported, missing or unpriced models return estimate status unavailable with credits null. balance is null when the wallet cannot be read; a numeric 0 is a real empty balance. Threaded Agent calls use the validated current thread brand; brandId must match it. In threadless MCP calls, brandId selects the brand scope for settings.",
+      "Read what generation can do right now, for free and without paid confirmation. models is always returned: this account's callable catalog. Pass an image, video or music models key as generate.model, and an image-edit key as transform_media.model. Voice rows are not generate.model; voice generation uses voiceId. settings is the effective image/video prompt enhancement with organization or brand overrides, always returned. cost is the Studio credit estimate and organization balance, only when type is given. Returns the same catalog estimate the Generate composer shows and the same Genfeed balance as the credits bar. Does not charge credits, change a price, or authorize a generation. Omit modelKey, or pass Auto, for estimate status auto. Unsupported, missing, unpriced or voice and music types return estimate status unavailable with credits null. balance is null when the wallet cannot be read; a numeric 0 is a real empty balance. Threaded Agent calls use the validated current thread brand; brandId must match it. In threadless MCP calls, brandId selects the brand scope for settings.",
     creditCost: 0,
     requiredRole: 'user',
     parameters: {
@@ -62,7 +62,7 @@ export const OVERLAP_GENERATION_TOOLS: SourceTool[] = [
         modelKey: {
           type: 'string',
           description:
-            'Cost only. Exact models key for this type. Omit or pass Auto: image and video stay unpriced until a model is selected; music quotes the registry default. An unknown alias returns MODEL_UNAVAILABLE.',
+            'Cost only. Exact models key for this type. Omit or pass Auto, which has no estimate until a model is selected. An unknown alias returns MODEL_UNAVAILABLE.',
         },
         aspectRatio: { type: 'string', description: 'Cost only.' },
         resolution: { type: 'string', description: 'Cost only.' },
@@ -221,6 +221,17 @@ export const OVERLAP_GENERATION_TOOLS: SourceTool[] = [
           maximum: 2,
           description: 'merge. Transition length in seconds (0.1-2).',
         },
+        transitionEaseCurve: {
+          type: 'string',
+          enum: [
+            'easyinoutexpo',
+            'easyinexpooutcubic',
+            'easyinquartoutquad',
+            'easyinoutcubic',
+            'easyinoutsine',
+          ],
+          description: 'merge. Ease curve for the transition between clips.',
+        },
       },
     },
   },
@@ -243,10 +254,10 @@ export const OVERLAP_GENERATION_TOOLS: SourceTool[] = [
   {
     // Floor for preflight only. Real amount is format+model-aware and billed
     // dynamically in the handler (isBillingDelegated).
-    creditCost: TURBO_RUN_CAPTION_BASE_CREDITS,
+    creditCost: BATCH_CAPTION_BASE_CREDITS,
     description:
-      'Generate a Turbo run of content (images, videos, carousels) for a brand. Specify count, platforms, and date range. Use handle param to resolve @username to a credential. Returns a Turbo run ID for tracking. Credits scale by item format and caption model tier — not a flat fee.',
-    name: 'generate_turbo_content',
+      'Generate a batch of content (images, videos, carousels) for a brand. Specify count, platforms, and date range. Use handle param to resolve @username to a credential. Returns a batch ID for tracking. Credits scale by item format and caption model tier — not a flat fee.',
+    name: 'generate_content_batch',
     parameters: {
       properties: {
         brandId: {

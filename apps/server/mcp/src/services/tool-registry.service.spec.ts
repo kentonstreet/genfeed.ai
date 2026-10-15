@@ -28,16 +28,6 @@ const MOCK_TOOLS = [
     requiredRole: undefined,
     surfaces: { mcp: true },
   },
-  ...[
-    'enhance_prompt',
-    'generate_content',
-    'generate_turbo_content',
-    'transform_media',
-  ].map((name) => ({
-    name,
-    requiredRole: undefined,
-    surfaces: { mcp: true },
-  })),
   { name: 'get_account', requiredRole: undefined, surfaces: { mcp: true } },
   { name: 'get_trends', requiredRole: undefined, surfaces: { mcp: true } },
   {
@@ -370,124 +360,6 @@ describe('ToolRegistryService', () => {
   });
 
   it('handleToolCall generate returns a pending approval and does not run', async () => {
-    const result = await service.handleToolCall({
-      arguments: { brandId: 'brand-1', prompt: 'AI surfing', type: 'video' },
-      name: 'generate',
-    });
-
-    expect(clientService.executeAgentTool).not.toHaveBeenCalled();
-    expect(clientService.createApproval).toHaveBeenCalledWith('generate', {
-      brandId: 'brand-1',
-      prompt: 'AI surfing',
-      type: 'video',
-    });
-    expect(result).toMatchObject({
-      isError: true,
-      structuredContent: {
-        code: 'approval_pending',
-      },
-    });
-    expect(result).not.toHaveProperty('structuredContent.estimatedCredits');
-    expect(JSON.stringify(result)).toContain(
-      'A model-specific credit quote is unavailable',
-    );
-  });
-
-  describe('generation brand requirement (#5786)', () => {
-    const brandListing = {
-      creditsUsed: 0,
-      data: {
-        brands: [
-          { id: 'brand-1', label: 'Acme', name: 'acme' },
-          { id: 'brand-2', label: '', name: 'Beta' },
-        ],
-      },
-      success: true,
-    };
-
-    it.each([
-      'generate',
-      'generate_content',
-      'generate_turbo_content',
-      'enhance_prompt',
-      'transform_media',
-    ])(
-      '%s without brandId lists the caller brands and neither queues nor runs',
-      async (name) => {
-        clientService.executeAgentTool.mockResolvedValueOnce(brandListing);
-
-        const result = await service.handleToolCall({
-          arguments: { prompt: 'AI surfing' },
-          name,
-        });
-
-        expect(clientService.executeAgentTool).toHaveBeenCalledTimes(1);
-        expect(clientService.executeAgentTool).toHaveBeenCalledWith(
-          'get_brands',
-          {},
-        );
-        expect(clientService.createApproval).not.toHaveBeenCalled();
-        expect(result).toMatchObject({
-          isError: true,
-          structuredContent: {
-            brands: [
-              { id: 'brand-1', label: 'Acme' },
-              { id: 'brand-2', label: 'Beta' },
-            ],
-            code: 'brand_required',
-          },
-        });
-        expect(JSON.stringify(result)).toContain(
-          'Available brands: Acme, Beta',
-        );
-      },
-    );
-
-    it('treats a blank brandId as missing', async () => {
-      clientService.executeAgentTool.mockResolvedValueOnce(brandListing);
-
-      const result = await service.handleToolCall({
-        arguments: { brandId: '   ', prompt: 'x', type: 'image' },
-        name: 'generate',
-      });
-
-      expect(clientService.createApproval).not.toHaveBeenCalled();
-      expect(result).toMatchObject({
-        structuredContent: { code: 'brand_required' },
-      });
-    });
-
-    it('still rejects with an empty list when the brand listing fails', async () => {
-      clientService.executeAgentTool.mockResolvedValueOnce({
-        creditsUsed: 0,
-        error: 'unavailable',
-        success: false,
-      });
-
-      const result = await service.handleToolCall({
-        arguments: { prompt: 'x' },
-        name: 'generate_content',
-      });
-
-      expect(result).toMatchObject({
-        isError: true,
-        structuredContent: { brands: [], code: 'brand_required' },
-      });
-      expect(JSON.stringify(result)).toContain('Create a brand');
-    });
-
-    it('does not ask for a brand on tools outside the generation set', async () => {
-      await service.handleToolCall({ arguments: {}, name: 'get_trends' });
-
-      expect(clientService.executeAgentTool).toHaveBeenCalledWith(
-        'get_trends',
-        {},
-        undefined,
-      );
-    });
-  });
-
-  it('handleToolCall generate presents the model quote as the approval estimate', async () => {
     clientService.createApproval.mockResolvedValueOnce({
       generationQuote: {
         credits: 321,
@@ -498,13 +370,16 @@ describe('ToolRegistryService', () => {
       status: 'PENDING',
       toolName: 'generate',
     });
-
     const result = await service.handleToolCall({
-      arguments: { brandId: 'brand-1', prompt: 'AI surfing', type: 'video' },
+      arguments: { prompt: 'AI surfing', type: 'video' },
       name: 'generate',
     });
 
     expect(clientService.executeAgentTool).not.toHaveBeenCalled();
+    expect(clientService.createApproval).toHaveBeenCalledWith('generate', {
+      prompt: 'AI surfing',
+      type: 'video',
+    });
     expect(result).toMatchObject({
       isError: true,
       structuredContent: {
@@ -514,27 +389,19 @@ describe('ToolRegistryService', () => {
     });
   });
 
-  it('handleToolCall generate never presents an unavailable quote as the estimate', async () => {
-    clientService.createApproval.mockResolvedValueOnce({
-      generationQuote: {
-        credits: 321,
-        isAvailable: false,
-        modelKey: 'selected-video-model',
-      },
-      id: 'apr-1',
-      status: 'PENDING',
-      toolName: 'generate',
-    });
-
+  it('handleToolCall generate never presents a floor as the estimate without a model quote', async () => {
     const result = await service.handleToolCall({
-      arguments: { brandId: 'brand-1', prompt: 'AI surfing', type: 'video' },
+      arguments: { prompt: 'AI surfing', type: 'video' },
       name: 'generate',
     });
 
-    expect(result).not.toHaveProperty('structuredContent.estimatedCredits');
-    expect(JSON.stringify(result)).toContain(
-      'A model-specific credit quote is unavailable',
-    );
+    expect(clientService.executeAgentTool).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: { code: 'approval_pending' },
+    });
+    expect(JSON.stringify(result)).not.toContain('estimatedCredits');
+    expect(JSON.stringify(result)).toContain('quote is unavailable');
   });
 
   it('handleToolCall onboard_brand runs the agent tool for its action (#6268)', async () => {
@@ -608,7 +475,7 @@ describe('ToolRegistryService', () => {
     expect(clientService.executeAgentTool).not.toHaveBeenCalled();
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).toContain('Views: 1000');
+    ).toContain('"views": 1000');
   });
 
   it('handleToolCall get_content_analytics article proxies to the agent executor', async () => {
@@ -639,7 +506,7 @@ describe('ToolRegistryService', () => {
     );
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).toContain('Analytics for image');
+    ).toContain('img-1');
   });
 
   it('handleToolCall get_content_analytics surfaces an agent executor failure', async () => {
@@ -680,16 +547,14 @@ describe('ToolRegistryService', () => {
   ] as const)(
     '%s preserves list and empty result text',
     async (name, method, noun, qualifier) => {
-      clientService[method].mockResolvedValueOnce([
-        { id: 'result-1', title: 'Result' },
-      ]);
+      clientService[method].mockResolvedValueOnce([{ id: 'result-1' }]);
       expect(
         await service.handleToolCall({ name, arguments: { query: 'AI' } }),
       ).toMatchObject({
         content: [
           {
             type: 'text',
-            text: `Found 1 ${noun}${qualifier}:\n\n- Title: Result`,
+            text: `Found 1 ${noun}${qualifier}:\n\n[\n  {\n    "id": "result-1"\n  }\n]`,
           },
         ],
       });
@@ -721,12 +586,9 @@ describe('ToolRegistryService', () => {
     });
 
     expect(clientService.duplicateWorkflow).toHaveBeenCalledWith('wf-1');
-    expect(result).toMatchObject({
-      structuredContent: { data: { id: 'wf-copy-1' } },
-    });
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).not.toContain('wf-copy-1');
+    ).toContain('wf-copy-1');
   });
 
   it('handleToolCall set_workflow_schedule forwards schedule enablement', async () => {
@@ -766,12 +628,9 @@ describe('ToolRegistryService', () => {
       trigger: undefined,
       workflowId: 'wf-1',
     });
-    expect(result).toMatchObject({
-      structuredContent: { data: [{ id: 'run-1' }] },
-    });
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).not.toContain('run-1');
+    ).toContain('run-1');
   });
 
   it('returns classified failure alongside the raw persisted workflow response', async () => {
@@ -800,7 +659,7 @@ describe('ToolRegistryService', () => {
     expect(clientService.getWorkflowRun).toHaveBeenCalledWith('run-1');
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).toContain('Completed');
+    ).toContain('completed');
   });
 
   it('handleToolCall list_social_conversations forwards bounded filters', async () => {
@@ -822,12 +681,9 @@ describe('ToolRegistryService', () => {
         status: 'open',
       }),
     );
-    expect(result).toMatchObject({
-      structuredContent: { data: { conversations: [{ id: 'conv-1' }] } },
-    });
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).not.toContain('conv-1');
+    ).toContain('conv-1');
   });
 
   it('handleToolCall get_social_conversation includes recent messages by default', async () => {
@@ -840,12 +696,9 @@ describe('ToolRegistryService', () => {
       includeMessages: true,
       limit: 10,
     });
-    expect(result).toMatchObject({
-      structuredContent: { data: { messages: [{ id: 'msg-1' }] } },
-    });
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).not.toContain('msg-1');
+    ).toContain('msg-1');
   });
 
   it('handleToolCall create_social_reply_draft records provenance without external send approval', async () => {
@@ -869,12 +722,9 @@ describe('ToolRegistryService', () => {
       },
     );
     expect(clientService.createApproval).not.toHaveBeenCalled();
-    expect(result).toMatchObject({
-      structuredContent: { data: { id: 'msg-draft' } },
-    });
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).not.toContain('msg-draft');
+    ).toContain('msg-draft');
   });
 
   it('handleToolCall reject_social_draft updates review state without external send approval', async () => {
@@ -895,7 +745,7 @@ describe('ToolRegistryService', () => {
     expect(clientService.createApproval).not.toHaveBeenCalled();
     expect(
       (result as { content: { text: string }[] }).content[0].text,
-    ).toContain('Rejected');
+    ).toContain('rejected');
   });
 
   it('handleToolCall post_social_reply queues approval before external publishing', async () => {
@@ -965,42 +815,12 @@ describe('ToolRegistryService', () => {
 
     it('does not gate tools without a requiredRole', async () => {
       await service.handleToolCall({
-        arguments: { brandId: 'brand-1', prompt: 'x', type: 'video' },
+        arguments: { prompt: 'x', type: 'video' },
         name: 'generate',
       });
 
       expect(McpAuthGuard.checkToolRole).not.toHaveBeenCalled();
     });
-  });
-
-  it('returns a readable profile message with IDs only in structured data', async () => {
-    const data = {
-      profile: {
-        isOnboardingCompleted: true,
-        organizationId: 'org-private',
-        role: 'user',
-        userId: 'user-private',
-      },
-    };
-    clientService.executeAgentTool.mockResolvedValueOnce({
-      creditsUsed: 0,
-      data,
-      success: true,
-    });
-    const result = await service.handleToolCall({
-      arguments: { include: ['profile'] },
-      name: 'get_account',
-    });
-    expect(result).toMatchObject({
-      content: [
-        {
-          type: 'text',
-          text: 'Connected to Genfeed.\nRole: User\nAccount setup: Complete',
-        },
-      ],
-      structuredContent: { data },
-    });
-    expect(result).not.toHaveProperty('structuredContent.genfeedCards');
   });
 
   it('handleToolCall get_account proxies through executeAgentTool', async () => {
@@ -1014,12 +834,12 @@ describe('ToolRegistryService', () => {
       {},
       undefined,
     );
-    expect(result).toMatchObject({
-      structuredContent: { data: { name: 'get_account' } },
-    });
+    expect(
+      (result as { content: { text: string }[] }).content[0].text,
+    ).toContain('get_account');
   });
 
-  it('handleToolCall get_account returns readable non-zero usage', async () => {
+  it('handleToolCall get_account renders non-zero usage on the usage card', async () => {
     clientService.executeAgentTool.mockResolvedValueOnce({
       creditsUsed: 0,
       data: {
@@ -1040,12 +860,18 @@ describe('ToolRegistryService', () => {
       name: 'get_account',
     });
 
-    expect(result).not.toHaveProperty('structuredContent.genfeedCards');
-    const text = (result as { content: { text: string }[] }).content[0].text;
-    expect(text).toContain('Credits available: 88');
-    expect(text).toContain('Credits used in the last 7 days: 12');
-    expect(text).toContain('Credits used in the last 30 days: 40');
-    expect(text).toContain('Usage change (%): 5');
+    expect(result).toMatchObject({
+      structuredContent: {
+        genfeedCards: {
+          cards: [
+            { description: '88', title: 'current Balance' },
+            { description: '5', title: 'trend Percentage' },
+            { description: '40', title: 'usage30 Days' },
+            { description: '12', title: 'usage7 Days' },
+          ],
+        },
+      },
+    });
   });
 
   it('handleToolCall throws for unknown tool and returns error', async () => {

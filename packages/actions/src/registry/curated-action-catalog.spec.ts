@@ -217,28 +217,6 @@ describe('curated action catalog', () => {
     }
   });
 
-  it('keeps the X thread and first-comment tools on the agent surface, behind approval for saves', () => {
-    for (const name of [
-      'draft_thread',
-      'add_thread_posts',
-      'add_first_comment',
-    ]) {
-      expect(getToolByName(name)?.surfaces, name).toMatchObject({
-        agent: true,
-        mcp: false,
-      });
-    }
-    expect(getToolByName('draft_thread')?.mutationPolicy).toBe('direct');
-    expect(getToolByName('add_thread_posts')?.mutationPolicy).toBe(
-      'approval-required',
-    );
-    expect(getToolByName('add_first_comment')?.mutationPolicy).toBe(
-      'approval-required',
-    );
-    expect(getToolByName('draft_thread')?.creditCost).toBe(1);
-    expect(getToolByName('add_thread_posts')?.creditCost).toBe(0);
-  });
-
   it('keeps in-product guided flows on the agent surface only', () => {
     // Deliberate boundaries — see `.agents/memory/curated_action_surface_boundaries.md`.
     for (const name of [
@@ -389,7 +367,7 @@ describe('curated action catalog', () => {
       ['resolve_approval', 'core'],
       ['create_post', 'content'],
       ['repurpose_post', 'content'],
-      ['generate_turbo_content', 'content'],
+      ['generate_content_batch', 'content'],
       ['generate', 'generation'],
       ['generate_visual_code', 'visual-code'],
       ['create_storyboard_remix', 'inspiration'],

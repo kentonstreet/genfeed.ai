@@ -1,7 +1,3 @@
-import {
-  assertSeedanceNativeOutputQuote,
-  type SeedanceNativeOutputQuoteEvidence,
-} from '@api/collections/videos/services/seedance-native-output-quote.util';
 import type { ModelCreditQuoteInput } from '@api/helpers/utils/credits/model-credit-quote.util';
 import type {
   ModelBillablePricingProfile,
@@ -39,7 +35,6 @@ export function normalizeModelProviderQuoteRequest(
   profile: ModelBillablePricingProfile,
   modelKey: string,
   input: ModelCreditQuoteInput,
-  nativeOutput?: SeedanceNativeOutputQuoteEvidence,
 ): ModelBillableQuoteRequest {
   const {
     organizationId: _organizationId,
@@ -134,15 +129,6 @@ export function normalizeModelProviderQuoteRequest(
           ? SEEDANCE_DIMENSIONS[resolution]?.[aspect]
           : undefined;
       if (dimensions) [quantities.width, quantities.height] = dimensions;
-      if (nativeOutput) {
-        if (source !== `https://fal.ai/models/${nativeOutput.endpoint}`)
-          throw new Error(
-            'Native output evidence differs from the reviewed tariff endpoint',
-          );
-        assertSeedanceNativeOutputQuote(providerInput, nativeOutput);
-        quantities.width = nativeOutput.width;
-        quantities.height = nativeOutput.height;
-      }
       const seconds =
         typeof providerInput.duration === 'string' &&
         /^\d+$/.test(providerInput.duration)

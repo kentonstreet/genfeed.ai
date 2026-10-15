@@ -5,12 +5,9 @@ import {
   getToolsetNames,
   getToolsForSurface,
   getToolsForToolsets,
-  isMcpBrandRequiredTool,
   isToolAllowedInMcpAccessMode,
   type McpAccessMode,
-  type McpBrandOption,
   type McpToolOutput,
-  readMcpBrandId,
   requiresMcpApproval,
   type ToolsetName,
   toMcpTools,
@@ -42,10 +39,6 @@ import {
 import { finalizeMcpToolResult } from '@mcp/services/mcp-tool-result.util';
 import type { McpApprovalResource } from '@mcp/shared/interfaces/approval.interface';
 import type { McpResource } from '@mcp/shared/interfaces/mcp-resource.interface';
-import {
-  accountToolText,
-  dataToolResult,
-} from '@mcp/shared/utils/tool-result-text.util';
 import { handleAccountManagementTool } from '@mcp/tools/account-management.tool';
 import { handleAdsGatewayTool } from '@mcp/tools/ads-gateway.tool';
 import { handleAgentChatTool } from '@mcp/tools/agent-chat.tool';
@@ -388,11 +381,6 @@ export class ToolRegistryService implements OnModuleInit {
         return await this.handleResolveApproval(args ?? {});
       }
 
-      // Rejected before any approval or charge: a generation always names its brand.
-      if (isMcpBrandRequiredTool(name) && !readMcpBrandId(args)) {
-        return await this.brandRequiredResult();
-      }
-
       // Declared approvals and credit spenders wait for confirmation.
       if (ToolRegistryService.requiresApproval(name, args)) {
         const approval = await this.clientService.createApproval(
@@ -425,33 +413,6 @@ export class ToolRegistryService implements OnModuleInit {
         isError: true,
       };
     }
-  }
-
-  private async brandRequiredResult() {
-    const brands = await this.listCallerBrands();
-    return mcpToolErrorResult({
-      brands,
-      code: 'brand_required',
-      message: brands.length
-        ? `Choose a brand for this generation. Available brands: ${brands.map((brand) => (brand.label === brand.id ? 'Unnamed brand' : brand.label)).join(', ')}.`
-        : 'Create a brand in Genfeed before starting this generation.',
-    });
-  }
-
-  private async listCallerBrands(): Promise<McpBrandOption[]> {
-    const result = await this.clientService.executeAgentTool('get_brands', {});
-    const brands = isRecord(result.data) ? result.data.brands : undefined;
-    if (!result.success || !Array.isArray(brands)) return [];
-    return brands.flatMap((brand): McpBrandOption[] => {
-      if (!isRecord(brand) || typeof brand.id !== 'string') return [];
-      const label =
-        typeof brand.label === 'string' && brand.label.trim()
-          ? brand.label
-          : typeof brand.name === 'string' && brand.name.trim()
-            ? brand.name
-            : brand.id;
-      return [{ id: brand.id, label }];
-    });
   }
 
   static classify(name: string): ExecutorKind {
@@ -539,7 +500,7 @@ export class ToolRegistryService implements OnModuleInit {
           args,
           approvedApprovalId ? { approvedApprovalId } : undefined,
         );
-        return this.toMcpResult(result, name);
+        return this.toMcpResult(result);
       }
       case 'onboarding': {
         const { agentToolName, parameters, timeoutMs } =
@@ -550,7 +511,7 @@ export class ToolRegistryService implements OnModuleInit {
           undefined,
           timeoutMs,
         );
-        return this.toMcpResult(result, name);
+        return this.toMcpResult(result);
       }
       case 'content':
         return handleContentTool(this.clientService, name, args);
@@ -616,7 +577,9 @@ export class ToolRegistryService implements OnModuleInit {
 
     if (decision === 'decline') {
       await this.clientService.resolveApproval(approvalId, 'decline');
-      return this.textResult('Approval declined. The action was not executed.');
+      return this.textResult(
+        `Approval ${approvalId} declined. The action was not executed.`,
+      );
     }
 
     // Atomically CLAIM the approval (PENDING -> APPROVED) BEFORE executing the
@@ -785,7 +748,7 @@ export class ToolRegistryService implements OnModuleInit {
     ];
   }
 
-  private toMcpResult(result: AgentToolResult, name: string) {
+  private toMcpResult(result: AgentToolResult) {
     if (!result.success) {
       const gated = toMcpToolErrorResult(
         result.error ?? 'Tool execution failed',
@@ -813,13 +776,18 @@ export class ToolRegistryService implements OnModuleInit {
         this.logger,
       ).then((media) => this.stampCreditsDebited(media, result.creditsUsed));
     }
-    const response = dataToolResult(
-      payload,
-      name === 'get_account' ? undefined : getToolByName(name)?.title,
+    return this.stampCreditsDebited(
+      {
+        content: [
+          {
+            text: JSON.stringify(payload, null, 2),
+            type: 'text',
+          },
+        ],
+        structuredContent: { data: payload },
+      },
+      result.creditsUsed,
     );
-    if (name === 'get_account')
-      response.content[0].text = accountToolText(payload);
-    return this.stampCreditsDebited(response, result.creditsUsed);
   }
 
   private stampCreditsDebited<T extends { structuredContent?: object }>(

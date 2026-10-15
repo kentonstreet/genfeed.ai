@@ -9,13 +9,7 @@ describe('get_articles schema contract (#6597)', () => {
     expect(definition).toBeDefined();
     const tool = toMcpTools(definition ? [definition] : [])[0];
     expect(tool.inputSchema).toMatchObject({
-      oneOf: [
-        {
-          properties: { articleId: { type: 'string' } },
-          required: ['articleId'],
-        },
-        { properties: { query: { type: 'string' } }, required: ['query'] },
-      ],
+      oneOf: [{ required: ['articleId'] }, { required: ['query'] }],
       properties: {
         articleId: { minLength: 1, pattern: '\\S', type: 'string' },
         query: { minLength: 1, pattern: '\\S', type: 'string' },

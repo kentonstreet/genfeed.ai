@@ -51,7 +51,7 @@ describe('McpApprovalsService', () => {
     mcpApproval.count.mockResolvedValue(0);
     mcpApproval.findFirst.mockResolvedValue({
       id: 'outside-transaction',
-      toolName: 'generate_turbo_content',
+      toolName: 'generate_content_batch',
       status: 'PENDING',
     });
     mcpApproval.updateMany.mockResolvedValue({ count: 1 });
@@ -339,7 +339,7 @@ describe('McpApprovalsService', () => {
       const first = await service.createPending(
         'org-1',
         'user-1',
-        'generate_turbo_content',
+        'generate_content_batch',
         { count: 3 },
         {
           threadId: 'thread-1',
@@ -349,7 +349,7 @@ describe('McpApprovalsService', () => {
       const second = await service.createPending(
         'org-1',
         'user-1',
-        'generate_turbo_content',
+        'generate_content_batch',
         { count: 3 },
         {
           threadId: 'thread-1',
@@ -454,7 +454,7 @@ describe('McpApprovalsService', () => {
         const txApproval = {
           findFirst: vi.fn().mockResolvedValue({
             id: 'approval-tx',
-            toolName: 'generate_turbo_content',
+            toolName: 'generate_content_batch',
             status: 'PENDING',
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -516,7 +516,7 @@ describe('McpApprovalsService', () => {
       expect(txApproval.updateMany).not.toHaveBeenCalled();
       expect(mcpApproval.findFirst).not.toHaveBeenCalled();
     });
-    it.each([null, { id: 'approval-tx', toolName: 'generate_turbo_content' }])(
+    it.each([null, { id: 'approval-tx', toolName: 'generate_content_batch' }])(
       'retains transactional missing and lost-race errors for %j',
       async (approval) => {
         const txApproval = {
@@ -745,7 +745,7 @@ describe('McpApprovalsService', () => {
       organizationId: 'org-1',
       userId: 'user-1',
       arguments: { count: 3 },
-      toolName: 'generate_turbo_content',
+      toolName: 'generate_content_batch',
       idempotencyKey: 'logical-write',
       pricingQuote: null,
       status: 'PENDING',
