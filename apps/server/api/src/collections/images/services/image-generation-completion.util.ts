@@ -28,11 +28,7 @@ export async function resolveImageGenerationCompletion(
 ): Promise<unknown> {
   if (plan.kind === 'inline') {
     return imagesService.findOne(
-      {
-        id: context.ingredientData.id,
-        isDeleted: false,
-        organizationId: context.user.organizationId,
-      },
+      { id: context.ingredientData.id },
       IMAGE_POPULATE,
     );
   }
@@ -123,11 +119,7 @@ export async function throwImageGatewayTimeoutIfPending(
   }
 
   const ingredient = await imagesService.findOne(
-    {
-      id: context.ingredientData.id,
-      isDeleted: false,
-      organizationId: context.user.organizationId,
-    },
+    { id: context.ingredientData.id },
     IMAGE_POPULATE,
   );
 

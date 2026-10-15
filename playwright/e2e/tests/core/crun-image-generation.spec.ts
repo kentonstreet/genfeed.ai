@@ -129,8 +129,6 @@ async function installFixture(
         category: 'IMAGE',
         status: 'GENERATED',
         scope: 'USER',
-        brandId: 'brand-1',
-        organizationId: 'mock-org-id-e2e-test',
         cdnUrl: ownedUrl,
         width: 1024,
         height: 1024,

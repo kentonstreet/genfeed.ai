@@ -8,7 +8,7 @@ import {
   dispatchRegisteredAgentTool,
 } from '@api/services/agent-orchestrator/tools/agent-tool-dispatch.routes';
 import type { ToolExecutionContext } from '@api/services/agent-orchestrator/tools/agent-tool-executor.service';
-import { TurboRunService } from '@api/services/turbo-run/turbo-run.service';
+import { BatchGenerationService } from '@api/services/batch-generation/batch-generation.service';
 import type { ExtensionPublicationCaptureResult } from '@genfeedai/contracts/interfaces/content/extension-publication.interface';
 import { LoggerService } from '@libs/logger/logger.service';
 import { ForbiddenException } from '@nestjs/common';
@@ -69,7 +69,7 @@ async function fixture() {
         },
       },
       { provide: CreditsUtilsService, useValue: credits },
-      { provide: TurboRunService, useValue: generation },
+      { provide: BatchGenerationService, useValue: generation },
     ],
   }).compile();
   return {

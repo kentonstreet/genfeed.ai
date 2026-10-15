@@ -277,10 +277,10 @@ describe('automation selected data and immutable actor', () => {
     const findAll = vi.fn(async (where: { organizationId: string }) => ({
       docs: [rowFor(where.organizationId)],
     }));
-    const generateContentPlan = vi.fn(async () => ({ entries: [] }));
+    const generatePhoto = vi.fn(async () => 'generated');
     const controller = instance(PersonasContentController, {
       postsService: { findAll },
-      personaContentPlanService: { generateContentPlan },
+      personaContentService: { generatePhoto },
     });
     expect(
       await selected(() =>
@@ -318,10 +318,8 @@ describe('automation selected data and immutable actor', () => {
       response: { detail: 'brandId is required and must be a string' },
     });
     expect(findAll).not.toHaveBeenCalled();
-    await selected(() =>
-      controller.generateContentPlan(testId('persona'), { days: 1 }, user),
-    );
-    expect(generateContentPlan).toHaveBeenCalledWith(
+    await selected(() => controller.generatePhoto(testId('persona'), {}, user));
+    expect(generatePhoto).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: originalOrg,
         userId: user.userId,

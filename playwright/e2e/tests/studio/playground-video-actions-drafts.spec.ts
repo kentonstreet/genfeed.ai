@@ -34,8 +34,6 @@ function videoResource(
 ): Record<string, unknown> {
   return {
     attributes: {
-      brandId: 'brand-1',
-      organizationId: 'mock-org-id-e2e-test',
       category: IngredientCategory.VIDEO,
       cdnUrl: `https://cdn.genfeed.ai/mock/${id}.mp4`,
       createdAt: '2026-09-28T10:00:00.000Z',
@@ -83,8 +81,6 @@ async function mockVideoModels(page: Page): Promise<void> {
             durations: [5],
             isActive: true,
             isDeleted: false,
-            maxOutputs: 1,
-            maxReferences: 1,
             key: EXTEND_MODEL_KEY,
             label: 'E2E Video Model',
           },
@@ -278,16 +274,8 @@ test.describe('Studio Generate — video results and composer drafts', () => {
     page: Page,
     childId: string,
   ): Promise<void> {
-    const childCard = page.getByTestId(`studio-asset-${childId}`);
-    await expect(childCard).toBeVisible();
-    await childCard.click();
-    const sourceLink = page
-      .getByTestId('studio-playground-inspector')
-      .getByRole('button', {
-        exact: true,
-        name: 'Show the source of this video',
-      });
-    await expect(sourceLink).toBeVisible();
+    await expect(page.getByTestId(`studio-asset-${childId}`)).toBeVisible();
+    const sourceLink = page.getByTestId(`studio-asset-source-${childId}`);
     await sourceLink.focus();
     await page.keyboard.press('Enter');
     await expect(page.getByTestId(`studio-asset-${SOURCE_ID}`)).toHaveAttribute(

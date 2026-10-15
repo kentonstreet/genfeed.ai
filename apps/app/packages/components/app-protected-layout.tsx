@@ -4,10 +4,6 @@ import LibrarySidebarNav from '@app/(protected)/[orgSlug]/[brandSlug]/library/li
 import StreakNotificationsBridge from '@app-components/streaks/StreakNotificationsBridge';
 import { CommandPaletteProvider } from '@contexts/features/command-palette.provider';
 import { AgentDockProvider } from '@contexts/ui/agent-dock-context';
-import {
-  BreadcrumbLeafProvider,
-  useBreadcrumbLeaf,
-} from '@contexts/ui/breadcrumb-leaf-context';
 import { ContextSidebarProvider } from '@contexts/ui/context-sidebar-context';
 import { useBrand } from '@contexts/user/brand-context/brand-context';
 import {
@@ -43,8 +39,6 @@ import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
 import AnalyticsOrganizationSync from '@/components/analytics/AnalyticsOrganizationSync';
 import AppProtectedRail from '@/components/shell/AppProtectedRail';
 import AppProtectedTopbar from '@/components/shell/AppProtectedTopbar';
-import { InstalledAppsProvider } from '@/components/shell/installed-apps.provider';
-import { PinnedRailAppsProvider } from '@/components/shell/pinned-rail-apps.provider';
 import {
   WorkspaceNavPanelProvider,
   WorkspaceNavPanelTarget,
@@ -61,13 +55,13 @@ import AgentSidebarContent from './AppProtectedLayoutAgentSidebar';
 import AppProtectedLayoutSidebar from './AppProtectedLayoutSidebar';
 import {
   extractAgentConversationId,
-  extractStoryboardRunId,
   truncateBreadcrumbLabel,
 } from './app-protected-layout.breadcrumb';
 import AssetGateGuard from './asset-gate-guard';
 import GlobalTaskComposer from './GlobalTaskComposer';
 import ImpersonationBanner from './impersonation-banner';
 import { useSettingsCommandsRegistration } from './settings-search/use-settings-commands-registration';
+import { usePageHelp } from './use-page-help';
 import {
   isProtectedEditorCanvasRoute,
   isProtectedWorkspaceRoute,
@@ -316,19 +310,12 @@ function AppLayoutWithDynamicMenu({
   const activeNavPanel =
     conversationNavPanel ?? libraryNavPanel ?? messagesNavPanel;
 
-  const isStoreRoute = /\/~\/store(\/|$)/.test(sidebarPathname ?? '');
   const menuComponent = useMemo(() => {
     // Focused onboarding has no module nav. Editor/workflow canvas routes also
     // suppress the Automation/module sidebar so the surface can own the left rail
     // (nodes palette, graph chrome) instead of stacking module menu items under
     // a second logo topbar.
     if (isFocusedOnboardingRoute || isEditorCanvasRoute) {
-      return undefined;
-    }
-
-    // The Store and a Studio app with a single page have nothing to navigate
-    // between, so they use the full width instead of a one-item menu.
-    if (isStoreRoute || (isStudioRoute && studioMenuItems.length <= 1)) {
       return undefined;
     }
 
@@ -379,7 +366,6 @@ function AppLayoutWithDynamicMenu({
     isPublishingRoute,
     isDiscoveryRoute,
     isSettingsRoute,
-    isStoreRoute,
     isStudioRoute,
     isAutomationRoute,
     libraryMenuItems,
@@ -436,12 +422,11 @@ function AppLayoutWithDynamicMenu({
                       : menuItems;
   const lowCreditsBanner =
     hasOrganizationBillingHint() &&
+    isLowCreditsBannerEnabled &&
     !isFocusedOnboardingRoute &&
     !suppressShellLowCreditsBanner &&
     !isLibraryLandingRoute ? (
-      <LowCreditsBanner
-        isLowBalanceWarningEnabled={isLowCreditsBannerEnabled}
-      />
+      <LowCreditsBanner />
     ) : null;
   const shellBanner = (
     <>
@@ -456,9 +441,8 @@ function AppLayoutWithDynamicMenu({
   // Org settings: Settings / <org label> / <page> (General vs brand Profile).
   // Registry seeds parent as :brandSlug / :orgSlug; prefer live display names.
   // Agent conversation: Agent / <thread title, 25 chars>.
-  // Storyboard run: Storyboard / <run title, 25 chars>, published by the page.
   const rawPathname = usePathname();
-  const breadcrumbLeaf = useBreadcrumbLeaf();
+  const pageHelp = usePageHelp(rawPathname);
   const layoutBreadcrumb = useMemo(() => {
     const breadcrumb = workspaceShellRoute?.breadcrumb;
     if (!breadcrumb) {
@@ -527,16 +511,8 @@ function AppLayoutWithDynamicMenu({
         }
       }
     }
-    const storyboardRunId = extractStoryboardRunId(rawPathname);
-    if (storyboardRunId && breadcrumbLeaf?.key === storyboardRunId) {
-      return {
-        ...breadcrumb,
-        leafLabel: truncateBreadcrumbLabel(breadcrumbLeaf.label),
-      };
-    }
     return breadcrumb;
   }, [
-    breadcrumbLeaf,
     brands,
     organizationId,
     orgSlug,
@@ -557,6 +533,7 @@ function AppLayoutWithDynamicMenu({
           bannerComponent={shellBanner}
           breadcrumb={layoutBreadcrumb}
           brandSlug={brandSlug}
+          pageHelp={pageHelp}
           currentApp={currentApp}
           menuComponent={menuComponent}
           railComponent={railComponent}
@@ -667,17 +644,11 @@ function AppProtectedLayoutContent({
           !isEditorCanvasRoute && !isFocusedOnboardingRoute && !isWorkspaceRoute
         }
       >
-        <InstalledAppsProvider>
-          <PinnedRailAppsProvider>
-            <BreadcrumbLeafProvider>
-              <AppLayoutWithDynamicMenu initialBootstrap={initialBootstrap}>
-                <OnboardingGuard>
-                  <AssetGateGuard>{children}</AssetGateGuard>
-                </OnboardingGuard>
-              </AppLayoutWithDynamicMenu>
-            </BreadcrumbLeafProvider>
-          </PinnedRailAppsProvider>
-        </InstalledAppsProvider>
+        <AppLayoutWithDynamicMenu initialBootstrap={initialBootstrap}>
+          <OnboardingGuard>
+            <AssetGateGuard>{children}</AssetGateGuard>
+          </OnboardingGuard>
+        </AppLayoutWithDynamicMenu>
       </ProtectedProviders>
     </WorkspaceNavPanelProvider>
   );

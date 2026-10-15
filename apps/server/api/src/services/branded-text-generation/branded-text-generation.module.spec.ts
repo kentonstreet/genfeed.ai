@@ -1,10 +1,8 @@
 import 'reflect-metadata';
 import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
-import { BrandsCoreModule } from '@api/collections/brands/brands-core.module';
 import { BrandValidationModule } from '@api/services/brand-validation/brand-validation.module';
 import { BrandValidationReceiptModule } from '@api/services/brand-validation/brand-validation-receipt.module';
 import { BrandedGenerationReceiptsModule } from '@api/services/branded-generation-receipts/branded-generation-receipts.module';
-import { BrandedModeResolverService } from '@api/services/branded-text-generation/branded-mode-resolver.service';
 import { BrandedTextGenerationModule } from '@api/services/branded-text-generation/branded-text-generation.module';
 import { BrandedTextGenerationService } from '@api/services/branded-text-generation/branded-text-generation.service';
 import { ContentHarnessModule } from '@api/services/harness/harness.module';
@@ -21,7 +19,6 @@ describe('BrandedTextGenerationModule', () => {
     expect(new Set(metadata(MODULE_METADATA.IMPORTS))).toEqual(
       new Set([
         BrandAccessModule,
-        BrandsCoreModule,
         BrandedGenerationReceiptsModule,
         BrandValidationModule,
         BrandValidationReceiptModule,
@@ -32,14 +29,12 @@ describe('BrandedTextGenerationModule', () => {
     );
   });
 
-  it('provides and exports the orchestrator and the mode resolver', () => {
+  it('provides and exports only the orchestrator', () => {
     expect(metadata(MODULE_METADATA.PROVIDERS)).toEqual([
       BrandedTextGenerationService,
-      BrandedModeResolverService,
     ]);
     expect(metadata(MODULE_METADATA.EXPORTS)).toEqual([
       BrandedTextGenerationService,
-      BrandedModeResolverService,
     ]);
   });
 });
