@@ -79,8 +79,6 @@ describe('WorkflowLipSyncFundingService', () => {
       byok,
       heygen,
       prisma,
-      {} as never,
-      {} as never,
     ),
     generationBilling,
     modelQuotes,
