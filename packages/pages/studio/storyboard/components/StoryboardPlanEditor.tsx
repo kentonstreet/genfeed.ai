@@ -36,12 +36,10 @@ import {
   editStoryboardShot,
   editStoryboardStyle,
   insertStoryboardShot,
-  overlayStoryboardStills,
   removeStoryboardShot,
   reorderStoryboardShots,
   storyboardApprovalProblems,
   storyboardAssetLabel,
-  storyboardShotsNeedingStills,
 } from '@pages/studio/storyboard/utils/storyboard-plan';
 import {
   snapStoryboardDuration,
@@ -72,8 +70,6 @@ export default function StoryboardPlanEditor({
   savePlan,
   resetPlan,
   approvePlan,
-  quoteStills,
-  generateStills,
   capabilities,
   capabilityError,
   refreshCapabilities,
@@ -144,7 +140,7 @@ export default function StoryboardPlanEditor({
   useEffect(() => {
     onSaveStatusChange?.(autosave.status);
   }, [onSaveStatusChange, autosave.status]);
-  const plan = overlayStoryboardStills(autosave.value, persistedPlan);
+  const plan = autosave.value;
   const title = plan.title.trim() || translateDraft('untitled');
   useRegisterBreadcrumbLeaf(run.id, title);
   const currentCapabilities =
@@ -267,29 +263,6 @@ export default function StoryboardPlanEditor({
     } finally {
       setWorking(false);
     }
-  }
-  /** Prices the stills, asks before charging, then starts them. */
-  function requestStills(shotIds?: readonly string[]) {
-    if (!quoteStills || !generateStills) return;
-    void perform(async (revision) => {
-      const quote = await quoteStills(revision, shotIds);
-      const count = quote.items.length;
-      openConfirm({
-        isOpen: true,
-        label: translate('stillQuoteTitle', { count }),
-        message:
-          quote.billingMode === 'byok'
-            ? translate('stillQuoteByok', { count })
-            : translate('stillQuoteMessage', { count, credits: quote.total }),
-        confirmLabel: translate('stillQuoteConfirm'),
-        onConfirm: () =>
-          perform(async (current) => {
-            if (current !== quote.revision)
-              throw new Error(translate('stillQuoteChanged'));
-            await generateStills(quote);
-          }),
-      });
-    });
   }
   function reset() {
     openConfirm({
@@ -428,10 +401,8 @@ export default function StoryboardPlanEditor({
       shot.sectionLabel?.trim() || translate('shot', { ordinal: shot.ordinal }),
     durationSeconds: shot.durationSeconds,
     isStillFresh: shot.stillFreshness === 'fresh',
-    stillFreshness: shot.stillFreshness,
     stillUrl: stillUrl(shot),
   }));
-  const missingStillCount = storyboardShotsNeedingStills(plan).length;
 
   return (
     <>
@@ -581,11 +552,6 @@ export default function StoryboardPlanEditor({
                         onDelete={() =>
                           edit(removeStoryboardShot(plan, shot.id))
                         }
-                        onGenerateStill={
-                          quoteStills && generateStills
-                            ? () => requestStills([shot.id])
-                            : undefined
-                        }
                         onMove={(offset) =>
                           edit(reorderStoryboardShots(plan, shot.id, offset))
                         }
@@ -719,11 +685,6 @@ export default function StoryboardPlanEditor({
             />
           }
           castCount={plan.cast.length}
-          isStillActionDisabled={isDisabled}
-          missingStillCount={missingStillCount}
-          onGenerateMissingStills={
-            quoteStills && generateStills ? () => requestStills() : undefined
-          }
           details={
             <StoryboardDetailsPanel
               isDisabled={isDisabled}
