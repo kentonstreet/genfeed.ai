@@ -12,7 +12,6 @@ import {
 } from '@genfeedai/contracts/constants/routes.constant';
 import { createAppNextConfig } from '@genfeedai/next-config';
 import { withSerwist } from '@serwist/turbopack';
-import type { NextConfig } from 'next';
 import createNextIntlPlugin from 'next-intl/plugin';
 
 // Deterministic, empty-string-safe build id. A plain `??` chain does NOT skip
@@ -136,13 +135,7 @@ function appHomeRedirects(
     {
       destination: createBrandAppRoute(':orgSlug', ':brandSlug', homePath),
       permanent: true,
-      // `v1` is the API prefix, never an organization: without the guard this
-      // rule also matches `/v1/<segment>/library` and redirects the API call.
-      source: createBrandAppRoute(
-        ':orgSlug((?!v1(?:/|$))[^/]+)',
-        ':brandSlug',
-        appRoot,
-      ),
+      source: createBrandAppRoute(':orgSlug', ':brandSlug', appRoot),
     },
     {
       destination: createOrganizationAppRoute(':orgSlug', homePath),
@@ -151,122 +144,6 @@ function appHomeRedirects(
     },
   ];
 }
-
-type AppRedirect = Awaited<
-  ReturnType<NonNullable<NextConfig['redirects']>>
->[number];
-
-const FILTER_ROUTE_SCOPES = [
-  '',
-  '/:orgSlug/:brandSlug',
-  '/:orgSlug/~',
-] as const;
-
-/**
- * Path presets whose destination writes `categories`. Next merges destination
- * query values over the request, so an explicit `categories` override has to
- * be a separate rule that does not write that key.
- */
-const LIBRARY_TYPE_PRESET_QUERIES = [
-  ['/library/images', 'categories=IMAGE&categories=IMAGE_EDIT'],
-  ['/library/videos', 'categories=VIDEO&categories=VIDEO_EDIT'],
-  ['/library/gifs', 'categories=GIF'],
-  ['/library/avatars', 'categories=AVATAR'],
-  ['/library/music', 'categories=MUSIC&categories=AUDIO'],
-] as const;
-
-const filterRouteRedirects: AppRedirect[] = [
-  ...[
-    ['/workspace/inbox/all', '/workspace/inbox?view=all'],
-    ['/workspace/inbox/recent', '/workspace/inbox?view=recent'],
-    ['/workspace/inbox/unread', '/workspace/inbox?view=unread'],
-    ['/settings/models/all', '/settings/models?type=all'],
-    ['/settings/models/images', '/settings/models?type=images'],
-    ['/settings/models/videos', '/settings/models?type=videos'],
-    ['/settings/models/text', '/settings/models?type=text'],
-    ['/settings/models/trainings', '/settings/models?type=trainings'],
-    ['/library/trash', '/library/assets?place=trash'],
-    ['/library/shelf/generating', '/library/assets?shelf=generating'],
-    ['/library/shelf/unsorted', '/library/assets?shelf=unsorted'],
-    ['/library/shelf/needs-review', '/library/assets?shelf=needs-review'],
-    ['/library/shelf/approved', '/library/assets?shelf=approved'],
-    ['/library/shelf/failed', '/library/assets?shelf=failed'],
-    ['/library/shelf/archived', '/library/assets?shelf=archived'],
-  ].flatMap(([source, destination]) =>
-    FILTER_ROUTE_SCOPES.map((prefix) => ({
-      source: `${prefix}${source}`,
-      destination: `${prefix}${destination}`,
-      permanent: true,
-    })),
-  ),
-  ...LIBRARY_TYPE_PRESET_QUERIES.flatMap(([source, presetQuery]) =>
-    FILTER_ROUTE_SCOPES.flatMap((prefix) => [
-      {
-        destination: `${prefix}/library/assets`,
-        has: [{ key: 'categories', type: 'query' as const }],
-        permanent: true,
-        source: `${prefix}${source}`,
-      },
-      {
-        destination: `${prefix}/library/assets?${presetQuery}`,
-        missing: [{ key: 'categories', type: 'query' as const }],
-        permanent: true,
-        source: `${prefix}${source}`,
-      },
-    ]),
-  ),
-];
-
-const adminFilterRouteRedirects = [
-  ['/admin/automation/models/active', '/admin/automation/models?type=active'],
-  ['/admin/automation/models/all', '/admin/automation/models?type=all'],
-  ['/admin/automation/models/image', '/admin/automation/models?type=image'],
-  ['/admin/automation/models/video', '/admin/automation/models?type=video'],
-  ['/admin/automation/models/music', '/admin/automation/models?type=music'],
-  ['/admin/automation/models/text', '/admin/automation/models?type=text'],
-  ['/admin/automation/models/other', '/admin/automation/models?type=other'],
-  [
-    '/admin/content/ingredients/videos',
-    '/admin/content/ingredients?assetType=videos',
-  ],
-  [
-    '/admin/content/ingredients/images',
-    '/admin/content/ingredients?assetType=images',
-  ],
-  [
-    '/admin/content/ingredients/gifs',
-    '/admin/content/ingredients?assetType=gifs',
-  ],
-  [
-    '/admin/content/ingredients/musics',
-    '/admin/content/ingredients?assetType=musics',
-  ],
-  [
-    '/admin/content/ingredients/avatars',
-    '/admin/content/ingredients?assetType=avatars',
-  ],
-  [
-    '/admin/content/ingredients/voices',
-    '/admin/content/ingredients?assetType=voices',
-  ],
-  [
-    '/admin/content/ingredients/ingredients',
-    '/admin/content/ingredients?assetType=ingredients',
-  ],
-  ['/admin/configuration/tags/all', '/admin/configuration/tags?filter=all'],
-  [
-    '/admin/configuration/tags/default',
-    '/admin/configuration/tags?filter=default',
-  ],
-  [
-    '/admin/configuration/tags/organization',
-    '/admin/configuration/tags?filter=organization',
-  ],
-  [
-    '/admin/configuration/tags/account',
-    '/admin/configuration/tags?filter=account',
-  ],
-].map(([source, destination]) => ({ source, destination, permanent: true }));
 
 const config = createAppNextConfig({
   // Defense in depth alongside app/robots.txt/route.ts and root metadata: the
@@ -317,35 +194,61 @@ const config = createAppNextConfig({
       source: `${APP_ROUTES.ADMIN.ROOT}/overview`,
     },
 
-    ...filterRouteRedirects,
-    ...adminFilterRouteRedirects,
-    // Market trends moved from Analytics (own-content measurement) to
-    // Discovery. Keep bookmarked and agent-emitted links working.
     {
+      destination: APP_ROUTES.WORKSPACE.INBOX_UNREAD,
+      permanent: false,
+      source: APP_ROUTES.WORKSPACE.INBOX,
+    },
+    {
+      // Cloud org/brand-scoped inbox index has no page (only [view]); redirect
+      // to the unread view so `/:org/:brand/workspace/inbox` doesn't 404.
       destination: createBrandAppRoute(
         ':orgSlug',
         ':brandSlug',
-        `${APP_ROUTES.DISCOVERY.TRENDS}/:path*`,
+        APP_ROUTES.WORKSPACE.INBOX_UNREAD,
       ),
-      permanent: true,
+      permanent: false,
       source: createBrandAppRoute(
         ':orgSlug',
         ':brandSlug',
-        '/analytics/trends/:path*',
+        APP_ROUTES.WORKSPACE.INBOX,
       ),
+    },
+    {
+      destination: createOrganizationAppRoute(
+        ':orgSlug',
+        APP_ROUTES.WORKSPACE.INBOX_UNREAD,
+      ),
+      permanent: false,
+      source: createOrganizationAppRoute(
+        ':orgSlug',
+        APP_ROUTES.WORKSPACE.INBOX,
+      ),
+    },
+    // Agent CTAs historically emitted bare `/review` (and route-rewrite scoped
+    // it to `/:org/:brand/review`) — that page never existed. Send both dead
+    // shapes to Publishing Review so stored thread links stop 404ing.
+    {
+      destination: APP_ROUTES.PUBLISHING.REVIEW,
+      permanent: true,
+      source: '/review',
     },
     {
       destination: createBrandAppRoute(
         ':orgSlug',
         ':brandSlug',
-        APP_ROUTES.DISCOVERY.TREND_TURNOVER,
+        APP_ROUTES.PUBLISHING.REVIEW,
       ),
       permanent: true,
-      source: createBrandAppRoute(
+      source: createBrandAppRoute(':orgSlug', ':brandSlug', '/review'),
+    },
+    {
+      destination: createOrganizationAppRoute(
         ':orgSlug',
-        ':brandSlug',
-        '/analytics/trend-turnover',
+        APP_ROUTES.PUBLISHING.REVIEW,
       ),
+      permanent: true,
+      source: createOrganizationAppRoute(':orgSlug', '/review'),
     },
     // Brand-scoped /admin/* never existed. Send it to the platform dashboard.
     {
@@ -407,12 +310,31 @@ const config = createAppNextConfig({
         `${APP_ROUTES.SETTINGS.ROOT}/${segment}`,
       ),
     })),
-    // Complete-path homes: bare `/[app]` → a named child. Library's home is
-    // the asset browser, not an overview tile grid. Studio has no root: each
-    // Studio tool is its own app (#5502).
+    {
+      destination: APP_ROUTES.STUDIO.GENERATE,
+      permanent: false,
+      source: APP_ROUTES.STUDIO.ROOT,
+    },
+    {
+      // Studio has no root page — Storyboard is the production landing surface.
+      destination: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.STUDIO.GENERATE,
+      ),
+      permanent: false,
+      source: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.STUDIO.ROOT,
+      ),
+    },
+    // Complete-path homes: bare `/[app]` → a named child. Discovery/Studio
+    // already redirect ROOT to one (discovery / storyboard); Library's home is
+    // the asset browser, not an overview tile grid.
     ...appHomeRedirects(APP_ROUTES.WORKSPACE.ROOT),
     ...appHomeRedirects(APP_ROUTES.AUTOMATION.ROOT),
-    ...appHomeRedirects(APP_ROUTES.LIBRARY.ROOT),
+    ...appHomeRedirects(APP_ROUTES.LIBRARY.ROOT, APP_ROUTES.LIBRARY.ASSETS),
     ...appHomeRedirects(APP_ROUTES.ANALYTICS.ROOT),
     ...appHomeRedirects(APP_ROUTES.PUBLISHING.ROOT),
   ],
@@ -447,13 +369,6 @@ config.generateBuildId = async () => {
   return buildId;
 };
 
-// Hosted fallback shells leaked opaque %%drp:...%% tenant params into links
-// and API lookups (#6303). Resolve web routes per request until the hosted
-// prerender path has production navigation coverage. Preserve the existing
-// packaged desktop rendering configuration during this hosted recovery.
-config.cacheComponents = IS_DESKTOP_BUNDLE;
-config.partialPrefetching = IS_DESKTOP_BUNDLE;
-
 config.experimental = {
   ...(config.experimental ?? {}),
   // Let bounded AI handlers return before the same-origin API proxy closes.
@@ -484,9 +399,6 @@ config.turbopack = {
   ...(config.turbopack ?? {}),
   resolveAlias: {
     ...(config.turbopack?.resolveAlias ?? {}),
-    'genfeed-serwist-asset-reader': IS_DESKTOP_BUNDLE
-      ? './app/serwist/serwist-asset.reader.cache.ts'
-      : './app/serwist/serwist-asset.reader.ts',
     '@components/buttons/refresh/button-refresh/ButtonRefresh':
       '../../packages/ui/src/components/buttons/refresh/button-refresh/ButtonRefresh.tsx',
     '@components/cards/KpiCard':
@@ -548,10 +460,6 @@ config.turbopack = {
   root: path.resolve(appDir, '../..'),
 };
 
-if (process.env.NEXT_PUBLIC_PLAYWRIGHT_TEST === 'true') {
-  config.devIndicators = false;
-}
-
 // Additive: the tiptap packages and most @genfeedai/* workspaces are already
 // transpiled by next.config.base.ts — only list what the base does not cover.
 config.transpilePackages = [
@@ -573,7 +481,7 @@ if (process.env.E2E_COVERAGE === '1') {
 
 // Resolves ./i18n/request.ts, next-intl's default request-config location. The
 // plugin only registers that alias — there is no `[locale]` segment and no
-// next-intl middleware, because the App Shell uses static English (epic #2497).
+// next-intl middleware, because locale rides on a cookie (epic #2497).
 const withNextIntl = createNextIntlPlugin();
 
 // Bundler-agnostic: withSerwist only appends esbuild to serverExternalPackages

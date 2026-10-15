@@ -19,7 +19,6 @@ import { CampaignPaidActivationService } from '@api/collections/campaigns/servic
 import { CampaignPerformanceService } from '@api/collections/campaigns/services/campaign-performance.service';
 import { CampaignPlanningService } from '@api/collections/campaigns/services/campaign-planning.service';
 import { CampaignsService } from '@api/collections/campaigns/services/campaigns.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import {
   Credits,
   DeferCreditsUntilModelResolution,
@@ -33,10 +32,7 @@ import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
-import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
-import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import { API_KEY_POSTING_CONFIGURATION_SCOPES } from '@api/helpers/utils/auth/api-key-publishing-scope.util';
-import { CollectionFilterUtil } from '@api/helpers/utils/collection-filter/collection-filter.util';
 import { finalizeDeferredTextCredits } from '@api/helpers/utils/credits/finalize-deferred-credits.util';
 import {
   serializeCollection,
@@ -71,7 +67,6 @@ import type { Request } from 'express';
 @AutoSwagger()
 @ApiTags('Campaigns')
 @Controller('campaigns')
-@OrganizationModule('publishing')
 export class CampaignsController {
   constructor(
     private readonly comparisonService: CampaignComparisonService,
@@ -89,15 +84,7 @@ export class CampaignsController {
     @CurrentUser() user: User,
     @Query() query: CampaignsQueryDto,
   ) {
-    const tenant = CollectionFilterUtil.resolveListOrganizationId(
-      query,
-      user,
-      request,
-    );
-    const data = await this.service.list(tenant.organizationId, {
-      ...query,
-      brandId: tenant.brandId,
-    });
+    const data = await this.service.list(user.organizationId, query);
     return serializeCollection(request, CampaignSerializer, data);
   }
 
@@ -126,19 +113,16 @@ export class CampaignsController {
     return serializeSingle(request, CampaignComparisonSerializer, data);
   }
 
-  @TenantReadPolicy('selected')
   @Get(':id')
   async getOne(
     @Req() request: Request,
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
-    const readScope = resolveTenantReadScope(user);
-    const data = await this.service.getOne(readScope.organizationId, id);
+    const data = await this.service.getOne(user.organizationId, id);
     return serializeSingle(request, CampaignSerializer, data);
   }
 
-  @TenantReadPolicy('selected')
   @Get(':id/performance')
   async getPerformance(
     @Req() request: Request,
@@ -147,27 +131,21 @@ export class CampaignsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    const readScope = resolveTenantReadScope(user);
     const data = await this.performanceService.getPerformance(
-      readScope.organizationId,
+      user.organizationId,
       id,
       { endDate, startDate },
     );
     return serializeSingle(request, CampaignPerformanceSerializer, data);
   }
 
-  @TenantReadPolicy('selected')
   @Get(':id/activations')
   async listActivations(
     @Req() request: Request,
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
-    const readScope = resolveTenantReadScope(user);
-    const data = await this.paidActivationService.list(
-      readScope.organizationId,
-      id,
-    );
+    const data = await this.paidActivationService.list(user.organizationId, id);
     return serializeCollection(request, CampaignPaidActivationSerializer, {
       docs: data,
     });
@@ -308,7 +286,6 @@ export class CampaignsController {
     return serializeSingle(request, CampaignLifecycleSerializer, data);
   }
 
-  @OrganizationModule('publishing', 'cancel')
   @Post(':id/pause')
   @RequiredScopes(...API_KEY_POSTING_CONFIGURATION_SCOPES)
   async pause(

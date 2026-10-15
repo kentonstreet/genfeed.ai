@@ -9,8 +9,7 @@ import {
 import { testId } from '@genfeedai/helpers/testing/test-id.helper';
 import { isCsrfOriginAllowed } from 'next/dist/server/app-render/csrf-protection.js';
 import { hasRemoteMatch } from 'next/dist/shared/lib/match-remote-pattern.js';
-import { unstable_getResponseFromNextConfig } from 'next/experimental/testing/server';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import rootPackage from '../../package.json' with { type: 'json' };
 import config from './next.config';
 import appPackage from './package.json' with { type: 'json' };
@@ -18,118 +17,7 @@ import appPackage from './package.json' with { type: 'json' };
 const appDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(appDir, '../..');
 
-/**
- * Org segment of the brand-scoped app-home redirects: `v1` is the API prefix,
- * never an organization, so `/v1/<segment>/library` must not be redirected.
- */
-const GUARDED_ORG_SLUG = ':orgSlug((?!v1(?:/|$))[^/]+)';
-
-/** The test redirect helper may join repeated keys; production emits both. */
-function categoryValues(target: URL): string[] {
-  return target.searchParams
-    .getAll('categories')
-    .flatMap((value) => value.split(','))
-    .filter((value) => value.length > 0);
-}
-
 describe('app next.config', () => {
-  it.each([
-    { bundle: '', cloud: '1', expected: false, name: 'hosted web' },
-    { bundle: '', cloud: '', expected: false, name: 'self-hosted web' },
-    { bundle: '1', cloud: '', expected: true, name: 'packaged desktop' },
-  ])('limits prerendered route shells for $name', async (mode) => {
-    // Hosted fallback shells leaked opaque %%drp:...%% values into useParams,
-    // navigation hrefs and brand lookups after #6229. Web builds must resolve
-    // tenant params at request time; preserve the packaged desktop behavior.
-    vi.stubEnv('GENFEED_DESKTOP_BUNDLE', mode.bundle);
-    vi.stubEnv('NEXT_PUBLIC_DESKTOP_SHELL', mode.bundle);
-    vi.stubEnv('GENFEED_CLOUD', mode.cloud);
-    vi.stubEnv('NEXT_PUBLIC_GENFEED_CLOUD', mode.cloud);
-    vi.resetModules();
-    try {
-      const { default: modeConfig } = await import('./next.config');
-      expect(modeConfig.cacheComponents).toBe(mode.expected);
-      expect(modeConfig.partialPrefetching).toBe(mode.expected);
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
-  });
-
-  it.each([
-    [
-      '/acme/brand/workspace/inbox/all?taskId=t1',
-      '/acme/brand/workspace/inbox',
-      'view',
-      'all',
-    ],
-    [
-      '/acme/~/library/shelf/approved?folder=f1&view=list',
-      '/acme/~/library/assets',
-      'shelf',
-      'approved',
-    ],
-    [
-      '/admin/automation/models/image?organization=o1',
-      '/admin/automation/models',
-      'type',
-      'image',
-    ],
-    [
-      '/admin/content/ingredients/images?search=hero',
-      '/admin/content/ingredients',
-      'assetType',
-      'images',
-    ],
-    [
-      '/admin/configuration/tags/account?search=hero',
-      '/admin/configuration/tags',
-      'filter',
-      'account',
-    ],
-  ])(
-    'preserves context when redirecting %s',
-    async (source, pathname, key, value) => {
-      const response = await unstable_getResponseFromNextConfig({
-        url: `https://example.com${source}`,
-        nextConfig: { redirects: config.redirects },
-      });
-      expect(response.status).toBe(308);
-      const target = new URL(response.headers.get('location') ?? '');
-      expect(target.pathname).toBe(pathname);
-      expect(target.searchParams.get(key)).toBe(value);
-      new URL(`https://example.com${source}`).searchParams.forEach(
-        (entry, name) => {
-          expect(target.searchParams.get(name)).toBe(entry);
-        },
-      );
-    },
-  );
-
-  it('keeps an explicit categories query ahead of the type-seeded preset', async () => {
-    const response = await unstable_getResponseFromNextConfig({
-      url: 'https://example.com/acme/brand/library/videos?categories=IMAGE&categories=GIF&folder=f1',
-      nextConfig: { redirects: config.redirects },
-    });
-    expect(response.status).toBe(308);
-    const target = new URL(response.headers.get('location') ?? '');
-    expect(target.pathname).toBe('/acme/brand/library/assets');
-    expect(categoryValues(target)).toEqual(['IMAGE', 'GIF']);
-    expect(target.searchParams.get('folder')).toBe('f1');
-  });
-
-  it('applies the type preset only when the old route omits categories', async () => {
-    const response = await unstable_getResponseFromNextConfig({
-      url: 'https://example.com/acme/brand/library/videos?folder=f1',
-      nextConfig: { redirects: config.redirects },
-    });
-    expect(response.status).toBe(308);
-    const target = new URL(response.headers.get('location') ?? '');
-    expect(target.pathname).toBe('/acme/brand/library/assets');
-    expect(categoryValues(target)).toEqual(['VIDEO', 'VIDEO_EDIT']);
-    expect(target.searchParams.get('folder')).toBe('f1');
-  });
-
   it('keeps the API proxy open for bounded campaign generation', () => {
     expect(config.experimental?.proxyTimeout).toBe(300_000);
   });
@@ -235,41 +123,18 @@ describe('app next.config', () => {
     expect(redirects?.some((redirect) => redirect.source === '/')).toBe(false);
   });
 
-  it('never redirects /v1 API paths shaped like a brand-scoped app home', async () => {
-    const redirects = await config.redirects?.();
-    const sources = redirects?.map((redirect) => redirect.source) ?? [];
-
-    // `/v1/tags/library` would otherwise match `/:orgSlug/:brandSlug/library`.
-    expect(sources).not.toContain('/:orgSlug/:brandSlug/library');
-    expect(sources).toContain(
-      '/:orgSlug((?!v1(?:/|$))[^/]+)/:brandSlug/library',
-    );
-  });
-
-  it('redirects retired Analytics trends routes to Discovery', async () => {
+  it('redirects dead bare /review CTAs to publish/review', async () => {
     const redirects = await config.redirects?.();
     expect(redirects).toContainEqual({
-      destination: '/:orgSlug/:brandSlug/discovery/trends/:path*',
+      destination: '/publishing/review',
       permanent: true,
-      source: '/:orgSlug/:brandSlug/analytics/trends/:path*',
+      source: '/review',
     });
     expect(redirects).toContainEqual({
-      destination: '/:orgSlug/:brandSlug/discovery/trend-turnover',
+      destination: '/:orgSlug/:brandSlug/publishing/review',
       permanent: true,
-      source: '/:orgSlug/:brandSlug/analytics/trend-turnover',
+      source: '/:orgSlug/:brandSlug/review',
     });
-  });
-
-  it('hard-cuts the retired review routes (#5502): no redirects', async () => {
-    const redirects = await config.redirects?.();
-
-    expect(
-      redirects?.filter(
-        (redirect) =>
-          String(redirect.source).endsWith('/review') ||
-          String(redirect.destination).includes('/publishing/review'),
-      ),
-    ).toEqual([]);
   });
 
   it('never redirects /library/assets away — it is the Library home', async () => {
@@ -306,27 +171,45 @@ describe('app next.config', () => {
     });
   });
 
-  it.each(['', '/:orgSlug/:brandSlug', '/:orgSlug/~'])(
-    'redirects old filter paths under %s without redirecting the canonical inbox',
-    async (prefix) => {
-      const redirects = await config.redirects?.();
-      expect(redirects).toContainEqual({
-        source: `${prefix}/workspace/inbox/all`,
-        destination: `${prefix}/workspace/inbox?view=all`,
-        permanent: true,
-      });
-      expect(
-        redirects?.some(
-          (entry) => entry.source === `${prefix}/workspace/inbox`,
+  it('redirects /workspace/inbox to /workspace/inbox/unread', async () => {
+    const redirects = await config.redirects?.();
+    const inboxRedirect = redirects?.find(
+      (redirect) => redirect.source === APP_ROUTES.WORKSPACE.INBOX,
+    );
+
+    expect(inboxRedirect).toEqual({
+      destination: APP_ROUTES.WORKSPACE.INBOX_UNREAD,
+      permanent: false,
+      source: APP_ROUTES.WORKSPACE.INBOX,
+    });
+  });
+
+  it('redirects org/brand-scoped /:orgSlug/:brandSlug/workspace/inbox to its unread view', async () => {
+    const redirects = await config.redirects?.();
+    const scopedInboxRedirect = redirects?.find(
+      (redirect) =>
+        redirect.source ===
+        createBrandAppRoute(
+          ':orgSlug',
+          ':brandSlug',
+          APP_ROUTES.WORKSPACE.INBOX,
         ),
-      ).toBe(false);
-      expect(redirects).toContainEqual({
-        source: `${prefix}/library/shelf/approved`,
-        destination: `${prefix}/library/assets?shelf=approved`,
-        permanent: true,
-      });
-    },
-  );
+    );
+
+    expect(scopedInboxRedirect).toEqual({
+      destination: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.WORKSPACE.INBOX_UNREAD,
+      ),
+      permanent: false,
+      source: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.WORKSPACE.INBOX,
+      ),
+    });
+  });
 
   it.each([
     APP_ROUTES.WORKSPACE.ROOT,
@@ -351,7 +234,7 @@ describe('app next.config', () => {
           overviewPath,
         ),
         permanent: true,
-        source: createBrandAppRoute(GUARDED_ORG_SLUG, ':brandSlug', appRoot),
+        source: createBrandAppRoute(':orgSlug', ':brandSlug', appRoot),
       });
       // Must not collapse overview back onto bare root.
       expect(
@@ -364,11 +247,11 @@ describe('app next.config', () => {
     },
   );
 
-  it('permanently redirects bare /library to the Library Overview (#5502)', async () => {
+  it('permanently redirects bare /library to All assets, not an overview', async () => {
     const redirects = await config.redirects?.();
 
     expect(redirects).toContainEqual({
-      destination: APP_ROUTES.LIBRARY.OVERVIEW,
+      destination: APP_ROUTES.LIBRARY.ASSETS,
       permanent: true,
       source: APP_ROUTES.LIBRARY.ROOT,
     });
@@ -376,11 +259,11 @@ describe('app next.config', () => {
       destination: createBrandAppRoute(
         ':orgSlug',
         ':brandSlug',
-        APP_ROUTES.LIBRARY.OVERVIEW,
+        APP_ROUTES.LIBRARY.ASSETS,
       ),
       permanent: true,
       source: createBrandAppRoute(
-        GUARDED_ORG_SLUG,
+        ':orgSlug',
         ':brandSlug',
         APP_ROUTES.LIBRARY.ROOT,
       ),
@@ -402,6 +285,7 @@ describe('app next.config', () => {
     '/overview',
     '/settings/policy',
     '/library/ingredients',
+    '/library/overview',
     '/publishing/outreach-campaigns',
     '/automation/outreach-campaigns',
     '/automation/reply-campaigns',
@@ -495,16 +379,21 @@ describe('app next.config', () => {
     });
   });
 
-  it('serves no Studio root redirect now that each tool is an app (#5502)', async () => {
+  it('redirects /studio to the generate playground', async () => {
     const redirects = await config.redirects?.();
+    const studioRedirect = redirects?.find(
+      (redirect) => redirect.source === APP_ROUTES.STUDIO.ROOT,
+    );
 
-    expect(
-      redirects?.filter((redirect) => /\/studio\/?$/.test(redirect.source)),
-    ).toEqual([]);
+    expect(studioRedirect).toEqual({
+      destination: APP_ROUTES.STUDIO.GENERATE,
+      permanent: false,
+      source: APP_ROUTES.STUDIO.ROOT,
+    });
   });
 
   it('keeps no legacy redirect surface for the retired studio tabs', async () => {
-    // The one-off tabs came back as `/studio/playground`, so the 28 legacy
+    // The one-off tabs came back as `/studio/generate`, so the 28 legacy
     // `/studio/<type>` rules were hard-cut rather than repointed — there is no
     // redirect table to maintain for them.
     const redirects = (await config.redirects?.()) ?? [];
@@ -620,31 +509,5 @@ describe('app next.config', () => {
 
     expect(new Set(transpiled).size).toBe(transpiled.length);
     expect(transpiled).toEqual(expect.arrayContaining(['@tiptap/core']));
-  });
-
-  it.each([
-    { bundle: '', cloud: '1', cached: false, name: 'hosted web' },
-    { bundle: '', cloud: '', cached: false, name: 'self-hosted web' },
-    { bundle: '1', cloud: '', cached: true, name: 'packaged desktop' },
-  ])('selects the Serwist reader for $name', async (mode) => {
-    const { vi } = await import('vitest');
-    vi.stubEnv('GENFEED_DESKTOP_BUNDLE', mode.bundle);
-    vi.stubEnv('NEXT_PUBLIC_DESKTOP_SHELL', mode.bundle);
-    vi.stubEnv('GENFEED_CLOUD', mode.cloud);
-    vi.stubEnv('NEXT_PUBLIC_GENFEED_CLOUD', mode.cloud);
-    vi.resetModules();
-    try {
-      const { default: modeConfig } = await import('./next.config');
-      expect(
-        modeConfig.turbopack?.resolveAlias?.['genfeed-serwist-asset-reader'],
-      ).toBe(
-        mode.cached
-          ? './app/serwist/serwist-asset.reader.cache.ts'
-          : './app/serwist/serwist-asset.reader.ts',
-      );
-    } finally {
-      vi.unstubAllEnvs();
-      vi.resetModules();
-    }
   });
 });
