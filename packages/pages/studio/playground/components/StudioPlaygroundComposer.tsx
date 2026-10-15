@@ -55,26 +55,14 @@ import {
   crunFieldOptions,
   useCrunInputControls,
 } from '@pages/studio/playground/hooks/useCrunInputControls';
-import { useStudioAvatarEstimate } from '@pages/studio/playground/hooks/useStudioAvatarEstimate';
 import { useStudioGenerationEstimate } from '@pages/studio/playground/hooks/useStudioGenerationEstimate';
 import { useStudioGenerationSetupLookOptions } from '@pages/studio/playground/hooks/useStudioGenerationSetupLookOptions';
 import {
   presetToGenerationSetupValues,
   useStudioLooks,
 } from '@pages/studio/playground/hooks/useStudioLooks';
-import {
-  buildStudioAvatarRequest,
-  resolveStudioAvatarScript,
-} from '@pages/studio/playground/utils/studio-avatar-request';
 import { getDefaultGenerationSetupValues } from '@pages/studio/playground/utils/studio-generation-setup-bridge';
-import {
-  hasStudioAvatarSelection,
-  hasStudioVoiceSelection,
-} from '@pages/studio/playground/utils/studio-identity-selection';
-import {
-  buildStudioPromptData,
-  resolveModelKey,
-} from '@pages/studio/playground/utils/studio-playground-settings';
+import { buildStudioPromptData } from '@pages/studio/playground/utils/studio-playground-settings';
 import {
   getStudioPlaygroundTypeConfig,
   isStudioPlaygroundType,
@@ -296,11 +284,6 @@ export default function StudioPlaygroundComposer({
     settings.modelKey === MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_OMNI_VIDEO &&
     settings.resolution === '4k' &&
     attachedAssets.some((asset) => asset.role === 'videoReference');
-  // An avatar video needs both an avatar and a voice; a voice clip needs a voice.
-  const isIdentityMissing =
-    capabilities.hasIdentity &&
-    ((type === 'avatar' && !hasStudioAvatarSelection(settings)) ||
-      !hasStudioVoiceSelection(settings));
   // Submitting mid-catalog-load would resolve the model against an empty or
   // stale list, so the send button waits for the type's models to land.
   const isAwaitingModels = capabilities.hasModelSelection && isLoadingModels;
@@ -323,39 +306,19 @@ export default function StudioPlaygroundComposer({
     settings: displaySettings,
     type,
   });
-  // Image and video Auto stay unpriced until routing picks a model. Music
-  // Auto quotes the catalog default already loaded for this type. With no
-  // default flagged, the request omits the key and the server resolves the
-  // registry music default.
-  const isMusicAuto =
-    type === 'music' && isAutoStudioModelKey(settings.modelKey);
-  const quoteModelKey = isMusicAuto
-    ? models.find(
-        (model) => model.isDefault && model.category === ModelCategory.MUSIC,
-      )?.key
-    : displaySettings.modelKey;
-  const quotedModel = models.find((model) => model.key === quoteModelKey);
+  // Only explicitly selected models can be quoted before Auto has routed.
   const isServerPricedModel =
     !isLoadingModels &&
-    quotedModel?.provider !== 'crun' &&
-    (isMusicAuto ||
-      (quotedModel !== undefined &&
-        quotedModel.key === displaySettings.modelKey &&
-        !isAutoStudioModelKey(settings.modelKey)));
-  const quoteDuration =
-    type === 'music'
-      ? normalizeMusicSettings(quoteModelKey, {
-          duration: displaySettings.duration,
-          instrumental: displaySettings.instrumental,
-          lyrics: displaySettings.lyrics,
-        }).duration
-      : costPromptData.duration;
+    !isAutoStudioModelKey(settings.modelKey) &&
+    selectedModel !== undefined &&
+    selectedModel.key === displaySettings.modelKey &&
+    selectedModel.provider !== 'crun';
   // The server quote admission charges; Studio never recalculates it.
   const serverEstimate = useStudioGenerationEstimate(
     isServerPricedModel
       ? buildStudioGenerationQuoteRequest({
           aspectRatio: displaySettings.aspectRatio,
-          duration: quoteDuration,
+          duration: costPromptData.duration,
           editSize: hasEditMask ? 'source' : displaySettings.editSize,
           referenceUrls: attachedAssets
             .filter(
@@ -370,7 +333,7 @@ export default function StudioPlaygroundComposer({
             ),
           height: costPromptData.height,
           isAudioEnabled: displaySettings.isAudioEnabled,
-          modelKey: quoteModelKey,
+          modelKey: displaySettings.modelKey,
           outputs: costPromptData.outputs,
           resolution: costPromptData.resolution,
           type,
@@ -378,42 +341,21 @@ export default function StudioPlaygroundComposer({
         })
       : null,
   );
-  // An avatar is quoted for the body Generate submits (script, identity and
-  // the resolved engine); until all three exist there is nothing to price.
-  const avatarScript = resolveStudioAvatarScript(settings.speech, prompt);
-  const avatarEstimate = useStudioAvatarEstimate(
-    type === 'avatar' && !isIdentityMissing && avatarScript && !isLoadingModels
-      ? buildStudioAvatarRequest(
-          settings,
-          avatarScript,
-          resolveModelKey(settings, models, capabilities.hasModelSelection),
-        )
-      : null,
-  );
   const estimate: StudioGenerationCostEstimate =
-    type === 'avatar'
-      ? isLoadingModels
+    type !== 'image' && type !== 'image-edit' && type !== 'video'
+      ? { credits: null, status: 'unavailable' }
+      : isLoadingModels
         ? { credits: null, status: 'loading' }
-        : avatarEstimate
-      : type !== 'image' &&
-          type !== 'image-edit' &&
-          type !== 'video' &&
-          type !== 'music'
-        ? { credits: null, status: 'unavailable' }
-        : isLoadingModels
-          ? { credits: null, status: 'loading' }
-          : isAutoStudioModelKey(settings.modelKey) && type !== 'music'
-            ? { credits: null, status: 'auto' }
-            : !isMusicAuto &&
-                (!selectedModel ||
-                  selectedModel.key !== displaySettings.modelKey)
-              ? {
-                  credits: null,
-                  status: 'unavailable',
-                  unavailableReason:
-                    AgentGenerationQuoteUnavailableReason.MODEL_UNAVAILABLE,
-                }
-              : serverEstimate;
+        : isAutoStudioModelKey(settings.modelKey)
+          ? { credits: null, status: 'auto' }
+          : !selectedModel || selectedModel.key !== displaySettings.modelKey
+            ? {
+                credits: null,
+                status: 'unavailable',
+                unavailableReason:
+                  AgentGenerationQuoteUnavailableReason.MODEL_UNAVAILABLE,
+              }
+            : serverEstimate;
   // Admission refuses these outright, so Generate waits instead of failing after submit.
   // ERROR, loading, Auto and Crun never block.
   const isEstimateBlocking =
@@ -434,7 +376,6 @@ export default function StudioPlaygroundComposer({
     isRuntimeBlocked ||
     isGenerating ||
     isPromptEmpty ||
-    isIdentityMissing ||
     isFirstFrameMissing ||
     isReferenceCombinationInvalid ||
     isKling4KReferenceInvalid ||
@@ -1048,23 +989,27 @@ export default function StudioPlaygroundComposer({
               showEnhancementSettings={type === 'image' || type === 'video'}
               align="start"
               isIconOnly
-              // Always offered so the Auto type grid keeps the same tiles
-              // whatever type is selected.
-              imageEditing={{
-                isEnabled: type === 'image-edit',
-                label: getStudioPlaygroundTypeConfig('image-edit').label,
-                onChange: (isEditing) =>
-                  onTypeChange(isEditing ? 'image-edit' : 'image'),
-              }}
+              imageEditing={
+                type === 'image' || type === 'image-edit'
+                  ? {
+                      isEnabled: type === 'image-edit',
+                      label: getStudioPlaygroundTypeConfig('image-edit').label,
+                      onChange: (isEditing) =>
+                        onTypeChange(isEditing ? 'image-edit' : 'image'),
+                    }
+                  : undefined
+              }
               triggerLabel={setupLabel}
               inputControls={inputControls}
               referenceCount={crunReferenceCount ?? attachedAssets.length}
-              // Every type keeps the Auto/Advanced layout; Avatar just has
-              // no model to choose in Advanced.
-              advancedMode={{
-                isEnabled: isAdvancedMode,
-                onChange: handleAdvancedModeChange,
-              }}
+              advancedMode={
+                capabilities.hasModelSelection
+                  ? {
+                      isEnabled: isAdvancedMode,
+                      onChange: handleAdvancedModeChange,
+                    }
+                  : undefined
+              }
               capabilities={capabilities}
               favoriteModelKeys={favoriteModelKeys}
               isDisabled={isGenerating}
@@ -1188,12 +1133,7 @@ export default function StudioPlaygroundComposer({
                 <StudioGenerationSummary
                   crunQuote={crunQuote}
                   estimate={estimate}
-                  // Music Auto is one catalog default with a tariff, and an
-                  // avatar quote resolves its Auto engine on the server, so
-                  // both stay visible. Image and video Auto hide it.
-                  isEstimateHidden={
-                    isAutoView && type !== 'music' && type !== 'avatar'
-                  }
+                  isEstimateHidden={isAutoView}
                   model={selectedModel}
                   type={type}
                   isDisabled={isGenerating}

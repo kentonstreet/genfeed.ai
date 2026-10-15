@@ -35,7 +35,6 @@ import type {
   IStudioGenerateDraft,
   KnowledgeSelection,
 } from '@genfeedai/contracts/interfaces';
-import type { CrunInputControls } from '@genfeedai/contracts/interfaces/content/crun-contract.interface';
 import type {
   StudioGenerateDraftPayload,
   StudioPlaygroundJob,
@@ -123,7 +122,6 @@ import {
   sanitizeStudioPlaygroundState,
 } from '@pages/studio/playground/utils/studio-playground-storage';
 import {
-  filterStudioPlaygroundModels,
   getStudioPlaygroundTypeConfig,
   isStudioPlaygroundType,
   listStudioPlaygroundTypeConfigs,
@@ -183,20 +181,6 @@ interface StudioContentReference {
 
 const EMPTY_KNOWLEDGE_SELECTION: KnowledgeSelection = {};
 const EMPTY_ATTACHMENTS: AttachmentItem[] = [];
-
-// Auto defers to the router, which can pick a start/end-frame model, so a
-// start and end frame may be attached together. A concrete model decides.
-function resolveSupportsInterpolation(
-  modelKey: string | undefined,
-  videoControls: CrunInputControls | undefined,
-): boolean {
-  if (isAutoStudioModelKey(modelKey)) {
-    return true;
-  }
-  return videoControls?.mediaKind === 'video'
-    ? videoControls.videoRules?.referenceMode === 'start-end'
-    : hasInterpolation(modelKey ?? '');
-}
 
 function warnForImageEditEntry(
   entry: ImageEditEntryResolution,
@@ -469,15 +453,8 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
   });
 
   const { capabilities, modelCategory } = getStudioPlaygroundTypeConfig(type);
-  const {
-    isLoadingModels,
-    isModelCatalogReady,
-    models: catalogModels,
-  } = useStudioPlaygroundModels(modelCategory, organizationId);
-  const models = useMemo(
-    () => filterStudioPlaygroundModels(type, catalogModels, settings.avatarRef),
-    [catalogModels, settings.avatarRef, type],
-  );
+  const { isLoadingModels, isModelCatalogReady, models } =
+    useStudioPlaygroundModels(modelCategory, organizationId);
   const editSourceLimit = getImageEditMaxSources(
     models.find((model) => model.key === settings.modelKey)?.key ??
       models.find((model) => model.isDefault)?.key,
@@ -593,21 +570,14 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       translate,
     ],
   );
-  const {
-    cancelJob,
-    generateWithoutBrand,
-    isGenerating,
-    jobs,
-    rehydratePending,
-    removeJob,
-    submit,
-  } = useStudioGeneration({
-    brandId,
-    models,
-    onGenerated: refresh,
-    settings,
-    type,
-  });
+  const { cancelJob, isGenerating, jobs, rehydratePending, removeJob, submit } =
+    useStudioGeneration({
+      brandId,
+      models,
+      onGenerated: refresh,
+      settings,
+      type,
+    });
   // #4670 Open in Studio: a resolved Agent handoff pre-fills the composer.
   // Precedence over remembered local settings comes for free from
   // `applyTypeSettings` — it marks every patched field `'user'`-owned in the
@@ -984,12 +954,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
         (run) => run.id === runId,
       )?.jobs ?? [selectedJob]
     );
-  }, [selectedJob, visibleJobs]);
-  const selectedParentJob = useMemo(() => {
-    const parentId = selectedJob?.parentId;
-    return parentId
-      ? visibleJobs.find((job) => job.ingredientId === parentId)
-      : undefined;
   }, [selectedJob, visibleJobs]);
 
   useEffect(() => {
@@ -1409,10 +1373,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       const videoControls = models.find(
         (model) => model.key === settings.modelKey && model.provider === 'crun',
       )?.inputControls;
-      const supportsInterpolation = resolveSupportsInterpolation(
-        settings.modelKey,
-        videoControls,
-      );
+      const supportsInterpolation =
+        videoControls?.mediaKind === 'video'
+          ? videoControls.videoRules?.referenceMode === 'start-end'
+          : hasInterpolation(settings.modelKey);
       const hasStartFrame =
         contentReferences.some(
           (reference) => reference.role === 'startFrame',
@@ -1545,10 +1509,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       const videoControls = models.find(
         (model) => model.key === settings.modelKey && model.provider === 'crun',
       )?.inputControls;
-      const supportsInterpolation = resolveSupportsInterpolation(
-        settings.modelKey,
-        videoControls,
-      );
+      const supportsInterpolation =
+        videoControls?.mediaKind === 'video'
+          ? videoControls.videoRules?.referenceMode === 'start-end'
+          : hasInterpolation(settings.modelKey);
       const hasStartFrame =
         contentReferences.some(
           (reference) => reference.role === 'startFrame',
@@ -1704,10 +1668,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       return;
     }
     const unsupportedRoles = new Set<StudioPlaygroundReferenceRole>();
-    const supportsInterpolation = resolveSupportsInterpolation(
-      settings.modelKey,
-      videoControls,
-    );
+    const supportsInterpolation =
+      videoControls?.mediaKind === 'video'
+        ? videoControls.videoRules?.referenceMode === 'start-end'
+        : hasInterpolation(settings.modelKey);
     const hasStartFrame =
       contentReferences.some((reference) => reference.role === 'startFrame') ||
       attachments.some(
@@ -2469,14 +2433,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                     onRemix={handleRemixJob}
                     onEdit={handleEditJob}
                     onPreviewRecovered={recoverPreview}
-                    isUseAsReferenceEnabled={canUseGeneratedReference(
-                      selectedJob,
-                    )}
                     onSelect={handleSelectJob}
-                    onUseAsReference={handleUseGeneratedReference}
                     onUseInPost={assetActions.onPublishIngredient}
                     onVary={handleVaryRecipe}
-                    parentJob={selectedParentJob}
                     runJobs={selectedRunJobs}
                   />
                 </StudioPlaygroundFocusedPreview>
@@ -2535,7 +2494,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                       assetActions={{
                         ...assetActions,
                         onCancelGeneration: cancelJob,
-                        onGenerateWithoutBrand: generateWithoutBrand,
                       }}
                       isLoading={isLoadingGallery}
                       jobs={recoveredJobs}
@@ -2693,12 +2651,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
             onPreviewRecovered={recoverPreview}
             onRemix={handleRemixJob}
             onEdit={handleEditJob}
-            isUseAsReferenceEnabled={canUseGeneratedReference(selectedJob)}
             onSelect={handleSelectJob}
-            onUseAsReference={handleUseGeneratedReference}
             onUseInPost={assetActions.onPublishIngredient}
             onVary={handleVaryRecipe}
-            parentJob={selectedParentJob}
             runJobs={selectedRunJobs}
           />
         ) : null}

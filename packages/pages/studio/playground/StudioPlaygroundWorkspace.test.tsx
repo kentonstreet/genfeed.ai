@@ -6,7 +6,6 @@ import {
 import {
   IngredientCategory,
   IngredientStatus,
-  ModelCategory,
   RouterPriority,
 } from '@genfeedai/contracts';
 import {
@@ -168,7 +167,6 @@ const mocks = vi.hoisted(() => ({
   isHydrated: { value: true },
   setType: vi.fn(),
   updateSettings: vi.fn(),
-  modelsHook: vi.fn(),
 }));
 
 const characterMentionMocks = vi.hoisted(() => ({
@@ -367,10 +365,7 @@ vi.mock(
 );
 
 vi.mock('@pages/studio/playground/hooks/useStudioPlaygroundModels', () => ({
-  useStudioPlaygroundModels: (...args: unknown[]) => {
-    mocks.modelsHook(...args);
-    return mocks.models.value;
-  },
+  useStudioPlaygroundModels: () => mocks.models.value,
 }));
 
 vi.mock('@pages/studio/playground/hooks/useStudioPlaygroundHandoff', () => ({
@@ -2210,63 +2205,31 @@ describe('StudioPlaygroundWorkspace', () => {
     });
   });
 
-  it('returns a saved avatar engine to Auto in simple mode, now that avatar has a model catalog', async () => {
-    mocks.type.value = 'avatar';
-    mocks.advancedMode.value = {
-      isAdvancedMode: false,
-      isLoaded: true,
-      setAdvancedMode: vi.fn(),
-    };
-    mocks.settings.mockReturnValue({
-      resetSettings: vi.fn(),
-      settings: { modelKey: 'heygen/avatar-v' },
-      setType: mocks.setType,
-      type: 'avatar',
-      updateSettings: vi.fn(),
-    });
+  it.each(['avatar', 'voice'] as const)(
+    'preserves the saved model for %s without model selection in simple mode',
+    async (type) => {
+      mocks.type.value = type;
+      mocks.advancedMode.value = {
+        isAdvancedMode: false,
+        isLoaded: true,
+        setAdvancedMode: vi.fn(),
+      };
+      mocks.settings.mockReturnValue({
+        resetSettings: vi.fn(),
+        settings: { modelKey: 'saved-identity-model' },
+        setType: mocks.setType,
+        type,
+        updateSettings: vi.fn(),
+      });
 
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
+      render(<StudioPlaygroundWorkspace />);
+      await act(async () => {});
 
-    expect(mocks.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ modelKey: AUTO_MODEL_OPTION_VALUE }),
-    );
-  });
-
-  it('returns a hidden saved speech model to Auto for voice in simple mode', async () => {
-    mocks.type.value = 'voice';
-    mocks.advancedMode.value = {
-      isAdvancedMode: false,
-      isLoaded: true,
-      setAdvancedMode: vi.fn(),
-    };
-    mocks.settings.mockReturnValue({
-      resetSettings: vi.fn(),
-      settings: { modelKey: MODEL_KEYS.HEYGEN_VOICE },
-      setType: mocks.setType,
-      type: 'voice',
-      updateSettings: vi.fn(),
-    });
-
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      modelKey: AUTO_MODEL_OPTION_VALUE,
-      prioritize: RouterPriority.QUALITY,
-    });
-  });
-
-  it('loads the speech model catalogue for voice', async () => {
-    mocks.type.value = 'voice';
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.modelsHook).toHaveBeenLastCalledWith(
-      ModelCategory.VOICE,
-      expect.anything(),
-    );
-  });
+      expect(mocks.updateSettings).not.toHaveBeenCalledWith(
+        expect.objectContaining({ modelKey: AUTO_MODEL_OPTION_VALUE }),
+      );
+    },
+  );
 
   it('keeps an Agent handoff model in simple mode', async () => {
     mocks.advancedMode.value = {
@@ -2636,130 +2599,6 @@ describe('StudioPlaygroundWorkspace', () => {
       expect(mocks.notify).not.toHaveBeenCalledWith(
         'Unsupported frame or video references were cleared for the selected model.',
       );
-    });
-
-    describe('attaching frames to a video prompt', () => {
-      function installStatefulAttachments() {
-        mocks.attachments.mockImplementation(() => {
-          const [items, setItems] = useState<
-            {
-              file: File;
-              id: string;
-              ingredientId: string;
-              kind: 'image';
-              name: string;
-              previewUrl: string;
-            }[]
-          >([]);
-          return {
-            addFiles: (files: File[]) =>
-              setItems((current) => [
-                ...current,
-                ...files.map((file) => ({
-                  file,
-                  id: `up-${file.name}`,
-                  ingredientId: `ing-${file.name}`,
-                  kind: 'image' as const,
-                  name: file.name,
-                  previewUrl: `blob:${file.name}`,
-                })),
-              ]),
-            attachments: items,
-            clearAll: mocks.clearAttachments,
-            dragHandlers: {},
-            dragState: { isActive: false },
-            getCompletedAttachments: () =>
-              items.map((item) => ({
-                ingredientId: item.ingredientId,
-                kind: item.kind,
-              })),
-            isUploading: false,
-            removeAttachment: (id: string) =>
-              setItems((current) => current.filter((item) => item.id !== id)),
-          };
-        });
-      }
-
-      function composerActions() {
-        return mocks.composer.mock.calls.at(-1)?.[0] as {
-          attachedAssets: { id: string; role: string }[];
-          onAddFiles: (files: File[], role: string) => void;
-          onSubmit: () => void;
-        };
-      }
-
-      function frameFile(name: string): File {
-        return new File(['x'], name, { type: 'image/png' });
-      }
-
-      it('keeps an end frame attached in Auto after cleanup and sends it', async () => {
-        mocks.type.value = 'video';
-        mocks.settings.mockReturnValue({
-          resetSettings: vi.fn(),
-          settings: { modelKey: AUTO_MODEL_OPTION_VALUE },
-          setType: mocks.setType,
-          type: 'video',
-          updateSettings: vi.fn(),
-        });
-        installStatefulAttachments();
-        render(<StudioPlaygroundWorkspace />);
-
-        act(() =>
-          composerActions().onAddFiles([frameFile('start.png')], 'startFrame'),
-        );
-        act(() =>
-          composerActions().onAddFiles([frameFile('end.png')], 'endFrame'),
-        );
-        await act(async () => {
-          await Promise.resolve();
-        });
-
-        expect(composerActions().attachedAssets).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ role: 'startFrame' }),
-            expect.objectContaining({ id: 'up-end.png', role: 'endFrame' }),
-          ]),
-        );
-        expect(mocks.notify).not.toHaveBeenCalledWith(
-          expect.stringContaining('cleared'),
-        );
-        act(() => composerActions().onSubmit());
-        expect(mocks.submit).toHaveBeenLastCalledWith(
-          expect.any(String),
-          expect.objectContaining({
-            endFrameId: 'ing-end.png',
-            imageReferenceIds: expect.arrayContaining(['ing-start.png']),
-          }),
-          expect.anything(),
-        );
-      });
-
-      it('still drops an end frame for a concrete model that rejects it', async () => {
-        mocks.type.value = 'video';
-        mocks.settings.mockReturnValue({
-          resetSettings: vi.fn(),
-          settings: { modelKey: MODEL_KEYS.REPLICATE_OPENAI_SORA_2 },
-          setType: mocks.setType,
-          type: 'video',
-          updateSettings: vi.fn(),
-        });
-        installStatefulAttachments();
-        render(<StudioPlaygroundWorkspace />);
-
-        act(() =>
-          composerActions().onAddFiles([frameFile('end.png')], 'endFrame'),
-        );
-        await waitFor(() =>
-          expect(composerActions().attachedAssets).not.toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({ role: 'endFrame' }),
-            ]),
-          ),
-        );
-        expect(mocks.notify).toHaveBeenCalledWith(
-          'Unsupported frame or video references were cleared for the selected model.',
-        );
-      });
     });
 
     it('reads the draft of the brand open in this tab', async () => {
