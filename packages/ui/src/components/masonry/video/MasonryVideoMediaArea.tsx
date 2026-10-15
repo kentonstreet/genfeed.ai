@@ -20,7 +20,6 @@ type MasonryVideoMediaAreaProps = {
   isDragEnabled: boolean;
   hasUpdateParent: boolean;
   placeholderImageUrl: string;
-  hasPosterThumbnail: boolean;
   thumbnailImageUrl: string;
   ingredientUrl: string;
   metadataLabel: string | undefined;
@@ -54,7 +53,6 @@ export default function MasonryVideoMediaArea({
   isDragEnabled,
   hasUpdateParent,
   placeholderImageUrl,
-  hasPosterThumbnail,
   thumbnailImageUrl,
   ingredientUrl,
   metadataLabel,
@@ -154,9 +152,7 @@ export default function MasonryVideoMediaArea({
               loop: true,
               muted: true,
               playsInline: true,
-              // With a real poster, a grid of videos must not each open a
-              // network request and decoder on mount; hover playback loads it.
-              preload: hasPosterThumbnail ? 'none' : 'metadata',
+              preload: 'metadata',
             }}
           />
         </div>

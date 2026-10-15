@@ -39,15 +39,6 @@ vi.mock('@genfeedai/utils/media/reference.util', () => ({
   resolveIngredientReferenceUrl: vi.fn(() => ''),
 }));
 
-// Wrap the real preview hook so a test can see the retry revision it receives.
-vi.mock('@genfeedai/hooks/media/use-authorized-media-preview', async (load) => {
-  const actual =
-    await load<
-      typeof import('@genfeedai/hooks/media/use-authorized-media-preview')
-    >();
-  return { useAuthorizedMediaPreview: vi.fn(actual.useAuthorizedMediaPreview) };
-});
-
 vi.mock('@ui/masonry/shared/MasonryBrandLogo', () => ({
   default: () => <div data-testid="brand-logo" />,
 }));
@@ -72,16 +63,9 @@ vi.mock('@ui/dropdowns/status/DropdownStatus', () => ({
   default: () => <div data-testid="dropdown-status" />,
 }));
 
-type VideoPlayerCall = {
-  className?: string;
-  config?: { preload?: string };
-  thumbnail?: string;
-};
-const mockVideoPlayer = vi.fn((_props: VideoPlayerCall) => (
-  <div data-testid="video-player" />
-));
+const mockVideoPlayer = vi.fn(() => <div data-testid="video-player" />);
 vi.mock('@ui/display/video-player/VideoPlayer', () => ({
-  default: (props: VideoPlayerCall) => mockVideoPlayer(props),
+  default: (props: unknown) => mockVideoPlayer(props),
 }));
 
 const writeIngredientTransferDataMock = vi.fn();
@@ -116,7 +100,6 @@ vi.mock('next-intl', async () => {
 
 import { IngredientStatus } from '@genfeedai/contracts';
 import type { IVideo } from '@genfeedai/contracts/interfaces';
-import { useAuthorizedMediaPreview } from '@genfeedai/hooks/media/use-authorized-media-preview';
 import MasonryVideo from '@ui/masonry/video/MasonryVideo';
 
 const mockVideo: IVideo = {
@@ -146,19 +129,6 @@ describe('MasonryVideo', () => {
     expect(onClickIngredient).toHaveBeenCalledWith(mockVideo);
   });
 
-  it('reauthorizes its preview when the surface bumps the retry revision', () => {
-    const { rerender } = render(<MasonryVideo video={mockVideo} />);
-    expect(vi.mocked(useAuthorizedMediaPreview)).toHaveBeenLastCalledWith(
-      mockVideo,
-      0,
-    );
-    rerender(<MasonryVideo video={mockVideo} previewRetryRevision={2} />);
-    expect(vi.mocked(useAuthorizedMediaPreview)).toHaveBeenLastCalledWith(
-      mockVideo,
-      2,
-    );
-  });
-
   it('should prefer explicit thumbnails for video preview', () => {
     render(<MasonryVideo video={mockVideo} />);
 
@@ -167,24 +137,6 @@ describe('MasonryVideo', () => {
       thumbnail?: string;
     };
     expect(firstCallProps.thumbnail).toBe('https://example.com/thumb.jpg');
-  });
-
-  it('leaves the video unloaded behind its poster until it plays', () => {
-    render(<MasonryVideo video={mockVideo} />);
-
-    expect(mockVideoPlayer.mock.calls[0]?.[0]?.config?.preload).toBe('none');
-  });
-
-  it('preloads metadata to show a first frame when no poster exists', () => {
-    render(
-      <MasonryVideo
-        video={{ ...mockVideo, thumbnailUrl: undefined } as unknown as IVideo}
-      />,
-    );
-
-    expect(mockVideoPlayer.mock.calls[0]?.[0]?.config?.preload).toBe(
-      'metadata',
-    );
   });
 
   it('should make the embedded video player ignore pointer events so the card remains draggable', () => {

@@ -95,7 +95,6 @@ function MasonryImageTile({
   onUpdateParent,
   onImageLoad,
   onMediaError,
-  previewRetryRevision = 0,
   onScopeChange,
   onRefresh,
   isDragEnabled = true,
@@ -128,7 +127,7 @@ function MasonryImageTile({
   const isFailed = image.status === IngredientStatus.FAILED;
   const failureReason = getIngredientFailureReason(image);
 
-  const mediaPreview = useAuthorizedMediaPreview(image, previewRetryRevision);
+  const mediaPreview = useAuthorizedMediaPreview(image);
   const currentImageUrl = mediaPreview
     ? (mediaPreview.url ?? '')
     : (image.ingredientUrl ?? '');

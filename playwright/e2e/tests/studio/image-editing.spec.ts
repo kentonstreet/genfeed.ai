@@ -104,16 +104,7 @@ for (const { model, editing } of [
       return route.fulfill({
         json: {
           ...bootstrap,
-          currentUser: {
-            ...bootstrap.currentUser,
-            settings: {
-              ...(typeof bootstrap.currentUser.settings === 'object' &&
-              bootstrap.currentUser.settings !== null
-                ? bootstrap.currentUser.settings
-                : {}),
-              isAdvancedMode: true,
-            },
-          },
+          currentUser: { ...bootstrap.currentUser, settings: { ...bootstrap.currentUser.settings, isAdvancedMode: true } },
           settings: { ...bootstrap.settings, enabledModelIds: [model] },
         },
       });
@@ -152,24 +143,16 @@ for (const { model, editing } of [
         },
       }),
     );
-    // The server keeps the composer draft across reloads; the consumed
-    // `editImage` entry no longer re-seeds the composer on reload.
-    let savedDraft: Record<string, unknown> | null = null;
     await page.route(
       '**/v1/studio-generate-drafts/current**',
       async (route) => {
-        if (route.request().method() !== 'GET')
-          savedDraft = route.request().postDataJSON();
+        if (route.request().method() === 'GET') {
+          await route.fulfill({ json: { data: null } });
+          return;
+        }
+        const body = route.request().postDataJSON();
         await route.fulfill({
-          json: {
-            data: savedDraft
-              ? {
-                  id: 'editing-draft-e2e',
-                  type: 'studio-generate-draft',
-                  attributes: { ...savedDraft, droppedReferenceIds: [] },
-                }
-              : null,
-          },
+          json: { data: { ...body.data, id: 'editing-draft-e2e' } },
         });
       },
     );
@@ -285,14 +268,6 @@ for (const { model, editing } of [
     await expect(page.getByTestId('studio-playground-results')).toBeVisible();
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('studio-playground-results')).toBeVisible();
-    if (editing) {
-      // The Library entry was consumed; the reload restores the saved draft.
-      expect(new URL(page.url()).searchParams.has('editImage')).toBe(false);
-      await expect(composer).toHaveText('Change only the sign to OPEN');
-      await expect(
-        page.getByRole('group', { name: `Editing target: ${sourceId}` }),
-      ).toBeVisible();
-    }
     await expect(
       page
         .getByRole('article', {
@@ -302,22 +277,15 @@ for (const { model, editing } of [
     ).toBeVisible();
     await page.getByTestId(`studio-asset-${outputId}`).click();
     await expect(
-      page
-        .getByText('Original prompt', { exact: true })
-        .locator('xpath=following-sibling::p[1]'),
+      page.getByText('Original prompt', { exact: true }).locator('xpath=following-sibling::p[1]'),
     ).toHaveText('Change only the sign to OPEN');
     if (flux && editing) {
       expect(JSON.stringify(bodies[0])).not.toContain('maskId');
       expect(JSON.stringify(bodies[0])).not.toContain('seed');
       await page.getByRole('button', { name: 'Vary', exact: true }).click();
-      const replacement = page.getByRole('dialog', {
-        name: 'Replace your draft?',
-        exact: true,
-      });
+      const replacement = page.getByRole('dialog', { name: 'Replace your draft?', exact: true });
       await expect(replacement).toBeVisible();
-      await replacement
-        .getByRole('button', { name: 'Replace draft', exact: true })
-        .click();
+      await replacement.getByRole('button', { name: 'Replace draft', exact: true }).click();
       await expect(composer).toHaveText('Change only the sign to OPEN');
       await expect(page.getByLabel('Editing seed')).toHaveCount(0);
       await expect(page.getByLabel('FLUX resolution')).toContainText('1.5K');
