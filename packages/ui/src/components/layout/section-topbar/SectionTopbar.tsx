@@ -1,5 +1,6 @@
 'use client';
 
+import { usePageHelp } from '@genfeedai/contexts/ui/page-help-context';
 import { useSidebarNavigation } from '@genfeedai/contexts/ui/sidebar-navigation-context';
 import { cn } from '@genfeedai/helpers/formatting/cn/cn.util';
 import type { SectionTopbarProps } from '@genfeedai/props/ui/layout/section-topbar.props';
@@ -7,6 +8,7 @@ import ContextInspectorToggle, {
   InspectorTogglePlacement,
   useSectionInspectorToggle,
 } from '@ui/layout/context-inspector-toggle/ContextInspectorToggle';
+import HelpPopover from '@ui/layout/help-popover/HelpPopover';
 
 /**
  * SectionTopbar — the shared sub-topbar for app section pages.
@@ -14,15 +16,10 @@ import ContextInspectorToggle, {
  * **App contract for local navigation + primary actions** (Discovery Socials,
  * Ads hub, Models, Admin list modules, Analytics date tools, etc.):
  * - full-bleed `border-b` that meets the shell edges
- * - the right cluster has ONE fixed order, enforced here by slot so a page
- *   cannot get it wrong: Refresh (`refresh`), tabs (`tabs`), ghost
- *   actions (`iconActions`, then the details toggle), controls, primary action
- *   last (`actions`). With `iconActionsPlacement="after-controls"` the ghost
- *   group moves to the end instead.
+ * - ghost actions, Help and the inspector opener share a cluster after controls
  * - when shell breadcrumb owns page identity (or `titleVisibility="sr-only"`):
  *   title is chrome-only; tabs + actions share one dense row
- * - when title is visible: title row (Refresh, ghost actions, controls),
- *   then the tab strip under it
+ * - when title is visible: title row, then optional tab strip under it
  *
  * Prefer this over hand-rolled toolbars. Pages may render it directly, or let
  * {@link Container} emit it from `headerTabs` / promoted body `tabs` / `right`.
@@ -32,12 +29,12 @@ export default function SectionTopbar({
   subtitle,
   icon: Icon,
   actions,
-  refresh,
   iconActions,
-  iconActionsPlacement = 'before-controls',
+  iconActionsPlacement = 'after-controls',
   leading,
   tabs,
   titleVisibility = 'auto',
+  help,
   forceVisible = false,
   className,
 }: SectionTopbarProps) {
@@ -50,29 +47,29 @@ export default function SectionTopbar({
         : !hasCanonicalBreadcrumb;
   const hasLeading = Boolean(leading);
   const hasTabs = Boolean(tabs);
+  const routeHelp = usePageHelp();
+  const resolvedHelp = help === undefined ? routeHelp : help;
+  const helpTrigger = resolvedHelp ? <HelpPopover help={resolvedHelp} /> : null;
   const hasActions =
-    Boolean(actions) || Boolean(iconActions) || Boolean(refresh);
+    Boolean(actions) || Boolean(iconActions) || Boolean(helpTrigger);
   const isBarVisible =
     forceVisible || hasVisibleTitle || hasLeading || hasTabs || hasActions;
   const { markPlaced, renderToggle } = useSectionInspectorToggle(isBarVisible);
   const inspectorToggle = renderToggle ? <ContextInspectorToggle /> : null;
 
-  // Refresh: always the first control of the right cluster.
-  const leadActionsNode = (
+  const iconActionsNode = (
     <div
       className="flex shrink-0 items-center gap-1 empty:hidden"
       data-testid="section-topbar-icon-actions"
     >
-      {refresh}
-    </div>
-  );
-
-  // Remaining ghost actions; the details toggle ends this group.
-  const ghostActionsNode = (
-    <div
-      className="flex shrink-0 items-center gap-1 empty:hidden"
-      data-testid="section-topbar-ghost-actions"
-    >
+      {helpTrigger ? (
+        <div
+          data-testid="section-topbar-help"
+          className="flex shrink-0 items-center"
+        >
+          {helpTrigger}
+        </div>
+      ) : null}
       {iconActions}
       {inspectorToggle}
     </div>
@@ -120,35 +117,36 @@ export default function SectionTopbar({
                 {leading}
               </div>
             ) : null}
-            {hasActions || hasTabs || inspectorToggle ? (
+            {hasActions || inspectorToggle ? (
               <div
                 data-testid="section-topbar-actions"
                 className={cn(
                   'flex items-center gap-2',
-                  actions || hasTabs
-                    ? cn(
-                        'min-w-0 flex-wrap justify-end',
-                        hasLeading ? 'flex-auto' : 'flex-1',
-                      )
-                    : 'shrink-0',
+                  hasTabs
+                    ? 'shrink-0 flex-wrap justify-end'
+                    : actions
+                      ? cn(
+                          'min-w-0 flex-wrap justify-end',
+                          hasLeading ? 'flex-auto' : 'flex-1',
+                        )
+                      : 'shrink-0',
                 )}
               >
-                {leadActionsNode}
-                {hasTabs ? (
-                  <div
-                    data-testid="section-topbar-tabs"
-                    className="min-w-0 max-w-full overflow-x-auto scrollbar-thin"
-                  >
-                    {tabs}
-                  </div>
-                ) : null}
                 {iconActionsPlacement === 'before-controls'
-                  ? ghostActionsNode
+                  ? iconActionsNode
                   : null}
                 {actions}
                 {iconActionsPlacement === 'after-controls'
-                  ? ghostActionsNode
+                  ? iconActionsNode
                   : null}
+              </div>
+            ) : null}
+            {hasTabs ? (
+              <div
+                data-testid="section-topbar-tabs"
+                className="min-w-0 max-w-full overflow-x-auto scrollbar-thin"
+              >
+                {tabs}
               </div>
             ) : null}
           </div>
@@ -200,13 +198,12 @@ export default function SectionTopbar({
               data-testid="section-topbar-actions"
               className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-2"
             >
-              {leadActionsNode}
               {iconActionsPlacement === 'before-controls'
-                ? ghostActionsNode
+                ? iconActionsNode
                 : null}
               {actions}
               {iconActionsPlacement === 'after-controls'
-                ? ghostActionsNode
+                ? iconActionsNode
                 : null}
             </div>
           ) : null}

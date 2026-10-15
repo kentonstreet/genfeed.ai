@@ -1,19 +1,11 @@
 'use client';
 
 import {
-  ContextSidebarPanel,
-  useContextSidebar,
-} from '@contexts/ui/context-sidebar-context';
-import {
-  CredentialPlatform,
   normalizeReviewDecision,
   type PageScope,
   PostRepurposeMode,
 } from '@genfeedai/contracts';
-import {
-  APP_ROUTES,
-  createPublishingApprovalsRoute,
-} from '@genfeedai/contracts/constants';
+import { APP_ROUTES } from '@genfeedai/contracts/constants';
 import { getPublishingPostHref } from '@helpers/content/posts.helper';
 import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import { usePostDetail } from '@hooks/pages/use-post-detail/use-post-detail';
@@ -81,6 +73,7 @@ export default function PostDetail({
     isSavingSchedule,
     isSavingIngredients,
     enhancingPostId,
+    enhancingAction,
     isTogglingGrok,
     isTogglingFirstComment,
     isExpandingToThread,
@@ -89,6 +82,7 @@ export default function PostDetail({
     carouselValidation,
     canAddThread,
     canAddFirstComment,
+    hasFirstComment,
     firstCommentPost,
     isLastChildGrokTweet,
     hasChildren,
@@ -102,9 +96,6 @@ export default function PostDetail({
     handlePublishNow,
     handlePublishViaTikTokApp,
     handleAddToThread,
-    handleAddThreadPosts,
-    handleDraftThread,
-    handleSetGrokQuestion,
     handleDeletePost,
     handleDeleteChild,
     handleSelectMedia,
@@ -132,50 +123,11 @@ export default function PostDetail({
     refreshPost,
   } = hookData;
   const [isScoringSeo, setIsScoringSeo] = useState(false);
-  const [isTikTokPublishingReady, setIsTikTokPublishingReady] = useState(false);
-  const guardTikTokPublish = useCallback(
-    (action: () => Promise<void>) => {
-      return async () => {
-        if (
-          post?.platform === CredentialPlatform.TIKTOK &&
-          !isTikTokPublishingReady
-        ) {
-          notificationsService.error(
-            'Review and save the TikTok publishing settings before posting.',
-          );
-          return;
-        }
-        await handleContentSave();
-        await action();
-      };
-    },
-    [
-      handleContentSave,
-      isTikTokPublishingReady,
-      notificationsService,
-      post?.platform,
-    ],
-  );
-  const publishNow = useMemo(
-    () => guardTikTokPublish(handlePublishNow),
-    [guardTikTokPublish, handlePublishNow],
-  );
-  const publishViaTikTokApp = useMemo(
-    () => guardTikTokPublish(handlePublishViaTikTokApp),
-    [guardTikTokPublish, handlePublishViaTikTokApp],
-  );
-  const saveSchedule = useMemo(
-    () => guardTikTokPublish(handleScheduleSave),
-    [guardTikTokPublish, handleScheduleSave],
-  );
-  const contextSidebar = useContextSidebar();
-  const isStandalonePage = presentation === 'page' && !renderContextSidebar;
   const reviewSummary: PostReviewSummary | undefined = post
     ? {
         generationId: (post as { generationId?: string }).generationId,
         promptUsed: (post as { promptUsed?: string }).promptUsed,
-        reviewTurboRunId: (post as { reviewTurboRunId?: string })
-          .reviewTurboRunId,
+        reviewBatchId: (post as { reviewBatchId?: string }).reviewBatchId,
         reviewDecision: normalizeReviewDecision(post.reviewDecision),
         reviewEvents: post.reviewEvents,
         reviewedAt: (post as { reviewedAt?: string }).reviewedAt,
@@ -222,10 +174,9 @@ export default function PostDetail({
             );
             router.push(
               href(
-                createPublishingApprovalsRoute({
-                  run: draft.reviewTurboRunId,
-                  filter: draft.reviewTurboRunId ? 'ready' : undefined,
-                }),
+                draft.reviewBatchId
+                  ? `/publishing/review?batch=${draft.reviewBatchId}&filter=ready`
+                  : '/publishing/review',
               ),
             );
           } else {
@@ -309,41 +260,9 @@ export default function PostDetail({
       descriptionDraft,
       credential,
     );
-    // The standalone inspector shows every post of the thread as plain text,
-    // the way each platform will render it.
-    const threadPreview = isStandalonePage ? (
-      <div className="space-y-4">
-        {[post, ...sortedChildren].map((item, index) => {
-          const description =
-            index === 0
-              ? descriptionDraft
-              : (childDescriptions.get(item.id) ?? item.description ?? '');
-          const preview = buildPostTargetPreview(
-            {
-              ...item,
-              description,
-              ...(index === 0
-                ? { ingredients: selectedIngredients, label: labelDraft }
-                : {}),
-              platform: item.platform ?? post.platform,
-            },
-            description,
-            credential,
-          );
-          return preview ? <TargetPreview key={item.id} {...preview} /> : null;
-        })}
-        {!post.platform ? (
-          <p className="text-sm text-muted-foreground">
-            {translate('choosePlatform')}
-          </p>
-        ) : null}
-        {!isPublished ? <EngagementPreview post={post} /> : null}
-      </div>
-    ) : undefined;
     return (
       <div className="space-y-3">
         <PostDetailSidebar
-          preview={threadPreview}
           post={post}
           credential={credential}
           scheduleDraft={scheduleDraft}
@@ -354,48 +273,34 @@ export default function PostDetail({
           analyticsStats={analyticsStats}
           reviewSummary={reviewSummary}
           onScheduleChange={handleScheduleChange}
-          onScheduleSave={saveSchedule}
-          onPublishNow={publishNow}
-          onPublishViaTikTokApp={publishViaTikTokApp}
+          onScheduleSave={handleScheduleSave}
+          onPublishNow={handlePublishNow}
+          onPublishViaTikTokApp={handlePublishViaTikTokApp}
           onScoreSeo={handleScoreSeo}
-          onSettingsSaved={() => refreshPost(true)}
-          onTikTokReadinessChange={setIsTikTokPublishingReady}
         />
-        {!isStandalonePage && targetPreview ? (
-          <TargetPreview {...targetPreview} />
-        ) : null}
-        {!isStandalonePage && !isPublished ? (
-          <EngagementPreview post={post} />
-        ) : null}
+        {targetPreview ? <TargetPreview {...targetPreview} /> : null}
+        {!isPublished ? <EngagementPreview post={post} /> : null}
       </div>
     );
   }, [
     analyticsStats,
-    childDescriptions,
     credential,
     descriptionDraft,
-    labelDraft,
-    selectedIngredients,
-    sortedChildren,
-    translate,
     handleScheduleChange,
+    handleScheduleSave,
+    handlePublishNow,
+    handlePublishViaTikTokApp,
     handleScoreSeo,
-    publishNow,
-    publishViaTikTokApp,
-    saveSchedule,
     isContentDirty,
     isPublished,
     isSavingSchedule,
     isScheduleDirty,
     isScoringSeo,
-    isStandalonePage,
     post,
-    refreshPost,
     reviewSummary,
     scheduleDraft,
   ]);
-  const usesShellSidebar = isStandalonePage && Boolean(contextSidebar);
-  const usesContextSidebar = Boolean(renderContextSidebar) || usesShellSidebar;
+  const usesContextSidebar = Boolean(renderContextSidebar);
   const contextLabel =
     labelDraft?.trim() || post?.label?.trim() || 'Untitled post';
 
@@ -422,71 +327,47 @@ export default function PostDetail({
     );
   }
 
-  const headerProps = post
-    ? {
-        hasChildren,
-        headingLevel: isPagePresentation ? (1 as const) : (2 as const),
-        isExpandingToThread,
-        isPublished,
-        isSavingSchedule,
-        isScheduleDirty: isScheduleDirty && scheduleDraft !== '',
-        onCreateRemix: isSourcePostVariationPlatform(post.platform)
-          ? handleCreateRemix
-          : undefined,
-        onDelete: handleDeletePost,
-        onDuplicate: handleDuplicate,
-        onExpandToThread: handleExpandToThread,
-        onPublishNow: publishNow,
-        onRepurpose: handleRepurpose,
-        onScheduleSave: saveSchedule,
-        onViewModeChange: setViewMode,
-        post,
-        scope,
-        showViewModeToggle: !isStandalonePage,
-        viewMode,
-      }
-    : null;
-
   return (
     <>
-      {renderContextSidebar && sidebar
-        ? renderContextSidebar(sidebar, contextLabel)
+      {usesContextSidebar && sidebar
+        ? renderContextSidebar?.(sidebar, contextLabel)
         : null}
-      {usesShellSidebar && post ? (
-        <ContextSidebarPanel
-          selection={{
-            id: post.id,
-            kind: 'post',
-            origin: 'automatic',
-            title: contextLabel,
-          }}
-        >
-          <div className="p-4" data-testid="post-detail-context">
-            {sidebar}
-          </div>
-        </ContextSidebarPanel>
-      ) : null}
-      {headerProps && isStandalonePage ? (
-        <PostDetailHeader {...headerProps} placement="topbar" />
-      ) : null}
       <div className={wrapperClassName}>
         {post ? (
           <>
-            {headerProps && !isStandalonePage ? (
-              <PostDetailHeader {...headerProps} />
-            ) : null}
+            <PostDetailHeader
+              headingLevel={isPagePresentation ? 1 : 2}
+              post={post}
+              scope={scope}
+              isPublished={isPublished}
+              hasChildren={hasChildren}
+              viewMode={viewMode}
+              isExpandingToThread={isExpandingToThread}
+              onViewModeChange={setViewMode}
+              onDelete={handleDeletePost}
+              onCreateRemix={
+                isSourcePostVariationPlatform(post.platform)
+                  ? handleCreateRemix
+                  : undefined
+              }
+              onDuplicate={handleDuplicate}
+              onExpandToThread={handleExpandToThread}
+              onRepurpose={handleRepurpose}
+              onPublishNow={handlePublishNow}
+              onScheduleSave={handleScheduleSave}
+              isScheduleDirty={isScheduleDirty && scheduleDraft !== ''}
+              isSavingSchedule={isSavingSchedule}
+            />
 
-            {!isStandalonePage ? (
-              <RecordFactLine
-                className="mb-6"
-                facts={buildPostDetailFacts(post, isPublished)}
-              />
-            ) : null}
+            <RecordFactLine
+              className="mb-6"
+              facts={buildPostDetailFacts(post, isPublished)}
+            />
 
             <PostDetailNeedsYou
               className="mb-6"
               isPublished={isPublished}
-              onPublishNow={publishNow}
+              onPublishNow={handlePublishNow}
               onReviewHref={href(APP_ROUTES.PUBLISHING.REVIEW)}
               post={post}
             />
@@ -510,63 +391,56 @@ export default function PostDetail({
                 : 'grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]'
             }
           >
-            <section
-              aria-label={translate('composerLabel')}
-              className="min-w-0"
-            >
-              <div className="min-w-0">
-                <PostDetailContent
-                  post={post}
-                  sortedChildren={sortedChildren}
-                  scope={scope}
-                  viewMode={viewMode}
-                  descriptionDraft={descriptionDraft}
-                  labelDraft={labelDraft}
-                  childDescriptions={childDescriptions}
-                  selectedIngredients={selectedIngredients}
-                  focusedPostId={focusedPostId}
-                  draggedPostId={draggedPostId}
-                  dragOverDividerIndex={dragOverDividerIndex}
-                  enhancingPostId={enhancingPostId}
-                  isSavingIngredients={isSavingIngredients}
-                  isSavingDescription={isSavingDescription}
-                  isTogglingGrok={isTogglingGrok}
-                  isTogglingFirstComment={isTogglingFirstComment}
-                  carouselValidation={carouselValidation}
-                  publishedDisplay={publishedDisplay}
-                  isContentDirty={isContentDirty}
-                  canAddThread={canAddThread}
-                  canAddFirstComment={canAddFirstComment}
-                  firstCommentPost={firstCommentPost}
-                  isLastChildGrokTweet={isLastChildGrokTweet}
-                  setDescriptionDraft={setDescriptionDraft}
-                  setLabelDraft={setLabelDraft}
-                  setChildDescription={setChildDescription}
-                  setFocusedPostId={setFocusedPostId}
-                  setDragOverDividerIndex={setDragOverDividerIndex}
-                  handleContentSave={handleContentSave}
-                  handleAddToThread={handleAddToThread}
-                  handleAddThreadPosts={handleAddThreadPosts}
-                  handleDeleteChild={handleDeleteChild}
-                  handleSelectMedia={handleSelectMedia}
-                  handleGenerateIllustration={handleGenerateIllustration}
-                  handleQuickAction={handleQuickAction}
-                  handlePerTweetEnhance={handlePerTweetEnhance}
-                  handleDraftThread={handleDraftThread}
-                  handleDragStart={handleDragStart}
-                  handleDragEnd={handleDragEnd}
-                  handleDrop={handleDrop}
-                  handleToggleGrokFeedback={handleToggleGrokFeedback}
-                  handleSetGrokQuestion={handleSetGrokQuestion}
-                  handleToggleFirstComment={handleToggleFirstComment}
-                  handleUpdateChild={handleUpdateChild}
-                  autoSaveRefs={autoSaveRefs}
-                  performAutoSaveForPost={performAutoSaveForPost}
-                  getPostsService={getPostsService}
-                  notificationsService={notificationsService}
-                />
-              </div>
-            </section>
+            <PostDetailContent
+              post={post}
+              sortedChildren={sortedChildren}
+              scope={scope}
+              viewMode={viewMode}
+              descriptionDraft={descriptionDraft}
+              labelDraft={labelDraft}
+              childDescriptions={childDescriptions}
+              selectedIngredients={selectedIngredients}
+              focusedPostId={focusedPostId}
+              draggedPostId={draggedPostId}
+              dragOverDividerIndex={dragOverDividerIndex}
+              enhancingPostId={enhancingPostId}
+              enhancingAction={enhancingAction}
+              isSavingIngredients={isSavingIngredients}
+              isSavingDescription={isSavingDescription}
+              isTogglingGrok={isTogglingGrok}
+              isTogglingFirstComment={isTogglingFirstComment}
+              carouselValidation={carouselValidation}
+              publishedDisplay={publishedDisplay}
+              isContentDirty={isContentDirty}
+              canAddThread={canAddThread}
+              canAddFirstComment={canAddFirstComment}
+              hasFirstComment={hasFirstComment}
+              firstCommentPost={firstCommentPost}
+              isLastChildGrokTweet={isLastChildGrokTweet}
+              hasChildren={hasChildren}
+              setDescriptionDraft={setDescriptionDraft}
+              setLabelDraft={setLabelDraft}
+              setChildDescription={setChildDescription}
+              setFocusedPostId={setFocusedPostId}
+              setDragOverDividerIndex={setDragOverDividerIndex}
+              handleContentSave={handleContentSave}
+              handleAddToThread={handleAddToThread}
+              handleDeleteChild={handleDeleteChild}
+              handleSelectMedia={handleSelectMedia}
+              handleGenerateIllustration={handleGenerateIllustration}
+              handleQuickAction={handleQuickAction}
+              handlePerTweetEnhance={handlePerTweetEnhance}
+              handleDragStart={handleDragStart}
+              handleDragEnd={handleDragEnd}
+              handleDrop={handleDrop}
+              handleToggleGrokFeedback={handleToggleGrokFeedback}
+              handleToggleFirstComment={handleToggleFirstComment}
+              handleUpdateChild={handleUpdateChild}
+              autoSaveRefs={autoSaveRefs}
+              performAutoSaveForPost={performAutoSaveForPost}
+              getPostsService={getPostsService}
+              notificationsService={notificationsService}
+            />
 
             {!usesContextSidebar ? (
               <div className="space-y-4">{sidebar}</div>

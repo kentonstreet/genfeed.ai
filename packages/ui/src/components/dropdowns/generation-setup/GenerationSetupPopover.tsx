@@ -7,7 +7,6 @@ import type {
   GenerationSetupCustomizeSectionId,
   GenerationSetupPopoverProps,
 } from '@genfeedai/props/ui/generation-setup/generation-setup.props';
-import GenerationSetupAutoTypePicker from '@ui/dropdowns/generation-setup/GenerationSetupAutoTypePicker';
 import GenerationSetupCustomizePanel from '@ui/dropdowns/generation-setup/GenerationSetupCustomizePanel';
 import GenerationSetupFrontDoor from '@ui/dropdowns/generation-setup/GenerationSetupFrontDoor';
 import GenerationSetupTrigger from '@ui/dropdowns/generation-setup/GenerationSetupTrigger';
@@ -22,33 +21,12 @@ import { Switch } from '@ui/primitives/switch';
 import { TooltipProvider } from '@ui/primitives/tooltip';
 import { Pin, X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { memo, useState, useSyncExternalStore } from 'react';
-
-const DESKTOP_SUBMENU_QUERY =
-  '(hover: hover) and (pointer: fine) and (min-width: 848px)';
-function getDesktopSubmenuQuery(): MediaQueryList | null {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function')
-    return null;
-  return window.matchMedia(DESKTOP_SUBMENU_QUERY);
-}
-function subscribeToDesktopSubmenus(onChange: () => void): () => void {
-  const query = getDesktopSubmenuQuery();
-  if (!query) return () => undefined;
-  query.addEventListener('change', onChange);
-  return () => query.removeEventListener('change', onChange);
-}
-function getDesktopSubmenuSnapshot(): boolean {
-  return getDesktopSubmenuQuery()?.matches ?? false;
-}
-function getServerSubmenuSnapshot(): boolean {
-  return false;
-}
+import { memo, useState } from 'react';
 
 const GenerationSetupPopover = memo(function GenerationSetupPopover({
   advancedMode,
   align = 'start',
   showEnhancementSettings = false,
-  showPresets = true,
   buttonRef,
   capabilities,
   inputControls,
@@ -57,8 +35,6 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
   creditsAvailable,
   favoriteModelKeys,
   isDisabled = false,
-  isIconOnly = false,
-  imageEditing,
   isPresetsLoading,
   isTypeCommitted,
   lookOptions,
@@ -72,7 +48,6 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
   onSavePreset,
   onSetField,
   onTypeChange,
-  outputControls,
   presets,
   reasons,
   scopeKey: _scopeKey,
@@ -82,14 +57,8 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
 }: GenerationSetupPopoverProps) {
   const translate = useTranslations('agent.generationSetup');
   const [isOpen, setIsOpen] = useState(false);
-  const hasDesktopSubmenus = useSyncExternalStore(
-    subscribeToDesktopSubmenus,
-    getDesktopSubmenuSnapshot,
-    getServerSubmenuSnapshot,
-  );
   const [customizeSection, setCustomizeSection] =
     useState<GenerationSetupCustomizeSectionId>();
-  const isAutoMode = advancedMode?.isEnabled === false;
 
   function handleOpenChange(open: boolean): void {
     if (isDisabled) {
@@ -110,36 +79,6 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
     setCustomizeSection(undefined);
   }
 
-  function renderCustomizeSection(section: GenerationSetupCustomizeSectionId) {
-    return (
-      <GenerationSetupCustomizePanel
-        outputControls={outputControls}
-        typeOptions={typeOptions}
-        onTypeChange={onTypeChange}
-        inputControls={inputControls}
-        referenceCount={referenceCount}
-        capabilities={capabilities}
-        creditsAvailable={creditsAvailable}
-        favoriteModelKeys={favoriteModelKeys}
-        initialSection={section}
-        isDisabled={isDisabled}
-        isPresetsLoading={isPresetsLoading}
-        onApplyPreset={handleApplyPreset}
-        onDeletePreset={onDeletePreset}
-        presets={presets}
-        lookOptions={lookOptions}
-        models={models}
-        onBack={() => setCustomizeSection(undefined)}
-        onFavoriteToggle={onFavoriteToggle}
-        onResetField={onResetField}
-        onSavePreset={onSavePreset}
-        onSetField={onSetField}
-        reasons={reasons}
-        setup={setup}
-      />
-    );
-  }
-
   const pinnedPreset = setup.presetId
     ? presets.find((preset) => preset.id === setup.presetId)
     : undefined;
@@ -151,7 +90,6 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
           className={className}
           hasAspectRatio={capabilities.hasAspectRatio}
           isDisabled={isDisabled}
-          isIconOnly={isIconOnly}
           isOpen={isOpen}
           isTypeCommitted={isTypeCommitted}
           models={models}
@@ -199,70 +137,23 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
               </div>
             ) : null}
 
-            {(!customizeSection || hasDesktopSubmenus) && advancedMode ? (
-              <div className="shrink-0 border-b border-border px-3 py-2">
-                <div
-                  aria-label={translate('advancedMode')}
-                  className="gen-shell-segmented flex gap-0.5 rounded-md p-0.5"
-                  role="group"
-                >
-                  {[false, true].map((isAdvanced) => (
-                    <Button
-                      key={String(isAdvanced)}
-                      aria-pressed={advancedMode.isEnabled === isAdvanced}
-                      className="h-8 flex-1 justify-center text-xs"
-                      isDisabled={isDisabled}
-                      onClick={() => advancedMode.onChange(isAdvanced)}
-                      size={ButtonSize.SM}
-                      textTransform="none"
-                      variant={
-                        advancedMode.isEnabled === isAdvanced
-                          ? ButtonVariant.SECONDARY
-                          : ButtonVariant.GHOST
-                      }
-                      withWrapper={false}
-                    >
-                      {translate(isAdvanced ? 'advancedMode' : 'auto')}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {isAutoMode ? (
-              <GenerationSetupAutoTypePicker
-                imageEditing={imageEditing}
-                isDisabled={isDisabled}
-                onTypeChange={onTypeChange}
-                setup={setup}
-                typeOptions={typeOptions}
-              />
-            ) : null}
-
-            {!isAutoMode &&
-            (!customizeSection || hasDesktopSubmenus) &&
-            imageEditing &&
-            (setup.values.type === 'image' ||
-              setup.values.type === 'image-edit') ? (
+            {!customizeSection && advancedMode ? (
               <div className="shrink-0 border-b border-border px-3 py-2">
                 <Switch
-                  aria-label={imageEditing.label}
-                  isChecked={imageEditing.isEnabled}
+                  aria-label={translate('advancedMode')}
+                  description={translate('advancedModeDescription')}
+                  isChecked={advancedMode.isEnabled}
                   isDisabled={isDisabled}
-                  label={<span className="text-xs">{imageEditing.label}</span>}
-                  onCheckedChange={imageEditing.onChange}
+                  label={
+                    <span className="text-xs">{translate('advancedMode')}</span>
+                  }
+                  onCheckedChange={advancedMode.onChange}
                 />
               </div>
             ) : null}
 
-            {!isAutoMode && (!customizeSection || hasDesktopSubmenus) ? (
+            {!customizeSection ? (
               <GenerationSetupFrontDoor
-                activeSection={customizeSection}
-                onCloseSection={() => setCustomizeSection(undefined)}
-                renderSection={
-                  hasDesktopSubmenus ? renderCustomizeSection : undefined
-                }
-                showPresets={showPresets}
                 showEnhancementSettings={showEnhancementSettings}
                 capabilities={capabilities}
                 inputControls={inputControls}
@@ -279,9 +170,32 @@ const GenerationSetupPopover = memo(function GenerationSetupPopover({
               />
             ) : null}
 
-            {!isAutoMode && customizeSection && !hasDesktopSubmenus
-              ? renderCustomizeSection(customizeSection)
-              : null}
+            {customizeSection ? (
+              <GenerationSetupCustomizePanel
+                typeOptions={typeOptions}
+                onTypeChange={onTypeChange}
+                inputControls={inputControls}
+                referenceCount={referenceCount}
+                capabilities={capabilities}
+                creditsAvailable={creditsAvailable}
+                favoriteModelKeys={favoriteModelKeys}
+                initialSection={customizeSection}
+                isDisabled={isDisabled}
+                isPresetsLoading={isPresetsLoading}
+                onApplyPreset={handleApplyPreset}
+                onDeletePreset={onDeletePreset}
+                presets={presets}
+                lookOptions={lookOptions}
+                models={models}
+                onBack={() => setCustomizeSection(undefined)}
+                onFavoriteToggle={onFavoriteToggle}
+                onResetField={onResetField}
+                onSavePreset={onSavePreset}
+                onSetField={onSetField}
+                reasons={reasons}
+                setup={setup}
+              />
+            ) : null}
           </div>
         </TooltipProvider>
       </PopoverContent>

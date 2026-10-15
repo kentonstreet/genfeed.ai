@@ -1,7 +1,6 @@
 import type {
   MultiPostSchema,
   PostModalSchema,
-  PresetElementSchema,
   PromptTextareaSchema,
 } from '@genfeedai/client/schemas';
 import type {
@@ -49,8 +48,8 @@ import type { Brand } from '@genfeedai/models/organization/brand.model';
 import type { CrunVideoPromptBinding } from '@genfeedai/props/studio/prompt-bar.props';
 import type { ContentProps } from '@props/layout/content.props';
 import type { GallerySelectItem } from '@props/modals/modal-gallery.props';
-import type { ChangeEvent, ReactNode } from 'react';
-import type { Control, UseFormReturn } from 'react-hook-form';
+import type { ReactNode } from 'react';
+import type { UseFormReturn } from 'react-hook-form';
 
 /**
  * Base props for modal components
@@ -72,23 +71,6 @@ export interface ModalCrudProps<T = unknown> {
   item?: T | null;
   onConfirm: (isRefreshing?: boolean) => void;
   onClose?: () => void;
-}
-
-export interface ModalPresetFieldsProps {
-  control: Control<PresetElementSchema>;
-  watchedDescription: string | undefined;
-  isSubmitting: boolean;
-  isCopying: boolean;
-  isEnhancing: boolean;
-  previousPrompt: string | null;
-  onChange: (
-    event: ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >,
-  ) => void;
-  onCopy: () => void;
-  onEnhance: () => void;
-  onUndo: () => void;
 }
 
 /**
@@ -371,8 +353,6 @@ export interface ModalPostSimpleFieldsProps {
   isTitleError: boolean;
   hasIngredients: boolean;
   browserTimezone: string;
-  /** Called with the saved draft when a generated draft fills the editor. */
-  onDraftGenerated?: (draft: { platform: Platform; postId: string }) => void;
 }
 
 export interface ModalPostSimpleActionsProps {
@@ -615,16 +595,9 @@ export interface ModalMonitoredAccountProps {
   onClose?: () => void;
 }
 
-export interface PostDraftGeneratedDraft {
-  /** Draft post the receipt is bound to. */
-  postId: string;
-  receiptId: string;
-  receiptState: string;
-}
-
 export interface PostDraftGeneratorProps {
   platform: Platform;
   format?: PostFormat;
   isDisabled?: boolean;
-  onGenerate: (description: string, draft: PostDraftGeneratedDraft) => void;
+  onGenerate: (description: string) => void;
 }

@@ -69,83 +69,11 @@ for (const viewport of [
     await expect
       .poll(() => new URL(page.url()).searchParams.get('search'))
       .toBeNull();
-    // #6818: type is a Filters choice, not a toolbar menu named Type.
-    await canvas.getByRole('button', { name: 'Filters', exact: true }).click();
-    const image = page
-      .getByRole('group', { name: 'Type', exact: true })
-      .getByRole('button', { name: 'Image', exact: true });
-    await image.scrollIntoViewIfNeeded();
-    await expect(image).toBeVisible();
-    await expect
-      .poll(() =>
-        image.evaluate((element) => {
-          const bounds = element.getBoundingClientRect();
-          return element.contains(
-            document.elementFromPoint(
-              bounds.x + bounds.width / 2,
-              bounds.y + bounds.height / 2,
-            ),
-          );
-        }),
-      )
-      .toBe(true);
-    await image.click();
-    const chip = canvas.getByRole('button', {
-      name: 'Remove Image filter',
-      exact: true,
-    });
-    await expect(chip).toBeVisible();
-    await page.keyboard.press('Escape');
-    await chip.focus();
-    await page.keyboard.press('Enter');
-    await expect(chip).toHaveCount(0);
-
-    if (viewport.width < 768) {
-      const open = page.getByRole('button', {
-        name: 'Open navigation menu',
-        exact: true,
-      });
-      await open.click();
-      const close = page.getByRole('button', {
-        name: 'Close navigation menu',
-        exact: true,
-      });
-      await expect(close).toBeVisible();
-      await close.click();
-      await expect(open).toBeVisible();
-      await open.click();
-      await expect(close).toBeVisible();
-      await close.click();
-    } else {
-      const sidebar = page.getByRole('complementary', {
-        name: 'Navigation',
-        exact: true,
-      });
-      const initialBounds = await sidebar.boundingBox();
-      expect(initialBounds?.width).toBeGreaterThan(100);
-      await page
-        .getByRole('button', { name: 'Collapse sidebar', exact: true })
-        .click();
-      const expand = page.getByRole('button', {
-        name: 'Expand sidebar',
-        exact: true,
-      });
-      await expect(expand).toBeVisible();
-      await expect
-        .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
-        .toBeLessThan(10);
-      await expand.click();
-      await expect
-        .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
-        .toBe(initialBounds?.width);
-    }
-    await expect(clear).toHaveCount(0);
+    await canvas.getByRole('button', { name: 'Type', exact: true }).click();
     await expect(
-      canvas.getByRole('button', { name: 'Filters', exact: true }),
+      page.getByRole('option', { name: 'Image', exact: true }),
     ).toBeVisible();
-    await page.screenshot({
-      path: testInfo.outputPath('library-restored.png'),
-    });
+    await page.keyboard.press('Escape');
     await expectNoErrorOverlay(page);
   });
 }

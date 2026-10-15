@@ -24,7 +24,6 @@ import CloudSyncIndicator from '@/components/cloud-sync-indicator/CloudSyncIndic
 import AppProtectedBrandSwitcher from '@/components/shell/AppProtectedBrandSwitcher';
 import GenerationToasts from '@/components/shell/GenerationToasts';
 import NotificationInboxMenu from '@/components/shell/NotificationInboxMenu';
-import TopbarAppsLink from '@/components/shell/TopbarAppsLink';
 
 const TOPBAR_BREADCRUMB_ROOT_LABELS: Record<
   NonNullable<TopbarProps['currentApp']>,
@@ -34,16 +33,11 @@ const TOPBAR_BREADCRUMB_ROOT_LABELS: Record<
   agent: APP_DISPLAY_LABELS.agent,
   analytics: APP_DISPLAY_LABELS.analytics,
   automation: APP_DISPLAY_LABELS.automation,
-  clips: APP_DISPLAY_LABELS.clips,
-  editor: APP_DISPLAY_LABELS.editor,
   library: APP_DISPLAY_LABELS.library,
   messages: APP_DISPLAY_LABELS.messages,
-  motion: APP_DISPLAY_LABELS.motion,
-  playground: APP_DISPLAY_LABELS.playground,
   publishing: APP_DISPLAY_LABELS.publishing,
   discovery: APP_DISPLAY_LABELS.discovery,
-  storyboard: APP_DISPLAY_LABELS.storyboard,
-  turbo: APP_DISPLAY_LABELS.turbo,
+  studio: APP_DISPLAY_LABELS.studio,
   workspace: APP_DISPLAY_LABELS.workspace,
 };
 
@@ -136,7 +130,7 @@ function AppProtectedTopbarContent({
         data-testid="app-protected-topbar-inner"
         className="flex h-full w-full items-center gap-1 px-2 md:gap-3 md:px-3"
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1 md:gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           {onMenuToggle ? (
             <Button
               type="button"
@@ -181,10 +175,8 @@ function AppProtectedTopbarContent({
           </div>
         </div>
 
-        <div className="flex min-w-0 shrink-0 items-center justify-end gap-1 md:gap-1.5">
+        <div className="flex min-w-0 shrink-0 items-center justify-end gap-2">
           {!isAdminChrome ? <TopbarCreditsBar /> : null}
-
-          {!isAdminChrome ? <TopbarAppsLink orgSlug={orgSlug} /> : null}
 
           {!isAdminChrome ? <NotificationInboxMenu /> : null}
           {!isAdminChrome ? <GenerationToasts /> : null}

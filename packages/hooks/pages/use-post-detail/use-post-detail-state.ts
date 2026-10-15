@@ -121,6 +121,7 @@ export interface UsePostDetailStateReturn {
   // Fetch
   fetchPost: (isRefresh?: boolean) => Promise<void>;
 
+  // Update helpers
   updateActivePost: (
     updates: PostUpdateInput,
     successMessage?: string,
@@ -152,6 +153,7 @@ export function usePostDetailState({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // View state
   const [viewMode, setViewMode] = useState<'edit' | 'preview'>('edit');
   const [focusedPostId, setFocusedPostId] = useState<string | null>(null);
 
@@ -199,6 +201,7 @@ export function usePostDetailState({
     [scope, isPublished],
   );
 
+  // Use cached credential to prevent flash during refreshes
   const credential = useMemo(() => {
     const currentCredential = post?.credential as ICredential | undefined;
     if (currentCredential) {

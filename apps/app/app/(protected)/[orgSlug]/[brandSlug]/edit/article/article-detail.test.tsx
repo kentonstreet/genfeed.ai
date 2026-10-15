@@ -24,7 +24,6 @@ const {
 
 vi.mock('@hooks/auth/use-authed-service/use-authed-service', () => ({
   useAuthedService: vi.fn(() => async () => ({
-    findDeliveries: vi.fn().mockResolvedValue([]),
     generateAccountContent: generateAccountContentMock,
   })),
 }));
@@ -171,12 +170,13 @@ describe('ArticleDetail', () => {
 
     const trigger = screen.getByRole('button', {
       name: 'Tutorial',
+      exact: true,
     });
     expect(trigger).toHaveTextContent('Category:');
     expect(trigger).not.toHaveTextContent('articleCategory:');
 
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole('button', { name: 'Guide' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Guide', exact: true }));
 
     expect(state.setFormField).toHaveBeenCalledWith(
       'category',

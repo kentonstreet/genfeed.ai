@@ -299,6 +299,7 @@ export default function IssueDetail({
         </Card>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+          {/* Main content */}
           <div className="space-y-6">
             <IssueHeader
               identifier={issue.identifier}
@@ -310,6 +311,7 @@ export default function IssueDetail({
               priorityLabels={priorityLabels}
             />
 
+            {/* Description */}
             {issue.description ? (
               <Card>
                 <div className="p-4">
@@ -346,6 +348,7 @@ export default function IssueDetail({
             />
           </div>
 
+          {/* Sidebar */}
           <IssueSidebar
             issue={issue}
             statusLabels={statusLabels}

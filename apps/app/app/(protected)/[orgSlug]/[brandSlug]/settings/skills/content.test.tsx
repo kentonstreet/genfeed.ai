@@ -337,7 +337,9 @@ describe('BrandSettingsSkillsPage', () => {
       await user.click(
         screen.getByRole('combobox', { name: 'Filter skills by modality' }),
       );
-      await user.click(await screen.findByRole('option', { name: filter }));
+      await user.click(
+        await screen.findByRole('option', { name: filter, exact: true }),
+      );
 
       const catalog = within(screen.getByRole('table', { name: 'Catalog' }));
       for (const name of [

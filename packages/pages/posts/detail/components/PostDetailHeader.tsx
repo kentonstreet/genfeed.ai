@@ -9,9 +9,8 @@ import {
 import type { IPost } from '@genfeedai/contracts/interfaces';
 import type { CollectionOverflowAction } from '@genfeedai/props/ui/collection/collection.props';
 import { getPostsPlatformLabel } from '@helpers/content/posts.helper';
-import { stripHtmlToPlainText } from '@helpers/security/strip-html.helper';
+import { stripHtmlToPlainText } from '@helpers/security/sanitize-html.helper';
 import CollectionItemActions from '@ui/collection/CollectionItemActions';
-import SectionTopbar from '@ui/layout/section-topbar/SectionTopbar';
 import { Button } from '@ui/primitives/button';
 import {
   Dialog,
@@ -46,13 +45,6 @@ export interface PostDetailHeaderProps {
   hasChildren: boolean;
   viewMode: 'edit' | 'preview';
   headingLevel?: 1 | 2;
-  /**
-   * `topbar` renders the page actions in the shared section sub-topbar and
-   * drops the in-page title (the post title lives in the composer and the
-   * breadcrumb). Publishing stays with the schedule in the details sidebar.
-   */
-  placement?: 'inline' | 'topbar';
-  showViewModeToggle?: boolean;
   isExpandingToThread?: boolean;
   onViewModeChange: (mode: 'edit' | 'preview') => void;
   onDelete: () => void;
@@ -91,8 +83,6 @@ export default function PostDetailHeader({
   hasChildren,
   viewMode,
   headingLevel = 2,
-  placement = 'inline',
-  showViewModeToggle = true,
   isExpandingToThread = false,
   onViewModeChange,
   onDelete,
@@ -111,6 +101,7 @@ export default function PostDetailHeader({
   const isEditable = scope === PageScope.PUBLISHING && !isPublished;
   const canCreateRemix = post.status === PostStatus.PUBLIC;
 
+  // Can expand to thread if:
   // - It's a Twitter/X post
   // - It's editable (not published)
   // - It doesn't already have children (not already a thread)
@@ -225,20 +216,18 @@ export default function PostDetailHeader({
     }
 
     if (isEditable) {
-      if (showViewModeToggle) {
-        actions.push({
-          icon:
-            viewMode === 'edit' ? (
-              <Eye className="size-4" />
-            ) : (
-              <Pencil className="size-4" />
-            ),
-          id: 'toggle-view-mode',
-          label: viewMode === 'edit' ? translate('preview') : translate('edit'),
-          onSelect: () =>
-            onViewModeChange(viewMode === 'edit' ? 'preview' : 'edit'),
-        });
-      }
+      actions.push({
+        icon:
+          viewMode === 'edit' ? (
+            <Eye className="size-4" />
+          ) : (
+            <Pencil className="size-4" />
+          ),
+        id: 'toggle-view-mode',
+        label: viewMode === 'edit' ? translate('preview') : translate('edit'),
+        onSelect: () =>
+          onViewModeChange(viewMode === 'edit' ? 'preview' : 'edit'),
+      });
 
       actions.push({
         icon: <Trash2 className="size-4" />,
@@ -260,55 +249,9 @@ export default function PostDetailHeader({
     onRepurpose,
     onViewModeChange,
     post,
-    showViewModeToggle,
     translate,
     viewMode,
   ]);
-
-  const actions = (
-    <CollectionItemActions overflow={overflow} primary={primary} />
-  );
-
-  const threadDialog = canExpandToThread ? (
-    <Dialog onOpenChange={setIsThreadDialogOpen} open={isThreadDialogOpen}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{translate('threadLengthPrompt')}</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-1">
-          {THREAD_LENGTH_OPTIONS.map((count) => (
-            <Button
-              className="w-full justify-start text-left"
-              isDisabled={isExpandingToThread}
-              key={count}
-              onClick={() => {
-                setIsThreadDialogOpen(false);
-                onExpandToThread?.(count);
-              }}
-              variant={ButtonVariant.SECONDARY}
-              withWrapper={false}
-            >
-              {translate('threadLengthOption', { count })}
-            </Button>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
-  ) : null;
-
-  if (placement === 'topbar') {
-    return (
-      <>
-        <SectionTopbar
-          actions={<CollectionItemActions overflow={overflow} />}
-          forceVisible
-          title={getPostLabel(post)}
-          titleVisibility="sr-only"
-        />
-        {threadDialog}
-      </>
-    );
-  }
 
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
@@ -317,8 +260,34 @@ export default function PostDetailHeader({
         <Heading className="text-2xl font-bold">{getPostLabel(post)}</Heading>
       </div>
 
-      {actions}
-      {threadDialog}
+      <CollectionItemActions overflow={overflow} primary={primary} />
+
+      {canExpandToThread ? (
+        <Dialog onOpenChange={setIsThreadDialogOpen} open={isThreadDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{translate('threadLengthPrompt')}</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col gap-1">
+              {THREAD_LENGTH_OPTIONS.map((count) => (
+                <Button
+                  className="w-full justify-start text-left"
+                  isDisabled={isExpandingToThread}
+                  key={count}
+                  onClick={() => {
+                    setIsThreadDialogOpen(false);
+                    onExpandToThread?.(count);
+                  }}
+                  variant={ButtonVariant.SECONDARY}
+                  withWrapper={false}
+                >
+                  {translate('threadLengthOption', { count })}
+                </Button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }
