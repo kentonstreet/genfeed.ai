@@ -1,8 +1,8 @@
 import type {
   MultiPostSchema,
   PostModalSchema,
-  PresetElementSchema,
   PromptTextareaSchema,
+  ThreadModalSchema,
 } from '@genfeedai/client/schemas';
 import type {
   AssetScope,
@@ -46,11 +46,11 @@ import type { AccountMediaReference } from '@genfeedai/contracts/interfaces/comp
 import type { Training } from '@genfeedai/models/ai/training.model';
 import type { ElementBlacklist } from '@genfeedai/models/elements/blacklist.model';
 import type { Brand } from '@genfeedai/models/organization/brand.model';
-import type { CrunVideoPromptBinding } from '@genfeedai/props/studio/prompt-bar.props';
 import type { ContentProps } from '@props/layout/content.props';
 import type { GallerySelectItem } from '@props/modals/modal-gallery.props';
-import type { ChangeEvent, ReactNode } from 'react';
-import type { Control, UseFormReturn } from 'react-hook-form';
+import type React from 'react';
+import type { ReactNode } from 'react';
+import type { FieldArrayWithId, UseFormReturn } from 'react-hook-form';
 
 /**
  * Base props for modal components
@@ -72,23 +72,6 @@ export interface ModalCrudProps<T = unknown> {
   item?: T | null;
   onConfirm: (isRefreshing?: boolean) => void;
   onClose?: () => void;
-}
-
-export interface ModalPresetFieldsProps {
-  control: Control<PresetElementSchema>;
-  watchedDescription: string | undefined;
-  isSubmitting: boolean;
-  isCopying: boolean;
-  isEnhancing: boolean;
-  previousPrompt: string | null;
-  onChange: (
-    event: ChangeEvent<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >,
-  ) => void;
-  onCopy: () => void;
-  onEnhance: () => void;
-  onUndo: () => void;
 }
 
 /**
@@ -181,7 +164,6 @@ export interface IngredientOverlayViewProps
 export interface ModalProps {
   id: string;
   title?: string;
-  accessibleTitle?: string;
   children: ReactNode;
   isFullScreen?: boolean;
   isError?: boolean;
@@ -236,31 +218,62 @@ export interface ModalPostProps extends ModalVisibilityProps {
   post?: IPost | null;
   ingredient?: IIngredient | null;
   ingredients?: IIngredient[]; // For carousel support
-  modalId: ModalEnum;
+  modalId?: ModalEnum;
   credential?: ICredential | null;
   credentials?: ICredential[];
   parentPost?: IPost | null;
+  postFormat?: PostFormat;
   defaultPlatform?: Platform;
   onConfirm?: () => void;
   onClose?: () => void;
   onCreated?: (postId: string) => void; // For draft creation workflow
   showViewDetailsButton?: boolean;
   onViewDetails?: () => void;
-  /**
-   * Destination-first composer: pick one or more connected accounts (or the
-   * Article / Newsletter destinations, which hand off to their own editors)
-   * instead of a single channel + account.
-   */
-  isComposer?: boolean;
 }
-
-/** The batch publish modal always renders as `ModalEnum.POST_BATCH`. */
-export type ModalPostBatchProps = Omit<ModalPostProps, 'modalId'>;
 
 export interface PostMetadataOverlayProps {
   post: IPost | null;
   onConfirm?: () => void;
   onClose?: () => void;
+}
+
+export interface ModalCreateThreadProps {
+  ingredient?: IIngredient | null;
+  credential?: ICredential | null;
+  credentials?: ICredential[];
+  onConfirm?: () => void;
+  onClose?: () => void;
+}
+
+export interface ModalCreateThreadSettingsProps {
+  form: UseFormReturn<ThreadModalSchema>;
+  credentials: ICredential[];
+  credentialOptions: { label: string; value: string }[];
+  browserTimezone: string;
+}
+
+export interface ModalCreateThreadPostsListProps {
+  form: UseFormReturn<ThreadModalSchema>;
+  fields: FieldArrayWithId<ThreadModalSchema, 'posts', 'id'>[];
+  charLimit: number;
+  /**
+   * What the selected channel does with media on a follow-up: attach it, or
+   * publish the text alone because its comment API takes no media.
+   */
+  isCommentMediaSupported: boolean;
+  onAddPost: () => void;
+  onRemovePost: (index: number) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPickMedia: (index: number) => void;
+  onClearMedia: (index: number) => void;
+  /** Raw input value; the composer parses and clamps it. */
+  onChangeDelay: (index: number, value: string) => void;
+}
+
+export interface ModalCreateThreadPreviewProps {
+  fields: FieldArrayWithId<ThreadModalSchema, 'posts', 'id'>[];
+  form: UseFormReturn<ThreadModalSchema>;
+  charLimit: number;
 }
 
 export interface ModalPostHeaderProps {
@@ -333,32 +346,7 @@ export interface ModalPostSimpleHeaderProps {
   description: string;
 }
 
-/** Non-social destinations offered next to the connected accounts. */
-export type ComposerDestination = 'article' | 'newsletter';
-
-export interface ModalPostDestinationsProps {
-  credentials: ICredential[];
-  selectedCredentialIds: string[];
-  destination: ComposerDestination | null;
-  isDisabled: boolean;
-  onToggleCredential: (credentialId: string) => void;
-  onSelectDestination: (destination: ComposerDestination) => void;
-}
-
-export interface ModalPostComposerFieldsState
-  extends ModalPostDestinationsProps {
-  /** Any selected account is on X, so the thread option applies. */
-  hasXTarget: boolean;
-  isThread: boolean;
-  /** X text over 280 characters publishes as a long post (derived). */
-  isLongPost: boolean;
-  /** Posts the thread will be split into; 0 when the text is empty. */
-  threadItemCount: number;
-  onThreadChange: (isThread: boolean) => void;
-}
-
 export interface ModalPostSimpleFieldsProps {
-  composer?: ModalPostComposerFieldsState;
   form: UseFormReturn<PostModalSchema>;
   credentials: ICredential[];
   isEditMode: boolean;
@@ -371,8 +359,7 @@ export interface ModalPostSimpleFieldsProps {
   isTitleError: boolean;
   hasIngredients: boolean;
   browserTimezone: string;
-  /** Called with the saved draft when a generated draft fills the editor. */
-  onDraftGenerated?: (draft: { platform: Platform; postId: string }) => void;
+  onCredentialSelect: (credentialId: string) => void;
 }
 
 export interface ModalPostSimpleActionsProps {
@@ -382,11 +369,6 @@ export interface ModalPostSimpleActionsProps {
   isFormValid: boolean;
   isEditMode: boolean;
   isThreadReply: boolean;
-  /** The composer is aimed at Article or Newsletter; submit hands off. */
-  isHandoff?: boolean;
-  /** The composer will create an X thread instead of one post per account. */
-  isThread?: boolean;
-  onContinue?: () => void;
   showViewDetailsButton: boolean;
   onViewDetails?: () => void;
   onViewDetailsClick: () => void;
@@ -507,7 +489,6 @@ export interface ModalUploadProps extends ModalVisibilityProps {
 }
 
 export interface ModalImageToVideoProps {
-  imageToVideoCrunBinding?: CrunVideoPromptBinding;
   image: IIngredient | null;
   models: IModel[];
   presets: IPreset[];
@@ -593,10 +574,6 @@ export interface ModalTrimProps {
   onClose: () => void;
 }
 
-export interface ModalNewsletterProps {
-  onCreated: (newsletterId: string) => void;
-}
-
 export interface ModalArticleProps {
   onConfirm?: (isRefreshing?: boolean) => void;
   onCreated?: (articleId: string | string[]) => void;
@@ -615,16 +592,9 @@ export interface ModalMonitoredAccountProps {
   onClose?: () => void;
 }
 
-export interface PostDraftGeneratedDraft {
-  /** Draft post the receipt is bound to. */
-  postId: string;
-  receiptId: string;
-  receiptState: string;
-}
-
 export interface PostDraftGeneratorProps {
   platform: Platform;
   format?: PostFormat;
   isDisabled?: boolean;
-  onGenerate: (description: string, draft: PostDraftGeneratedDraft) => void;
+  onGenerate: (description: string) => void;
 }

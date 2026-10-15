@@ -1,5 +1,4 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { ModelsService } from '@api/collections/models/services/models.service';
 import {
   createPostsGenerationHttpException,
   generationFailureMessage,
@@ -8,8 +7,6 @@ import {
   isOwnedPost,
   isTwitterPlatform,
   postAccessBlockReason,
-  resolveByokApiKeyOverride,
-  threadExpansionBlockReason,
 } from '@api/collections/posts/controllers/operations/posts-generation.helpers';
 import { EnhancePostDto } from '@api/collections/posts/dto/enhance-post.dto';
 import { ExpandToThreadDto } from '@api/collections/posts/dto/expand-thread.dto';
@@ -25,10 +22,8 @@ import { PostRepurposeService } from '@api/collections/posts/services/post-repur
 import { PostVariationService } from '@api/collections/posts/services/post-variation.service';
 import { PostsService } from '@api/collections/posts/services/posts.service';
 import type { SourcePostVariationRequest } from '@api/collections/posts/services/source-post-variation.types';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { DEFAULT_MINI_TEXT_MODEL } from '@api/constants/default-mini-text-model.constant';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
-import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import {
   Credits,
   DeferCreditsUntilModelResolution,
@@ -38,31 +33,28 @@ import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decora
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
-import { finalizeBrandedTextCredits } from '@api/helpers/utils/credits/finalize-branded-text-credits.util';
 import {
   finalizeDeferredTextCredits,
   finalizeOutputCredits,
 } from '@api/helpers/utils/credits/finalize-deferred-credits.util';
-import { resolveTextModelMinimumCredits } from '@api/helpers/utils/credits/organization-credits-gate.util';
 import {
   serializeCollection,
   serializeSingle,
 } from '@api/helpers/utils/response/response.util';
-import { TextGenerationCreditsService } from '@api/services/byok/text-generation-credits.service';
 import { ScoreSeoDto } from '@api/services/seo/dto/score-seo.dto';
 import { SeoScorerService } from '@api/services/seo/seo-scorer.service';
 import { PopulatePatterns } from '@api/shared/utils/populate/populate.util';
 import {
   ActivitySource,
-  ByokProvider,
   CredentialPlatform,
   PostCategory,
   PostRepurposeMode,
   parsePlatform,
   TargetExecutionState,
 } from '@genfeedai/contracts';
-import { TURBO_RUN_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants';
+import { BATCH_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants';
 import type {
   JsonApiCollectionResponse,
   JsonApiSingleResponse,
@@ -84,8 +76,6 @@ import {
 import type { Request } from 'express';
 
 @AutoSwagger()
-@FeatureFlag('publishing')
-@OrganizationModule('publishing')
 @Controller('posts')
 @UseGuards(RolesGuard)
 export class PostsGenerationController {
@@ -93,13 +83,11 @@ export class PostsGenerationController {
 
   constructor(
     private readonly logger: LoggerService,
-    private readonly modelsService: ModelsService,
     private readonly postGenerationService: PostGenerationService,
     private readonly postRepurposeService: PostRepurposeService,
     private readonly postVariationService: PostVariationService,
     private readonly postsService: PostsService,
     private readonly seoScorerService: SeoScorerService,
-    private readonly textGenerationCreditsService: TextGenerationCreditsService,
   ) {}
 
   /**
@@ -109,11 +97,11 @@ export class PostsGenerationController {
    */
   @Post('source-variations')
   @Credits({
-    amount: TURBO_RUN_CAPTION_BASE_CREDITS,
+    amount: BATCH_CAPTION_BASE_CREDITS,
     description: 'Source post variation',
     source: ActivitySource.POST_ENHANCEMENT,
   })
-  @UseGuards(PostVariationSourceGuard, CreditsGuard)
+  @UseGuards(PostVariationSourceGuard, SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async generateSourceVariations(
@@ -158,7 +146,7 @@ export class PostsGenerationController {
     source: ActivitySource.POST_ENHANCEMENT,
   })
   @DeferCreditsUntilModelResolution()
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async repurposePost(
@@ -177,7 +165,7 @@ export class PostsGenerationController {
     });
 
     if (dto.mode === PostRepurposeMode.AGENT) {
-      finalizeDeferredTextCredits(request, TURBO_RUN_CAPTION_BASE_CREDITS);
+      finalizeDeferredTextCredits(request, BATCH_CAPTION_BASE_CREDITS);
     }
 
     return serializeSingle(request, this.serializer, {
@@ -189,29 +177,16 @@ export class PostsGenerationController {
   @Post('draft-generations')
   @Credits({
     description: 'Generate post draft (text model)',
+    modelKey: DEFAULT_MINI_TEXT_MODEL,
     source: ActivitySource.POST_GENERATION,
   })
-  @DeferCreditsUntilModelResolution()
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   async generateDraftText(
-    @Req() request: Request,
     @Body() dto: GeneratePostDraftDto,
     @CurrentUser() user: User,
   ): Promise<PostDraftGenerationResult> {
-    return finalizeBrandedTextCredits(
-      request,
-      (model) => resolveTextModelMinimumCredits(this.modelsService, model),
-      () =>
-        this.postGenerationService.generateDraftText(
-          dto,
-          user,
-          this.textGenerationCreditsService.deferredKeyResolver(
-            request,
-            user.organizationId,
-          ),
-        ),
-    );
+    return this.postGenerationService.generateDraftText(dto, user);
   }
 
   @Post('account-generations')
@@ -248,12 +223,14 @@ export class PostsGenerationController {
       }
 
       this.logger.error('Failed to generate account content', error);
-      throw createPostsGenerationHttpException(
-        generationFailureMessage(
-          error,
-          'An error occurred while generating account content',
-        ),
-        'Failed to generate account content',
+      throw new HttpException(
+        {
+          detail: generationFailureMessage(
+            error,
+            'An error occurred while generating account content',
+          ),
+          title: 'Failed to generate account content',
+        },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -265,13 +242,11 @@ export class PostsGenerationController {
    */
   @Post(':postId/thread-expansions')
   @Credits({
-    allowByokBypass: true,
     description: 'Thread expansion (text model)',
     modelKey: DEFAULT_MINI_TEXT_MODEL,
-    provider: ByokProvider.OPENROUTER,
     source: ActivitySource.POST_ENHANCEMENT,
   })
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async expandToThread(
@@ -284,23 +259,43 @@ export class PostsGenerationController {
       PopulatePatterns.ingredientsMinimal,
       PopulatePatterns.credentialMinimal,
     ]);
-    const existingChildren = originalPost
-      ? await this.postsService.count(originalPost.organizationId, {
-          parentId: postId,
-        })
-      : 0;
-    const blockReason = threadExpansionBlockReason({
-      existingChildren,
-      isOwned: isOwnedPost(originalPost, user.organizationId),
-      isTwitter: isTwitterPlatform(originalPost?.platform),
-      postExists: Boolean(originalPost),
-    });
 
-    if (blockReason || !originalPost) {
+    if (!originalPost) {
       throw createPostsGenerationHttpException(
-        blockReason?.detail ?? 'The specified post does not exist',
-        blockReason?.title ?? 'Post not found',
-        blockReason?.status ?? HttpStatus.NOT_FOUND,
+        'The specified post does not exist',
+        'Post not found',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (!isOwnedPost(originalPost, user.organizationId)) {
+      throw createPostsGenerationHttpException(
+        'You do not have access to this post',
+        'Access denied',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const existingChildren = await this.postsService.count(
+      originalPost.organizationId,
+      {
+        parentId: postId,
+      },
+    );
+
+    if (existingChildren > 0) {
+      throw createPostsGenerationHttpException(
+        'This post already has thread children. Cannot expand further.',
+        'Already a thread',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (!isTwitterPlatform(originalPost.platform)) {
+      throw createPostsGenerationHttpException(
+        'Thread expansion is only available for Twitter/X posts',
+        'Platform not supported',
+        HttpStatus.BAD_REQUEST,
       );
     }
 
@@ -331,13 +326,7 @@ export class PostsGenerationController {
     });
 
     this.postGenerationService
-      .expandThreadAsync(
-        originalPost,
-        createdPosts.slice(1),
-        dto,
-        user,
-        resolveByokApiKeyOverride(request),
-      )
+      .expandThreadAsync(originalPost, createdPosts.slice(1), dto, user)
       .catch((error) => {
         this.logger.error('Failed to expand thread asynchronously', error);
       });
@@ -351,13 +340,11 @@ export class PostsGenerationController {
    */
   @Post(':postId/enhancements')
   @Credits({
-    allowByokBypass: true,
     description: 'Post content enhancement (text model)',
     modelKey: DEFAULT_MINI_TEXT_MODEL,
-    provider: ByokProvider.OPENROUTER,
     source: ActivitySource.POST_ENHANCEMENT,
   })
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async enhancePost(
@@ -388,14 +375,13 @@ export class PostsGenerationController {
     }
 
     try {
-      const resultPost = await this.postGenerationService.enhancePost(
-        post,
-        dto,
-        user,
-        resolveByokApiKeyOverride(request),
-      );
+      const enhancedDescription =
+        await this.postGenerationService.enhanceDescription(post, dto, user);
+      const updatedPost = await this.postsService.patch(postId, {
+        description: enhancedDescription,
+      });
 
-      return serializeSingle(request, this.serializer, resultPost);
+      return serializeSingle(request, this.serializer, updatedPost);
     } catch (error: unknown) {
       const errorMessage = generationFailureMessage(error, 'Unknown error');
       const errorStack = error instanceof Error ? error.stack : undefined;
@@ -415,7 +401,7 @@ export class PostsGenerationController {
     modelKey: DEFAULT_MINI_TEXT_MODEL,
     source: ActivitySource.POST_ENHANCEMENT,
   })
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async scoreSeo(
@@ -455,32 +441,19 @@ export class PostsGenerationController {
   }
 
   @Post('hook-generations')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   // @ts-expect-error TS2345
-  @Credits({
-    allowByokBypass: true,
-    amount: 1,
-    provider: ByokProvider.OPENROUTER,
-    source: ActivitySource.IMAGE_GENERATION,
-  })
+  @Credits({ amount: 1, source: ActivitySource.IMAGE_GENERATION })
   @LogMethod({ logEnd: true, logError: true, logStart: true })
   async generateHookVariations(
     @CurrentUser() user: User,
     @Body() dto: GenerateHooksDto,
-    @Req() request: Request,
+    @Req() _request: Request,
   ) {
     try {
-      return await this.postGenerationService.generateHookVariations(
-        dto,
-        user,
-        resolveByokApiKeyOverride(request),
-      );
+      return await this.postGenerationService.generateHookVariations(dto, user);
     } catch (error: unknown) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-
       const errorMessage = generationFailureMessage(error, 'Unknown error');
       this.logger.error(`Hook generation failed: ${errorMessage}`);
       throw createPostsGenerationHttpException(

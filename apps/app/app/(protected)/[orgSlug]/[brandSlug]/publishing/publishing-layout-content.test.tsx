@@ -1,33 +1,16 @@
 import '@testing-library/jest-dom/vitest';
-import { usePostsLayout } from '@contexts/posts/posts-layout-context';
-import type {
-  ModalArticleProps,
-  ModalNewsletterProps,
-  ModalPostProps,
-} from '@props/modals/modal.props';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import PublishingLayoutContent from './publishing-layout-content';
 
 const usePathnameMock = vi.fn();
 const useRouterMock = vi.fn();
 const useSearchParamsMock = vi.fn();
-const modalCallbacks = vi.hoisted(() => ({
-  articleMount: vi.fn(),
-  article: undefined as ModalArticleProps['onCreated'],
-  newsletter: undefined as ModalNewsletterProps['onCreated'] | undefined,
-  post: undefined as ModalPostProps | undefined,
-}));
+const openAgentComposerMock = vi.fn();
 const openModalMock = vi.fn();
-const pushMock = vi.fn();
-const hrefMock = vi.fn((path: string) => `/acme/main${path}`);
 
-const brandMock = vi.hoisted(() => ({
-  label: 'Acme Creator',
-  credentials: [] as { id: string; platform: string }[],
-}));
+const brandMock = vi.hoisted(() => ({ label: 'Acme Creator', credentials: [] as { id: string; platform: string }[] }));
 
 vi.mock('@contexts/user/brand-context/brand-context', () => ({
   useBrand: vi.fn(() => ({
@@ -44,19 +27,8 @@ vi.mock('@helpers/ui/modal/modal.helper', () => ({
 }));
 
 vi.mock('@ui/lazy/modal/LazyModal', () => ({
-  LazyModalArticle: (props: ModalArticleProps) => {
-    modalCallbacks.articleMount();
-    modalCallbacks.article = props.onCreated;
-    return null;
-  },
-  LazyModalNewsletter: (props: ModalNewsletterProps) => {
-    modalCallbacks.newsletter = props.onCreated;
-    return null;
-  },
-  LazyModalPost: (props: ModalPostProps) => {
-    modalCallbacks.post = props;
-    return null;
-  },
+  LazyModalCreateThread: () => null,
+  LazyModalPost: () => null,
 }));
 
 vi.mock('next-intl', async () => {
@@ -73,8 +45,8 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => useSearchParamsMock(),
 }));
 
-vi.mock('@hooks/navigation/use-org-url', () => ({
-  useOrgUrl: () => ({ href: hrefMock }),
+vi.mock('@/hooks/use-open-agent-composer', () => ({
+  useOpenAgentComposer: () => openAgentComposerMock,
 }));
 
 class MockIntersectionObserver {
@@ -85,60 +57,16 @@ class MockIntersectionObserver {
 
 vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
 
-function ToolbarFixture() {
-  const { setLeadingNode, setFiltersNode, setExportNode } = usePostsLayout();
-  useEffect(() => {
-    setLeadingNode(<input aria-label="Search posts" />);
-    setFiltersNode(<button type="button">Filter posts</button>);
-    setExportNode(<a href="/acme/main/publishing/review">Approval queue</a>);
-    return () => {
-      setLeadingNode(null);
-      setFiltersNode(null);
-      setExportNode(null);
-    };
-  }, [setLeadingNode, setFiltersNode, setExportNode]);
-  return <div>posts</div>;
-}
-
 describe('PublishingLayoutContent', () => {
   beforeEach(() => {
-    modalCallbacks.articleMount.mockClear();
     brandMock.label = 'Acme Creator';
-    brandMock.credentials = [];
-    modalCallbacks.post = undefined;
+    openAgentComposerMock.mockReset();
     openModalMock.mockReset();
-    pushMock.mockReset();
-    hrefMock.mockClear();
     usePathnameMock.mockReturnValue('/publishing/posts');
-    useRouterMock.mockReturnValue({ push: pushMock, refresh: vi.fn() });
+    useRouterMock.mockReturnValue({ refresh: vi.fn() });
     useSearchParamsMock.mockReturnValue(
       new URLSearchParams('platform=youtube'),
     );
-  });
-
-  it('puts existing search left and refresh, queue, filters, New post on the right', () => {
-    render(
-      <PublishingLayoutContent>
-        <ToolbarFixture />
-      </PublishingLayoutContent>,
-    );
-    const search = screen.getByRole('textbox', { name: 'Search posts' });
-    expect(screen.getByTestId('section-topbar-leading')).toContainElement(
-      search,
-    );
-    const controls = [
-      search,
-      screen.getByRole('button', { name: /refresh/i }),
-      screen.getByRole('link', { name: 'Approval queue' }),
-      screen.getByRole('button', { name: 'Filter posts' }),
-      screen.getByRole('button', { name: /new post/i }),
-    ];
-    for (let index = 1; index < controls.length; index++) {
-      expect(
-        controls[index - 1].compareDocumentPosition(controls[index]) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-    }
   });
 
   it('lets Campaigns own their chrome instead of the Posts New post menu', () => {
@@ -156,20 +84,23 @@ describe('PublishingLayoutContent', () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each([
-    '/acme/moonrise/publishing/campaigns/campaign-1/calendar',
-    '/acme/~/publishing/campaigns/campaign-1/calendar',
-  ])('leaves modal ownership to the campaign calendar at %s', (pathname) => {
-    usePathnameMock.mockReturnValue(pathname);
+  it('lets Calendar own its controls without an extra publishing toolbar', () => {
+    usePathnameMock.mockReturnValue('/demo/FUDNEWS/publishing/calendar');
+
     render(
       <PublishingLayoutContent>
-        <div>calendar</div>
+        <div>calendar grid</div>
       </PublishingLayoutContent>,
     );
-    expect(modalCallbacks.articleMount).not.toHaveBeenCalled();
+
+    expect(screen.getByText('calendar grid')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /new post/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId('container')).not.toBeInTheDocument();
   });
 
-  it('renders one New post button and leaves filters to the posts list', () => {
+  it('renders the New post menu and leaves filters to the posts list', () => {
     render(
       <PublishingLayoutContent>
         <div>child content</div>
@@ -188,57 +119,48 @@ describe('PublishingLayoutContent', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('opens the unified composer without a format menu', async () => {
+  it('opens the manual composer without a connected account', async () => {
+    const user = userEvent.setup();
+    render(<PublishingLayoutContent><div>posts</div></PublishingLayoutContent>);
+    await user.click(screen.getByRole('button', { name: /new post/i }));
+    await user.click(screen.getByRole('button', { name: /social post/i }));
+    expect(openModalMock).toHaveBeenCalledWith('modal-post');
+    expect(openAgentComposerMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps agent assistance optional with a clean prompt', async () => {
+    const user = userEvent.setup();
+    render(<PublishingLayoutContent><div>posts</div></PublishingLayoutContent>);
+    await user.click(screen.getByRole('button', { name: /new post/i }));
+    await user.click(screen.getByRole('button', { name: /ask agent/i }));
+    expect(openAgentComposerMock).toHaveBeenCalledWith('Draft a social post for my brand.');
+  });
+
+  it('opens first-class X long-form and thread composers', async () => {
     const user = userEvent.setup();
     render(
       <PublishingLayoutContent>
-        <div>posts</div>
+        <div>child content</div>
       </PublishingLayoutContent>,
     );
 
-    await user.click(screen.getByRole('button', { name: /new post/i }));
-
-    expect(openModalMock).toHaveBeenCalledTimes(1);
-    expect(openModalMock).toHaveBeenCalledWith('modal-post-compose');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
-    expect(pushMock).not.toHaveBeenCalled();
-  });
-
-  it('mounts the composer with every connected account as a destination', () => {
-    brandMock.credentials = [
-      { id: 'cred-x', platform: 'twitter' },
-      { id: 'cred-li', platform: 'linkedin' },
-    ];
-    render(
-      <PublishingLayoutContent>
-        <div>posts</div>
-      </PublishingLayoutContent>,
+    await user.click(await screen.findByRole('button', { name: /new post/i }));
+    await user.click(
+      await screen.findByRole('button', { name: /x long post/i }),
     );
+    expect(openModalMock).toHaveBeenCalledWith('modal-post-long-form');
 
-    expect(modalCallbacks.post?.isComposer).toBe(true);
-    expect(modalCallbacks.post?.modalId).toBe('modal-post-compose');
-    expect(modalCallbacks.post?.credentials?.map((c) => c.id)).toEqual([
-      'cred-x',
-      'cred-li',
-    ]);
-  });
+    // openModal is mocked, so no modal takes over and the menu stays open —
+    // it marks the rest of the page aria-hidden, which would hide the trigger
+    // from the next query. Dismiss it before reopening.
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(document.body).not.toHaveAttribute('data-scroll-locked');
+    });
 
-  it('routes article and newsletter creation to their editors', () => {
-    render(
-      <PublishingLayoutContent>
-        <div>posts</div>
-      </PublishingLayoutContent>,
-    );
-
-    modalCallbacks.article?.(['article-1', 'article-2']);
-    expect(pushMock).toHaveBeenLastCalledWith(
-      '/acme/main/publishing/posts/article-1',
-    );
-    modalCallbacks.newsletter?.('newsletter-1');
-    expect(pushMock).toHaveBeenLastCalledWith(
-      '/acme/main/edit/newsletter/newsletter-1',
-    );
+    await user.click(await screen.findByRole('button', { name: /new post/i }));
+    await user.click(await screen.findByRole('button', { name: /x thread/i }));
+    expect(openModalMock).toHaveBeenCalledWith('modal-thread-create');
   });
 
   it('skips the container chrome for organization-and-brand-scoped detail routes', () => {

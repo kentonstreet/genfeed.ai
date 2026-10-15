@@ -25,6 +25,10 @@ import {
   timezoneSchema,
 } from '../helpers/common-schemas';
 
+// ============================================================================
+// Type Aliases from OpenAPI
+// ============================================================================
+
 /**
  * Request payload for creating a new post
  * Derived from OpenAPI CreatePostDto schema
@@ -33,7 +37,6 @@ export type CreatePostRequest = Omit<
   components['schemas']['CreatePostDto'],
   'status' | 'credentialId'
 > & {
-  brandId?: string;
   credentialId?: string;
   platform?: Platform;
   format?: PostFormat;
@@ -50,12 +53,15 @@ export type UpdatePostRequest = Omit<
   format?: PostFormat;
 };
 
+// ============================================================================
+// Zod Schemas for Runtime Validation
+// ============================================================================
+
 /**
  * Zod schema matching CreatePostDto
  * Use with react-hook-form's zodResolver for form validation
  */
 export const createPostSchema = z.object({
-  brandId: entityIdSchema.optional(),
   category: z.nativeEnum(PostCategory).optional(),
   credentialId: entityIdSchema.optional(),
   platform: z.nativeEnum(Platform).optional(),
@@ -132,6 +138,10 @@ export const updatePostSchema = z.object({
   timezone: timezoneSchema.optional(),
   visibility: z.nativeEnum(PostVisibility).optional(),
 }) satisfies z.ZodType<UpdatePostRequest>;
+
+// ============================================================================
+// Inferred Types from Zod Schemas
+// ============================================================================
 
 /**
  * Inferred type from createPostSchema

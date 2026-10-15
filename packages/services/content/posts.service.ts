@@ -90,7 +90,6 @@ export class PostsService extends BaseService<
     const response = await this.instance.post<PostDraftGenerationResult>(
       '/draft-generations',
       data,
-      { timeout: 120_000 },
     );
     return response.data;
   }
@@ -99,26 +98,12 @@ export class PostsService extends BaseService<
     id: string,
     prompt: string,
     tone?: 'professional' | 'casual' | 'viral' | 'educational' | 'humorous',
-    options: { isDraft?: boolean } = {},
   ): Promise<Post> {
     const response = await this.instance.post<JsonApiResponseDocument>(
       `/${id}/enhancements`,
-      { isDraft: options.isDraft, prompt, tone },
+      { prompt, tone },
     );
     return this.mapOne(response.data);
-  }
-
-  /** Proposed replies for an X post; nothing is saved until the user adds them. */
-  public async draftThread(
-    id: string,
-    count: 2 | 3 | 4 | 5,
-    tone?: 'professional' | 'casual' | 'viral' | 'educational' | 'humorous',
-  ): Promise<string[]> {
-    const response = await this.instance.post<{ posts: string[] }>(
-      `/${id}/thread-drafts`,
-      { count, tone },
-    );
-    return response.data.posts;
   }
 
   public async scoreSeo(id: string, data: ScoreSeoRequest = {}): Promise<Post> {
@@ -234,7 +219,6 @@ export class PostsService extends BaseService<
    */
   public async createThread(data: {
     posts: Array<{
-      brandId?: string;
       credentialId?: string;
       platform?: Platform;
       description: string;
@@ -324,22 +308,6 @@ export class PostsService extends BaseService<
   public async retry(id: string): Promise<Post> {
     const response = await this.instance.post<JsonApiResponseDocument>(
       `/${id}/retry`,
-    );
-    return this.mapOne(response.data);
-  }
-
-  /**
-   * Retry one failed account-generation placeholder (a thread is retried
-   * whole) under a new request key; credits are held again, nothing is
-   * retried automatically.
-   */
-  public async retryAccountGeneration(
-    id: string,
-    requestKey: string,
-  ): Promise<Post> {
-    const response = await this.instance.post<JsonApiResponseDocument>(
-      `/${id}/generation-retries`,
-      { requestKey },
     );
     return this.mapOne(response.data);
   }

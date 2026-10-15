@@ -65,11 +65,6 @@ export class CreatePostDto {
   readonly credentialId?: string;
 
   @IsOptional()
-  @IsEntityId()
-  @ApiProperty({ description: 'The selected workspace brand', required: false })
-  readonly brandId?: string;
-
-  @IsOptional()
   @IsEnum(Platform)
   @ApiProperty({ enum: Platform, enumName: 'Platform', required: false })
   readonly platform?: Platform;
@@ -377,7 +372,7 @@ export class CreatePostDto {
 
   @ApiProperty({
     description:
-      'Origin label for the post (e.g. agent, batch, manual). Free-form string.',
+      'Origin label for the post (e.g. agent, fastlane, manual). Free-form string.',
     required: false,
   })
   @IsOptional()
