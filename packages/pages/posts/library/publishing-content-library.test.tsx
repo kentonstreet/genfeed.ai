@@ -2,7 +2,6 @@ import '@testing-library/jest-dom/vitest';
 import {
   ArticleCategory,
   Platform,
-  PostFormat,
   PostStatus,
   TargetExecutionState,
 } from '@genfeedai/contracts';
@@ -26,8 +25,6 @@ const mocks = vi.hoisted(() => ({
   replace: vi.fn(),
   search: '',
   setFiltersNode: vi.fn(),
-  setLeadingNode: vi.fn(),
-  setExportNode: vi.fn(),
   setIsRefreshing: vi.fn(),
   setRefresh: vi.fn(),
   setViewToggleNode: vi.fn(),
@@ -84,8 +81,6 @@ vi.mock('@contexts/user/brand-context/brand-context', () => ({
 vi.mock('@contexts/posts/posts-layout-context', () => ({
   usePostsLayout: () => ({
     setFiltersNode: mocks.setFiltersNode,
-    setLeadingNode: mocks.setLeadingNode,
-    setExportNode: mocks.setExportNode,
     setIsRefreshing: mocks.setIsRefreshing,
     setRefresh: mocks.setRefresh,
     setViewToggleNode: mocks.setViewToggleNode,
@@ -150,44 +145,6 @@ describe('PublishingContentLibrary', () => {
     await waitFor(() => expect(mocks.setFiltersNode).toHaveBeenCalled());
   });
 
-  it('drops the Type column and tags only non-plain formats', () => {
-    render(<PublishingContentLibrary />);
-
-    expect(
-      screen.queryByRole('columnheader', { name: 'Type' }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText('Social post')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Article').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Newsletter').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Thread')).not.toBeInTheDocument();
-  });
-
-  it('leads a post row with its target account avatar and a thread tag', () => {
-    mocks.queryData = {
-      ...collections,
-      posts: [
-        {
-          createdAt: '2026-08-08T10:00:00.000Z',
-          credential: {
-            externalHandle: 'acme_x',
-            id: 'cred-x',
-            platform: Platform.TWITTER,
-          },
-          description: 'Thread opener',
-          format: PostFormat.THREAD,
-          id: 'post-thread',
-          platform: Platform.TWITTER,
-          status: PostStatus.SCHEDULED,
-        },
-      ],
-    };
-
-    render(<PublishingContentLibrary />);
-
-    expect(screen.getAllByText('Thread').length).toBeGreaterThan(0);
-    expect(screen.getByTitle('acme_x')).toBeInTheDocument();
-  });
-
   it.each([
     ['Social launch copy', '/publishing/posts/post-1'],
     ['Launch guide', '/publishing/posts/article-1'],
@@ -223,28 +180,19 @@ describe('PublishingContentLibrary', () => {
     ).toHaveAttribute('href', '/acme/main/publishing/posts?release=release-1');
   });
 
-  it('keeps the leading search tied to the URL and out of the right filters', async () => {
-    mocks.search = 'status=draft&search=launch&page=3';
+  it('links to the approval queue and carries the selected batch and item', async () => {
+    mocks.search = 'batch=batch-1&item=item-9&status=draft';
+
     render(<PublishingContentLibrary />);
-    const [search] = mocks.setLeadingNode.mock.calls.at(-1) ?? [];
-    const [filters] = mocks.setFiltersNode.mock.calls.at(-1) ?? [];
-    const toolbar = render(filters);
-    expect(
-      toolbar.queryByPlaceholderText('Search posts'),
-    ).not.toBeInTheDocument();
-    const leading = render(search);
-    const input = leading.getByPlaceholderText('Search posts');
-    expect(input).toHaveValue('launch');
-    fireEvent.change(input, { target: { value: 'updated' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(mocks.replace).toHaveBeenCalled());
-    const url = new URL(
-      mocks.replace.mock.calls.at(-1)?.[0],
-      'https://example.test',
+
+    await waitFor(() => expect(mocks.setFiltersNode).toHaveBeenCalled());
+    const [toolbar] = mocks.setFiltersNode.mock.calls.at(-1) ?? [];
+    render(toolbar);
+
+    expect(screen.getByRole('link', { name: 'approvalQueue' })).toHaveAttribute(
+      'href',
+      '/acme/main/publishing/review?batch=batch-1&item=item-9',
     );
-    expect(url.searchParams.get('search')).toBe('updated');
-    expect(url.searchParams.get('status')).toBe('draft');
-    expect(url.searchParams.has('page')).toBe(false);
   });
 
   it('combines multiple statuses with the content type', () => {
@@ -358,7 +306,7 @@ describe('PublishingContentLibrary', () => {
               id: 'target-soon',
               platform: Platform.INSTAGRAM,
               executionState: TargetExecutionState.SCHEDULED,
-              scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+              scheduledDate: new Date(Date.now() + 3600000).toISOString(),
             },
           ],
         },
@@ -380,42 +328,6 @@ describe('PublishingContentLibrary', () => {
     expect(
       screen.getByRole('link', { name: 'Open Social launch copy' }),
     ).toBeVisible();
-  });
-
-  it('renders the approval queue as a Posts view that owns the toolbar', () => {
-    mocks.search = 'view=approvals&run=batch-1&item=item-9';
-    mocks.setFiltersNode.mockClear();
-    mocks.setLeadingNode.mockClear();
-
-    render(
-      <PublishingContentLibrary
-        approvals={<div>Approval queue content</div>}
-        calendar={<div>Calendar content</div>}
-      />,
-    );
-
-    expect(screen.getByText('Approval queue content')).toBeVisible();
-    expect(screen.queryByText('Calendar content')).not.toBeInTheDocument();
-    expect(mocks.setFiltersNode).not.toHaveBeenCalledWith(expect.anything());
-    expect(mocks.setLeadingNode).not.toHaveBeenCalledWith(expect.anything());
-
-    const [toggle] = mocks.setViewToggleNode.mock.calls.at(-1) ?? [];
-    render(toggle);
-    expect(
-      screen.getByRole('radio', { name: 'viewToggle.approvals' }),
-    ).toBeChecked();
-    fireEvent.click(screen.getByRole('radio', { name: 'List' }));
-    // Leaving approvals drops the queue's Turbo run and item selection.
-    expect(mocks.replace.mock.calls.at(-1)?.[0]).toBe(
-      '/acme/main/publishing/posts?view=list',
-    );
-  });
-
-  it('hides the approvals view when no queue is provided', () => {
-    mocks.search = 'view=approvals';
-    render(<PublishingContentLibrary />);
-
-    expect(screen.getByText('3 posts')).toBeVisible();
   });
 
   it('retains the view selector around calendar content', () => {

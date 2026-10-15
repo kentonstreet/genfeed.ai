@@ -1,13 +1,10 @@
 'use client';
 
-import { usePostsLayout } from '@contexts/posts/posts-layout-context';
 import { PageScope, PostStatus } from '@genfeedai/contracts';
 import type { IPost, IPreset } from '@genfeedai/contracts/interfaces';
 import PostDetailOverlay from '@pages/posts/detail/PostDetailOverlay';
 import PostsGrid from '@pages/posts/list/components/PostsGrid';
-import PostsListToolbar, {
-  PostsListSearch,
-} from '@pages/posts/list/components/PostsListToolbar';
+import PostsListToolbar from '@pages/posts/list/components/PostsListToolbar';
 import type { PostsListResult } from '@pages/posts/list/components/posts-query.helpers';
 import { needsPostAttention } from '@pages/posts/list/post-attention.helpers';
 import type {
@@ -55,7 +52,6 @@ export default function PostsList({
   onSuggestScheduleWithAgent,
 }: PostsListProps) {
   const translate = useTranslations('pages.posts.list.collection');
-  const { setLeadingNode } = usePostsLayout();
   const {
     adminBrand,
     adminOrg,
@@ -148,15 +144,8 @@ export default function PostsList({
   }, [setViewToggleNode]);
 
   useEffect(() => {
-    setLeadingNode(
-      <PostsListSearch
-        searchValue={filterSearch}
-        onSearchChange={handleSearchChange}
-      />,
-    );
     setFiltersNode(
       <PostsListToolbar
-        showSearch={false}
         searchValue={filterSearch}
         sortValue={filterSort || getDefaultSort(status)}
         sortOptions={sortOptions}
@@ -174,17 +163,13 @@ export default function PostsList({
     handleToolbarSortChange,
     publishingView,
     setFiltersNode,
-    setLeadingNode,
     sortOptions,
     status,
   ]);
 
   useEffect(() => {
-    return () => {
-      setFiltersNode(null);
-      setLeadingNode(null);
-    };
-  }, [setFiltersNode, setLeadingNode]);
+    return () => setFiltersNode(null);
+  }, [setFiltersNode]);
 
   return (
     <div>

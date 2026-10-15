@@ -18,7 +18,6 @@ import {
   formatDateInTimezone,
   getBrowserTimezone,
 } from '@helpers/formatting/timezone/timezone.helper';
-import { stripHtmlToPlainText } from '@helpers/security/strip-html.helper';
 import { getPlatformIconComponent } from '@helpers/ui/platform-icon/platform-icon.helper';
 import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import Card from '@ui/card/Card';
@@ -111,7 +110,14 @@ function getStatusPresentation(status: string): {
 }
 
 function stripHtml(value?: string): string {
-  return stripHtmlToPlainText(value).replace(/\s+/g, ' ');
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function getPostTitle(post: IPost): string {
@@ -221,14 +227,7 @@ const PostsGrid = memo(
               (!primaryAction.isVisible || primaryAction.isVisible(post))
                 ? primaryAction
                 : null);
-            const visibleSecondaryActions = [
-              ...(retryAction &&
-              primaryAction &&
-              (!primaryAction.isVisible || primaryAction.isVisible(post))
-                ? [primaryAction]
-                : []),
-              ...secondaryActions,
-            ].filter(
+            const visibleSecondaryActions = secondaryActions.filter(
               (action) =>
                 action.key !== visiblePrimaryAction?.key &&
                 action.key !== 'open-platform' &&

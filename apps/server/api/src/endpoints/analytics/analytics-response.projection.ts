@@ -2,7 +2,6 @@ import {
   AnalyticsMetric,
   CredentialPlatform,
   fromPrismaCredentialPlatform,
-  sumEngagement,
 } from '@genfeedai/contracts';
 import type {
   IPlatformComparison,
@@ -89,12 +88,8 @@ export class AnalyticsResponseProjection {
     const totalComments = Number(current.total_comments);
     const totalShares = Number(current.total_shares);
     const totalSaves = Number(current.total_saves);
-    const totalEngagement = sumEngagement({
-      comments: totalComments,
-      likes: totalLikes,
-      saves: totalSaves,
-      shares: totalShares,
-    });
+    const totalEngagement =
+      totalLikes + totalComments + totalShares + totalSaves;
     const totalPosts = Number(current.total_posts);
     const totalViews = Number(current.total_views);
     const prevEngagement = Number(previous.total_engagement);
@@ -154,8 +149,6 @@ export class AnalyticsResponseProjection {
       totalSaves: Number(row.total_saves),
       totalShares: Number(row.total_shares),
       totalViews: Number(row.total_views),
-      // Observed audience; null when the post never recorded one.
-      visibility: typeof row.visibility === 'string' ? row.visibility : null,
     }));
   }
 
@@ -186,12 +179,11 @@ export class AnalyticsResponseProjection {
       | AnalyticsMetric.ENGAGEMENT
       | AnalyticsMetric.POSTS,
   ): Array<{ date: string; growth: number; trend: string; value: number }> {
-    const prevEngagement = sumEngagement({
-      comments: Number(previous.total_comments),
-      likes: Number(previous.total_likes),
-      saves: Number(previous.total_saves),
-      shares: Number(previous.total_shares),
-    });
+    const prevEngagement =
+      Number(previous.total_likes) +
+      Number(previous.total_comments) +
+      Number(previous.total_shares) +
+      Number(previous.total_saves);
 
     return currentResults.map((day) => {
       let growth = 0;
@@ -236,12 +228,7 @@ export class AnalyticsResponseProjection {
     const totalLikes = Number(row.total_likes);
     const totalSaves = Number(row.total_saves);
     const totalShares = Number(row.total_shares);
-    const total = sumEngagement({
-      comments: totalComments,
-      likes: totalLikes,
-      saves: totalSaves,
-      shares: totalShares,
-    });
+    const total = totalLikes + totalComments + totalShares + totalSaves;
 
     return {
       comments: totalComments,

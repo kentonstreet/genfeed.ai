@@ -1,14 +1,12 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
 import { RedisCacheInterceptor } from '@api/cache/redis/redis-cache.interceptor';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { AnalyticsService } from '@api/endpoints/analytics/analytics.service';
 import { AnalyticsExportService } from '@api/endpoints/analytics/analytics-export.service';
 import { appendAnalyticsPlatform } from '@api/endpoints/analytics/analytics-response.projection';
 import {
   buildAnalyticsCacheKey,
   buildOwnedAnalyticsCacheKey,
-  buildTopContentAnalyticsCacheKey,
-  resolveAnalyticsOrganizationId,
+  resolveAnalyticsTenantScope,
   resolveOwnedAnalyticsTenantScope,
 } from '@api/endpoints/analytics/analytics-tenant-scope';
 import { BusinessAnalyticsService } from '@api/endpoints/analytics/business-analytics.service';
@@ -62,12 +60,26 @@ import type {
 
 @AutoSwagger()
 @FeatureFlag('analytics')
-@OrganizationModule('analytics')
 @Controller('analytics')
 @UseGuards(RolesGuard)
 @UseInterceptors(RedisCacheInterceptor)
 export class AnalyticsController {
   private readonly constructorName: string = String(this.constructor.name);
+
+  private getScopedOrganizationId(
+    user: User,
+    request?: ExpressRequest,
+  ): string | undefined {
+    return resolveAnalyticsTenantScope(user, request).organizationId;
+  }
+
+  /**
+   * For routes that return post titles, provider ids, or per-post rows. See
+   * `resolveOwnedAnalyticsTenantScope`.
+   */
+  private getOwnedOrganizationId(user: User, request?: ExpressRequest): string {
+    return resolveOwnedAnalyticsTenantScope(user, request);
+  }
 
   constructor(
     private readonly loggerService: LoggerService,
@@ -240,7 +252,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     await this.analyticsService.assertBrandInScope(
       query.brandId,
       organizationId,
@@ -302,7 +314,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -320,7 +332,15 @@ export class AnalyticsController {
 
   @Get('top')
   @Cache({
-    keyGenerator: buildTopContentAnalyticsCacheKey,
+    keyGenerator: (req) =>
+      buildOwnedAnalyticsCacheKey('top', req, [
+        req.query?.startDate || 'default',
+        req.query?.endDate || 'default',
+        req.query?.metric || 'views',
+        req.query?.limit || '10',
+        req.query?.brandId || '',
+        req.query?.platform || '',
+      ]),
     tags: ['analytics', 'top-content'],
     ttl: 300,
   })
@@ -330,7 +350,7 @@ export class AnalyticsController {
     @Query() query: TopContentQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveOwnedAnalyticsTenantScope(user, req);
+    const organizationId = this.getOwnedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -345,7 +365,6 @@ export class AnalyticsController {
       query.brandId,
       query.platform as CredentialPlatform,
       organizationId,
-      query.source,
     );
     return serializeSingle(req, AnalyticsTopPostSerializer, data);
   }
@@ -367,7 +386,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -401,7 +420,7 @@ export class AnalyticsController {
     @Query() query: GrowthQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -436,7 +455,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsFilterQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -470,12 +489,10 @@ export class AnalyticsController {
     @Query() query: ViralHooksQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveOwnedAnalyticsTenantScope(user, req);
+    const organizationId = this.getOwnedOrganizationId(user, req);
     this.loggerService.log(url, { query });
-    await this.analyticsService.assertBrandInScope(
-      query.brandId,
-      organizationId,
-    );
+    // biome-ignore format: keep file-lines at the complexity ratchet
+    await this.analyticsService.assertBrandInScope(query.brandId, organizationId);
     const data = await this.analyticsService.getViralHooks(
       query.startDate,
       query.endDate,

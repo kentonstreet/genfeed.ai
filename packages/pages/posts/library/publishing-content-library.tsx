@@ -14,7 +14,6 @@ import {
   ITEMS_PER_PAGE,
 } from '@genfeedai/contracts/constants';
 import type { IPost, IReleaseGroup } from '@genfeedai/contracts/interfaces';
-import { cn } from '@genfeedai/helpers/formatting/cn/cn.util';
 import {
   getPublishingPostHref,
   getPublishingReleaseHref,
@@ -36,13 +35,11 @@ import {
   filterPublishingContentLibraryItems,
   formatPublishingContentChannel,
   formatPublishingContentStatus,
+  formatPublishingContentType,
   type PublishingContentLibraryItem,
   parsePublishingContentType,
 } from '@pages/posts/library/publishing-content-library.helpers';
-import PublishingContentLibraryToolbar, {
-  PublishingContentLibrarySearch,
-} from '@pages/posts/library/publishing-content-library-toolbar';
-import PublishingPostHoverPreview from '@pages/posts/library/publishing-post-hover-preview';
+import PublishingContentLibraryToolbar from '@pages/posts/library/publishing-content-library-toolbar';
 import { needsPostAttention } from '@pages/posts/list/post-attention.helpers';
 import ReleaseDetailDrawer from '@pages/posts/release/release-detail-drawer';
 import { isTargetBlockedByReadiness } from '@pages/posts/shared/release-status.helpers';
@@ -63,24 +60,15 @@ import AppTable from '@ui/display/table/Table';
 import Pagination from '@ui/navigation/pagination/Pagination';
 import ViewToggle from '@ui/navigation/view-toggle/ViewToggle';
 import { Button } from '@ui/primitives/button';
-import { hoverRevealClassName } from '@ui/styles/hover-reveal';
 import {
   buildSourcePostVariationsHref,
   isSourcePostVariationPlatform,
 } from '@utils/url/desktop-loop-url.util';
-import {
-  CalendarDays,
-  ClipboardCheck,
-  Files,
-  Kanban,
-  LayoutGrid,
-  PanelRightOpen,
-  RotateCcw,
-  Rows3,
-} from 'lucide-react';
+import { CalendarDays, Files, Kanban, LayoutGrid, Rows3 } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { buildApprovalQueueHref } from './approval-queue-links.helpers';
 
 interface PublishingContentCollections {
   articles: Article[];
@@ -97,14 +85,11 @@ const EMPTY_COLLECTIONS: PublishingContentCollections = {
 };
 
 export default function PublishingContentLibrary({
-  approvals,
   calendar,
 }: {
-  approvals?: React.ReactNode;
   calendar?: React.ReactNode;
 }) {
   const translate = useTranslations('pages.posts.list.collection');
-  const translateList = useTranslations('pages.posts.list');
   const { brandId, isReady, organizationId, pageScope } = useCollectionScope();
   const isFetchReady = isCollectionFetchReady({
     brandId,
@@ -112,13 +97,8 @@ export default function PublishingContentLibrary({
     organizationId,
     pageScope,
   });
-  const {
-    setLeadingNode,
-    setFiltersNode,
-    setIsRefreshing,
-    setRefresh,
-    setViewToggleNode,
-  } = usePostsLayout();
+  const { setFiltersNode, setIsRefreshing, setRefresh, setViewToggleNode } =
+    usePostsLayout();
   const { href } = useOrgUrl();
   const pathname = usePathname();
   const router = useRouter();
@@ -126,8 +106,6 @@ export default function PublishingContentLibrary({
   const searchParamsString = searchParams?.toString() ?? '';
   const view = new URLSearchParams(searchParamsString).get('view') || 'list';
   const isCalendar = Boolean(calendar) && view === 'calendar';
-  const isApprovals = Boolean(approvals) && view === 'approvals';
-  const isEmbeddedView = isCalendar || isApprovals;
   const parsedSearchParams = useMemo(
     () => new URLSearchParams(searchParamsString),
     [searchParamsString],
@@ -191,12 +169,12 @@ export default function PublishingContentLibrary({
           const result: IReleaseGroup[] = [];
           let page = 1;
           while (!signal.aborted) {
-            const turboRun = await releasesService.findAllPage(
+            const batch = await releasesService.findAllPage(
               { ...(brandId ? { brandId } : {}), page, limit: 100 },
               signal,
             );
-            result.push(...turboRun.items);
-            if (!turboRun.hasNext) break;
+            result.push(...batch.items);
+            if (!batch.hasNext) break;
             page += 1;
           }
           signal.throwIfAborted();
@@ -221,10 +199,6 @@ export default function PublishingContentLibrary({
   const items = useMemo(
     () => createPublishingContentLibraryItems(collections),
     [collections],
-  );
-  const postsById = useMemo(
-    () => new Map(collections.posts.map((post) => [post.id, post])),
-    [collections.posts],
   );
   const channelOptions = useMemo(
     () =>
@@ -323,12 +297,6 @@ export default function PublishingContentLibrary({
       if (key === 'post') {
         params.delete('release');
       }
-      if (key === 'view') {
-        // Approval queue state does not apply to the other Posts views.
-        params.delete('run');
-        params.delete('filter');
-        params.delete('item');
-      }
       if (key === 'status') {
         params.delete('executionState');
         params.delete('publicationState');
@@ -404,7 +372,7 @@ export default function PublishingContentLibrary({
         item.release?.targets?.some(
           (target) =>
             target.executionState === TargetExecutionState.FAILED ||
-            needsPostAttention(target.executionState, target.scheduledAt),
+            needsPostAttention(target.executionState, target.scheduledDate),
         )),
   );
   const retryItem = async (item: PublishingContentLibraryItem) => {
@@ -441,95 +409,53 @@ export default function PublishingContentLibrary({
       }
     }
   };
-  const isItemFailed = (item: PublishingContentLibraryItem) =>
-    item.type === 'post' &&
-    Boolean(
-      item.release
+  const renderPrimaryAction = (item: PublishingContentLibraryItem) => {
+    const isFailed =
+      item.type === 'post' &&
+      (item.release
         ? item.release.targets?.some(
             (target) =>
               target.executionState === TargetExecutionState.FAILED &&
               !isTargetBlockedByReadiness(target),
           )
-        : item.status === 'failed',
-    );
-  const getOverflowActions = (item: PublishingContentLibraryItem) =>
-    (item.release?.targets ?? []).flatMap((target) => [
-      {
-        id: `target:${target.id}`,
-        label: translate('openTarget', { platform: target.platform }),
-        href: href(getPublishingPostHref(target.id)),
-      },
-      ...(target.executionState === TargetExecutionState.PUBLISHED &&
-      isSourcePostVariationPlatform(target.platform)
-        ? [
-            {
-              id: `variations:${target.id}`,
-              label: translate('variations', { platform: target.platform }),
-              href: href(
-                buildSourcePostVariationsHref({
-                  platform: target.platform,
-                  postId: target.id,
-                }),
-              ),
-            },
-          ]
-        : []),
-    ]);
-  const runPrimaryAction = (item: PublishingContentLibraryItem) => {
-    if (isItemFailed(item)) void retryItem(item);
-    else openRowOverlay(item);
-  };
-
-  // Card views keep a labelled primary action.
-  const renderPrimaryAction = (item: PublishingContentLibraryItem) => (
-    <CollectionItemActions
-      overflow={getOverflowActions(item)}
-      primary={
-        <Button
-          size={ButtonSize.SM}
-          variant={ButtonVariant.SECONDARY}
-          isDisabled={pendingAction !== null}
-          onClick={(event) => {
-            event.stopPropagation();
-            runPrimaryAction(item);
-          }}
-        >
-          {translate(isItemFailed(item) ? 'retry' : 'open')}
-        </Button>
-      }
-    />
-  );
-
-  // Table rows: icon-only actions revealed on row hover or keyboard focus.
-  // The per-target overflow menu varies by row, so this stays a column
-  // rather than the table's static `actions` prop.
-  const renderRowActions = (item: PublishingContentLibraryItem) => {
-    const primaryLabel = translate(isItemFailed(item) ? 'retry' : 'open');
+        : item.status === 'failed');
     return (
       <CollectionItemActions
-        className={cn('justify-end', hoverRevealClassName({ at: 'lg' }))}
-        overflow={getOverflowActions(item)}
+        overflow={(item.release?.targets ?? []).flatMap((target) => [
+          {
+            id: `target:${target.id}`,
+            label: translate('openTarget', { platform: target.platform }),
+            href: href(getPublishingPostHref(target.id)),
+          },
+          ...(target.executionState === TargetExecutionState.PUBLISHED &&
+          isSourcePostVariationPlatform(target.platform)
+            ? [
+                {
+                  id: `variations:${target.id}`,
+                  label: translate('variations', { platform: target.platform }),
+                  href: href(
+                    buildSourcePostVariationsHref({
+                      platform: target.platform,
+                      postId: target.id,
+                    }),
+                  ),
+                },
+              ]
+            : []),
+        ])}
         primary={
           <Button
-            ariaLabel={primaryLabel}
-            icon={
-              isItemFailed(item) ? (
-                <RotateCcw aria-hidden="true" />
-              ) : (
-                <PanelRightOpen aria-hidden="true" />
-              )
-            }
+            size={ButtonSize.SM}
+            variant={ButtonVariant.SECONDARY}
             isDisabled={pendingAction !== null}
-            size={ButtonSize.ICON}
-            tooltip={primaryLabel}
-            tooltipPosition="left"
-            variant={ButtonVariant.GHOST}
-            withWrapper={false}
             onClick={(event) => {
               event.stopPropagation();
-              runPrimaryAction(item);
+              if (isFailed) void retryItem(item);
+              else openRowOverlay(item);
             }}
-          />
+          >
+            {translate(isFailed ? 'retry' : 'open')}
+          </Button>
         }
       />
     );
@@ -537,37 +463,23 @@ export default function PublishingContentLibrary({
 
   const columns: TableColumn<PublishingContentLibraryItem>[] = [
     {
-      className: 'w-full md:w-auto',
       header: 'Content',
       key: 'title',
       render: (item) => (
-        <PublishingPostHoverPreview
-          post={postsById.get(item.id)}
-          release={item.release}
-        >
-          <PublishingContentIdentity
-            accounts={item.accounts}
-            channels={item.channels ?? [item.channel]}
-            format={item.format}
-            title={item.title}
-            summary={item.summary}
-            titleHref={getDetailHref(item)}
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-2 md:hidden">
-            <Badge status={item.status}>
-              {formatPublishingContentStatus(item.status)}
-            </Badge>
-            {item.scheduledAt ? (
-              <span className="text-xs text-muted-foreground">
-                {formatDate(item.scheduledAt)}
-              </span>
-            ) : null}
-          </div>
-        </PublishingPostHoverPreview>
+        <PublishingContentIdentity
+          channels={item.channels ?? [item.channel]}
+          title={item.title}
+          summary={item.summary}
+          titleHref={getDetailHref(item)}
+        />
       ),
     },
     {
-      className: 'hidden md:table-cell',
+      header: 'Type',
+      key: 'type',
+      render: (item) => <Badge>{formatPublishingContentType(item.type)}</Badge>,
+    },
+    {
       header: 'Status',
       key: 'status',
       render: (item) => (
@@ -577,13 +489,11 @@ export default function PublishingContentLibrary({
       ),
     },
     {
-      className: 'hidden md:table-cell',
       header: 'Scheduled',
       key: 'scheduledAt',
       render: (item) => (item.scheduledAt ? formatDate(item.scheduledAt) : '—'),
     },
     {
-      className: 'hidden md:table-cell',
       header: 'Created',
       key: 'createdAt',
       render: (item) => formatDate(item.createdAt),
@@ -591,22 +501,14 @@ export default function PublishingContentLibrary({
     {
       header: <span className="sr-only">Actions</span>,
       key: 'actions',
-      render: (item) => renderRowActions(item),
+      render: (item) => renderPrimaryAction(item),
     },
   ];
 
   useEffect(() => {
-    // The approval queue owns the toolbar while its view is open.
-    if (isApprovals) return;
-    setLeadingNode(
-      <PublishingContentLibrarySearch
-        searchValue={search}
-        onSearchChange={(value) => replaceQueryParam('search', value)}
-      />,
-    );
     setFiltersNode(
       <PublishingContentLibraryToolbar
-        showSearch={false}
+        approvalQueueHref={href(buildApprovalQueueHref(searchParamsString))}
         channelOptions={channelOptions}
         channelValue={channel}
         searchValue={search}
@@ -620,18 +522,15 @@ export default function PublishingContentLibrary({
       />,
     );
 
-    return () => {
-      setFiltersNode(null);
-      setLeadingNode(null);
-    };
+    return () => setFiltersNode(null);
   }, [
     channel,
     channelOptions,
-    isApprovals,
+    href,
     replaceQueryParam,
     search,
+    searchParamsString,
     setFiltersNode,
-    setLeadingNode,
     status,
     statusOptions,
     type,
@@ -643,26 +542,22 @@ export default function PublishingContentLibrary({
         activeView={
           isCalendar
             ? ViewType.CALENDAR
-            : isApprovals
-              ? ViewType.APPROVALS
-              : view === 'board'
-                ? ViewType.KANBAN
-                : view === 'grid'
-                  ? ViewType.GRID
-                  : ViewType.LIST
+            : view === 'board'
+              ? ViewType.KANBAN
+              : view === 'grid'
+                ? ViewType.GRID
+                : ViewType.LIST
         }
         onChange={(next) =>
           replaceQueryParam(
             'view',
             next === ViewType.CALENDAR
               ? 'calendar'
-              : next === ViewType.APPROVALS
-                ? 'approvals'
-                : next === ViewType.KANBAN
-                  ? 'board'
-                  : next === ViewType.GRID
-                    ? 'grid'
-                    : 'list',
+              : next === ViewType.KANBAN
+                ? 'board'
+                : next === ViewType.GRID
+                  ? 'grid'
+                  : 'list',
           )
         }
         options={[
@@ -690,38 +585,25 @@ export default function PublishingContentLibrary({
             icon: <LayoutGrid className="size-3.5" />,
             label: 'Grid',
           },
-          ...(approvals
-            ? [
-                {
-                  type: ViewType.APPROVALS,
-                  icon: <ClipboardCheck className="size-3.5" />,
-                  label: translateList('viewToggle.approvals'),
-                },
-              ]
-            : []),
         ]}
       />,
     );
-    if (!isEmbeddedView)
+    if (!isCalendar)
       setRefresh(() => async () => {
         await refetch();
       });
     return () => {
       setViewToggleNode(null);
-      if (!isEmbeddedView) setRefresh(() => () => {});
+      if (!isCalendar) setRefresh(() => () => {});
     };
   }, [
-    approvals,
     calendar,
-    isApprovals,
     isCalendar,
-    isEmbeddedView,
     view,
     replaceQueryParam,
     refetch,
     setRefresh,
     setViewToggleNode,
-    translateList,
   ]);
 
   useEffect(() => {
@@ -748,7 +630,6 @@ export default function PublishingContentLibrary({
   );
 
   if (isCalendar) return <>{calendar}</>;
-  if (isApprovals) return <>{approvals}</>;
 
   const renderPostCard = (item: PublishingContentLibraryItem) => (
     <div
@@ -765,20 +646,14 @@ export default function PublishingContentLibrary({
       }}
     >
       <Card>
-        <PublishingPostHoverPreview
-          post={postsById.get(item.id)}
-          release={item.release}
-        >
-          <PublishingContentIdentity
-            accounts={item.accounts}
-            channels={item.channels ?? [item.channel]}
-            format={item.format}
-            title={item.title}
-            summary={item.summary}
-            titleHref={getDetailHref(item)}
-          />
-        </PublishingPostHoverPreview>
+        <PublishingContentIdentity
+          channels={item.channels ?? [item.channel]}
+          title={item.title}
+          summary={item.summary}
+          titleHref={getDetailHref(item)}
+        />
         <div className="flex items-center justify-between gap-2">
+          <Badge>{formatPublishingContentType(item.type)}</Badge>
           <Badge status={item.status}>
             {formatPublishingContentStatus(item.status)}
           </Badge>
@@ -864,7 +739,7 @@ export default function PublishingContentLibrary({
         release={selectedRelease}
         error={drawerError}
         pendingAction={pendingAction}
-        reconnectHref={href(APP_ROUTES.SETTINGS.CONNECTED_ACCOUNTS)}
+        reconnectHref={href(APP_ROUTES.SETTINGS.SOCIAL)}
         onClose={() => replaceQueryParam('release', '')}
         onRescheduleRelease={(scheduledDate) => {
           if (selectedRelease)

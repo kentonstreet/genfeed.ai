@@ -14,11 +14,9 @@ import {
 } from '@genfeedai/contracts';
 import { mapPostStatusToCanonicalWrite } from '@genfeedai/contracts/api-types/contracts/scheduler.contract';
 import {
-  ACCOUNT_GENERATION_POST_SOURCE,
   APP_ROUTES,
   createArtifactEditorRoute,
   createBrandAppRoute,
-  createPublishingApprovalsRoute,
   ITEMS_PER_PAGE,
   PUBLISHING_POSTS_QUERY_KEYS,
 } from '@genfeedai/contracts/constants';
@@ -33,7 +31,6 @@ import {
   normalizePostsPlatform,
 } from '@helpers/content/posts.helper';
 import { getBrowserTimezone } from '@helpers/formatting/timezone/timezone.helper';
-import { stripHtmlToPlainText } from '@helpers/security/strip-html.helper';
 import { useAuthedService } from '@hooks/auth/use-authed-service/use-authed-service';
 import {
   isCollectionFetchReady,
@@ -363,16 +360,6 @@ export function usePostsList({
   const findAllPosts = useCallback(() => refreshPosts(), [refreshPosts]);
 
   useEffect(() => {
-    if (!isSocketReady || !brandId) return;
-    return subscribeToSocket(
-      WebSocketPaths.brand(brandId),
-      (data: { event?: string }) => {
-        if (data.event === 'account-generation-progress') void findAllPosts();
-      },
-    );
-  }, [brandId, isSocketReady, subscribeToSocket, findAllPosts]);
-
-  useEffect(() => {
     postsRef.current = posts;
   }, [posts]);
 
@@ -470,8 +457,7 @@ export function usePostsList({
       openConfirmDelete({
         entity: {
           id: post.id,
-          label:
-            post.label || stripHtmlToPlainText(post.description) || 'this post',
+          label: post.label || post.description || 'this post',
         },
         entityName: 'post',
         onConfirm: async () => {
@@ -575,10 +561,9 @@ export function usePostsList({
             );
             router.push(
               href(
-                createPublishingApprovalsRoute({
-                  run: draft.reviewTurboRunId,
-                  filter: draft.reviewTurboRunId ? 'ready' : undefined,
-                }),
+                draft.reviewBatchId
+                  ? `/publishing/review?batch=${draft.reviewBatchId}&filter=ready`
+                  : '/publishing/review',
               ),
             );
           } else {
@@ -601,17 +586,8 @@ export function usePostsList({
     async (post: IPost) => {
       try {
         const postsService = await getPostsService();
-        if (post.source === ACCOUNT_GENERATION_POST_SOURCE) {
-          // A failed generation retries under a new request key; publishing is untouched.
-          await postsService.retryAccountGeneration(
-            post.id,
-            crypto.randomUUID(),
-          );
-          notificationsService.success('Generation retry started');
-        } else {
-          await postsService.retry(post.id);
-          notificationsService.success('Post queued for retry');
-        }
+        await postsService.retry(post.id);
+        notificationsService.success('Post queued for retry');
       } catch (error) {
         notificationsService.error('Failed to retry post. Please try again.');
         logger.error('Failed to retry post', error);
