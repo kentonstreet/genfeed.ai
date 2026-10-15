@@ -1,6 +1,5 @@
 import {
   storyboardLegacyConfigSchema,
-  storyboardLegacyState,
   storyboardStoredRunConfigSchema,
 } from '@api/collections/content-runs/services/storyboard-imported-run-state.schema';
 import { assertStoryboardEditable } from '@api/collections/content-runs/services/storyboard-plan-state';
@@ -183,7 +182,6 @@ describe('Lossless in-place Storyboard converter', () => {
   it('uses deterministic IDs only for never-executed draft scenes', () => {
     const { record, context, config } = fixture();
     if (config.concept) delete config.concept.storyboard[1].id;
-    delete config.scenePipeline;
     const first = storyboardStoredRunConfigSchema.parse(
       convertStoryboardRun(record, context).config,
     );
@@ -240,7 +238,7 @@ describe('Lossless in-place Storyboard converter', () => {
     const { record, context, config } = fixture();
     config.phase = 'paid_draft_ready';
     config.review = {
-      turboRunId: 'batch:original',
+      batchId: 'batch:original',
       postIds: ['post:original'],
       approvedPostIds: ['post:original'],
       workflowExecutionId: 'review-execution:original',
@@ -430,209 +428,6 @@ describe('Lossless in-place Storyboard converter', () => {
       ).toBe('unchanged');
     },
   );
-  it('projects authorized legacy references containing spaces and slashes without remapping or native-ID weakening', () => {
-    const { record, context, config } = fixture();
-    if (!config.scenePipeline || !config.concept) throw new Error('fixture');
-    config.scenePipeline.scenes['scene-1'].image.assetId = 'asset/old key';
-    config.scenePipeline.replacedAssetIds = ['output/old key'];
-    context.authorizedAssetIds.add('asset/old key');
-    context.authorizedAssetIds.add('output/old key');
-    expect(storyboardLegacyConfigSchema.safeParse(config).success).toBe(true);
-    const result = convertStoryboardRun(record, context);
-    expect(result.status).toBe('needs_review');
-    const converted = storyboardStoredRunConfigSchema.parse(result.config);
-    expect(converted.plan).toBeNull();
-    expect(converted.importedPresentation?.shots[0]).toMatchObject({
-      id: 'scene-1',
-      stillAssetId: 'asset/old key',
-    });
-    expect(converted.importedPresentation?.outputAssetIds).toContain(
-      'output/old key',
-    );
-    expect(converted.importedState?.originalConfig).toEqual(config);
-  });
-  it.each(['submitted', 'uncertain', 'reserved', 'uncertain-receipt'] as const)(
-    'blocks guessed paid scene IDs when %s evidence lacks an operation',
-    (kind) => {
-      const { record, context, config } = fixture();
-      if (!config.scenePipeline || !config.concept) throw new Error('fixture');
-      delete config.concept.storyboard[1].id;
-      delete config.scenePipeline.operation;
-      config.scenePipeline.scenes = {};
-      if (kind === 'submitted' || kind === 'uncertain')
-        config.scenePipeline.scenes['scene-1'] = {
-          identity: { avatarAssetId: 'avatar-1', speechVoiceId: 'voice-1' },
-          referenceAssetIds: [],
-          replacedAssetIds: [],
-          image: { state: 'pending', attempt: 1 },
-          video: { state: kind, attempt: 1, groupId: 'group:Original' },
-        };
-      else
-        config.scenePipeline.receipts = [
-          {
-            key: 'line:Original',
-            amount: 3,
-            billingMode: 'platform',
-            state: kind === 'reserved' ? 'reserved' : 'uncertain',
-            reservationId: 'reservation:Original',
-          },
-        ];
-      const result = convertStoryboardRun(record, context);
-      const converted = storyboardStoredRunConfigSchema.parse(result.config);
-      expect(result.status).toBe('needs_review');
-      expect(converted.plan).toBeNull();
-      expect(converted.importedPresentation?.shots[1].id).toBeNull();
-      expect(converted.migrationReview?.issues).toContainEqual({
-        code: 'LEGACY_STAGE_IDENTITY_MISSING',
-        path: 'scenePipeline.operation',
-      });
-      expect(converted.migrationRecovery).toBeUndefined();
-      expect(converted.importedState?.originalConfig).toEqual(config);
-      expect(
-        convertStoryboardRun({ ...record, config: converted }, context).status,
-      ).toBe('unchanged');
-    },
-  );
-  it.each(['transcription', 'rewrite', 'assembly'] as const)(
-    'creates a neutral recovery outbox for cancelled late %s work without receipts',
-    (kind) => {
-      const { record, context, config } = fixture();
-      if (!config.scenePipeline) throw new Error('fixture');
-      const pipeline = config.scenePipeline;
-      pipeline.state = 'cancelled';
-      pipeline.cancellationGeneration = 2;
-      pipeline.receipts = [];
-      pipeline.scenes = {};
-      pipeline.operation = {
-        id: 'operation:Original',
-        quoteId: 'quote:Original',
-        revision: 4,
-        cancellationGeneration: 1,
-        startedAt: '2026-09-30T12:00:00.000Z',
-        userId: 'user:Original',
-        sequence: 9,
-      };
-      const stage = {
-        state: 'submitted' as const,
-        attempt: 1,
-        groupId: 'group:Original',
-        claimToken: 'claim:Original',
-      };
-      if (kind === 'assembly')
-        pipeline.assembly = {
-          orderedAssetIds: ['clip:Original'],
-          transcription: stage,
-        };
-      else
-        pipeline.analysis = {
-          sourceAssetId: 'source-1',
-          durationSeconds: 12,
-          sizeBytes: 100,
-          model: 'text:Original',
-          keyframes: [],
-          vendorCostKnown: true,
-          transcription:
-            kind === 'transcription' ? stage : { state: 'ready', attempt: 1 },
-          rewrite: kind === 'rewrite' ? stage : { state: 'ready', attempt: 1 },
-        };
-      const result = convertStoryboardRun(record, context);
-      const converted = storyboardStoredRunConfigSchema.parse(result.config);
-      expect(converted.migrationRecovery).toMatchObject({
-        operationId: 'operation:Original',
-        previousSequence: 9,
-        nextSequence: 10,
-        jobId: 'storyboard-run-1-operation:Original-10',
-      });
-      expect(
-        converted.importedState?.activeConfig?.scenePipeline
-          ?.cancellationGeneration,
-      ).toBe(2);
-      expect(
-        converted.importedState?.activeConfig?.scenePipeline?.operation,
-      ).toMatchObject({ cancellationGeneration: 1, sequence: 10 });
-      expect(converted.importedState?.originalConfig).toEqual(config);
-      expect(() => assertStoryboardEditable(converted)).toThrow(
-        'reconcile accepted',
-      );
-      expect(
-        convertStoryboardRun({ ...record, config: converted }, context).status,
-      ).toBe('unchanged');
-    },
-  );
-  it.each(['merge', 'caption'] as const)(
-    'blocks adoption until cancelled %s assembly work has its result',
-    (kind) => {
-      const { record, context, config } = fixture();
-      if (!config.scenePipeline) throw new Error('fixture');
-      const pipeline = config.scenePipeline;
-      pipeline.state = 'cancelled';
-      pipeline.scenes = {};
-      pipeline.receipts = [];
-      pipeline.operation = {
-        id: 'operation/old key',
-        quoteId: ' quote/old key ',
-        revision: 4,
-        cancellationGeneration: 1,
-        startedAt: '2026-09-30T12:00:00.000Z',
-        userId: 'user:Original',
-        sequence: 9,
-      };
-      pipeline.assembly = {
-        orderedAssetIds: ['clip:Original'],
-        transcription: { state: 'ready', attempt: 1 },
-        ...(kind === 'merge'
-          ? { mergeJobId: 'merge/Original' }
-          : { captionJobId: 'caption/Original' }),
-      };
-      const converted = storyboardStoredRunConfigSchema.parse(
-        convertStoryboardRun(record, context).config,
-      );
-      expect(converted.migrationRecovery?.operationId).toBe(
-        'operation/old key',
-      );
-      expect(() => assertStoryboardEditable(converted)).toThrow(
-        'reconcile accepted',
-      );
-      if (kind === 'merge') pipeline.assembly.mergedAssetId = 'merged:Original';
-      else pipeline.assembly.assetId = 'captioned:Original';
-      const resolved = storyboardStoredRunConfigSchema.parse(
-        convertStoryboardRun(record, context).config,
-      );
-      expect(resolved.migrationRecovery).toBeUndefined();
-      expect(() => assertStoryboardEditable(resolved)).not.toThrow();
-      expect(
-        resolved.importedState?.originalConfig.scenePipeline?.operation
-          ?.quoteId,
-      ).toBe(' quote/old key ');
-    },
-  );
-  it('preserves surrounding whitespace in validated opaque archived IDs and read-only references', () => {
-    const { record, context, config } = fixture();
-    if (!config.scenePipeline || !config.concept) throw new Error('fixture');
-    config.concept.storyboard[0].id = ' scene:Original ';
-    config.scenePipeline.scenes[' scene:Original '] =
-      config.scenePipeline.scenes['scene-1'];
-    delete config.scenePipeline.scenes['scene-1'];
-    config.scenePipeline.scenes[' scene:Original '].image.assetId =
-      ' asset/Original ';
-    context.authorizedAssetIds.add(' asset/Original ');
-    const converted = storyboardStoredRunConfigSchema.parse(
-      convertStoryboardRun(record, context).config,
-    );
-    expect(converted.plan).toBeNull();
-    expect(converted.importedPresentation?.shots[0]).toMatchObject({
-      id: ' scene:Original ',
-      stillAssetId: ' asset/Original ',
-    });
-    expect(storyboardLegacyState(converted)?.concept?.storyboard[0].id).toBe(
-      ' scene:Original ',
-    );
-    expect(
-      storyboardLegacyState(converted)?.scenePipeline?.scenes[
-        ' scene:Original '
-      ].image.assetId,
-    ).toBe(' asset/Original ');
-  });
   it('public projection excludes archives, historical quote and funding state', () => {
     const { record, context } = fixture();
     const result = convertStoryboardRun(record, context);
@@ -749,7 +544,6 @@ describe('Explicit corrected-plan adoption', () => {
     const { record, context, config } = fixture();
     if (config.draft.output.kind !== 'video') throw new Error('fixture');
     config.draft.output.durationSeconds = 180;
-    delete config.scenePipeline;
     const migrated = storyboardStoredRunConfigSchema.parse(
       convertStoryboardRun(record, context).config,
     );
@@ -785,8 +579,6 @@ describe('Explicit corrected-plan adoption', () => {
       source as never,
       store as never,
       capabilities as never,
-      { warn: vi.fn() } as never,
-      {} as never,
     );
     const plan = {
       title: 'Corrected',

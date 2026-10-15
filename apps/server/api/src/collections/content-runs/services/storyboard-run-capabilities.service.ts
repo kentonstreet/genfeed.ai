@@ -231,14 +231,17 @@ export class StoryboardRunCapabilitiesService {
     let reasonCode: CapabilityReason | null = null;
     let selected: ModelDocument | null = null;
     if (key) {
-      // ModelsService.findOne widens a supplied organizationId to the
-      // org-or-platform registry (`OR [org, null]`), so one lookup covers both;
-      // a null-only lookup carries no tenant proof.
-      selected = await this.models.findOne({
-        key,
-        organizationId,
-        isDeleted: false,
-      });
+      selected =
+        (await this.models.findOne({
+          key,
+          organizationId,
+          isDeleted: false,
+        })) ??
+        (await this.models.findOne({
+          key,
+          organizationId: null,
+          isDeleted: false,
+        }));
       if (!selected || selected.category !== ModelCategory.VIDEO)
         reasonCode = 'MODEL_UNAVAILABLE';
       else if (selected.lifecycle === ModelLifecycle.RETIRED)

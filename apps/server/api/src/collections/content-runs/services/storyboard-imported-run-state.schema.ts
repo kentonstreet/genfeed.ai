@@ -1,9 +1,4 @@
-import {
-  characterJournalSchema,
-  characterStructuralAssociation,
-} from '@api/collections/content-runs/services/storyboard-character-replace-state';
 import { storyboardConfigHash } from '@api/collections/content-runs/services/storyboard-config-hash';
-import { stillJournalSchema } from '@api/collections/content-runs/services/storyboard-still-state';
 import { brandRemixRunConfigSchema } from '@genfeedai/contracts/api-types/contracts/brand-remix-run.contract';
 import { brandRemixScenePipelineSchema } from '@genfeedai/contracts/api-types/contracts/brand-remix-scene.contract';
 import { storyboardRunConfigSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-run.contract';
@@ -58,13 +53,8 @@ export const storyboardStoredRunConfigSchema = z
       });
       return z.NEVER;
     }
-    const {
-      importedState,
-      migrationRecovery,
-      characterReplacementOperations,
-      stillOperations,
-      ...publicValue
-    } = value as Record<string, unknown>;
+    const { importedState, migrationRecovery, ...publicValue } =
+      value as Record<string, unknown>;
     const config = storyboardRunConfigSchema.safeParse(publicValue);
     if (!config.success) {
       for (const issue of config.error.issues)
@@ -73,28 +63,6 @@ export const storyboardStoredRunConfigSchema = z
           message: issue.message,
           path: issue.path,
         });
-      return z.NEVER;
-    }
-    const journal =
-      characterReplacementOperations === undefined
-        ? undefined
-        : characterJournalSchema.safeParse(characterReplacementOperations);
-    if (journal && !journal.success) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Invalid character recovery journal',
-      });
-      return z.NEVER;
-    }
-    const stills =
-      stillOperations === undefined
-        ? undefined
-        : stillJournalSchema.safeParse(stillOperations);
-    if (stills && !stills.success) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'Invalid still generation journal',
-      });
       return z.NEVER;
     }
     const archive =
@@ -140,10 +108,6 @@ export const storyboardStoredRunConfigSchema = z
     }
     return {
       ...config.data,
-      ...(journal?.success
-        ? { characterReplacementOperations: journal.data }
-        : {}),
-      ...(stills?.success ? { stillOperations: stills.data } : {}),
       ...(archive?.success ? { importedState: archive.data } : {}),
       ...(recovery?.success ? { migrationRecovery: recovery.data } : {}),
     };
@@ -154,86 +118,19 @@ export type StoryboardStoredRunConfig = z.infer<
 
 export function storyboardPublicConfig(config: StoryboardStoredRunConfig) {
   const {
-    characterReplacementOperations: journal,
-    stillOperations: _stills,
     importedState: _archive,
     migrationRecovery: _recovery,
     ...publicValue
   } = config;
-  return storyboardRunConfigSchema.parse({
-    ...publicValue,
-    characterReplacements: publicValue.characterReplacements?.filter((item) => {
-      const op = journal?.find((op) =>
-        op.receipts.some((r) => r.requestId === item.requestId),
-      );
-      return !op || characterStructuralAssociation(config, op);
-    }),
-  });
-}
-export function parseStoryboardLegacyConfig(
-  value: unknown,
-): StoryboardLegacyConfig {
-  const parsed = storyboardLegacyConfigSchema.parse(value);
-  const raw = structuredClone(value) as StoryboardLegacyConfig;
-  return {
-    ...parsed,
-    ...raw,
-    draft: {
-      ...parsed.draft,
-      ...raw.draft,
-      references: raw.draft.references ?? parsed.draft.references,
-    },
-    sourceSnapshot: {
-      ...parsed.sourceSnapshot,
-      ...raw.sourceSnapshot,
-      evidence: raw.sourceSnapshot.evidence ?? parsed.sourceSnapshot.evidence,
-    },
-  };
+  return storyboardRunConfigSchema.parse(publicValue);
 }
 export function storyboardLegacyState(
   config: Pick<StoryboardStoredRunConfig, 'importedState'>,
 ): StoryboardLegacyConfig | null {
   return config.importedState
-    ? parseStoryboardLegacyConfig(
+    ? storyboardLegacyConfigSchema.parse(
         config.importedState.activeConfig ??
           config.importedState.originalConfig,
       )
     : null;
-}
-
-export function storyboardLegacyStages(
-  pipeline: StoryboardLegacyConfig['scenePipeline'],
-) {
-  const stages = Object.entries(pipeline?.scenes ?? {}).flatMap(
-    ([id, scene]) => [
-      { path: `scenePipeline.scenes.${id}.image`, stage: scene.image },
-      { path: `scenePipeline.scenes.${id}.video`, stage: scene.video },
-    ],
-  );
-  if (pipeline?.analysis)
-    stages.push(
-      {
-        path: 'scenePipeline.analysis.transcription',
-        stage: pipeline.analysis.transcription,
-      },
-      {
-        path: 'scenePipeline.analysis.rewrite',
-        stage: pipeline.analysis.rewrite,
-      },
-    );
-  if (pipeline?.assembly)
-    stages.push({
-      path: 'scenePipeline.assembly.transcription',
-      stage: pipeline.assembly.transcription,
-    });
-  return stages;
-}
-
-export function storyboardHasUnresolvedAssemblyJobs(
-  pipeline: StoryboardLegacyConfig['scenePipeline'],
-): boolean {
-  return Boolean(
-    (pipeline?.assembly?.mergeJobId && !pipeline.assembly.mergedAssetId) ||
-      (pipeline?.assembly?.captionJobId && !pipeline.assembly.assetId),
-  );
 }

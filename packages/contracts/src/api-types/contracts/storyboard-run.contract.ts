@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { brandRemixScenePipelineSchema } from './brand-remix-scene.contract';
-import { storyboardCharacterReplacementSchema } from './storyboard-character-replace.contract';
 import {
   storyboardImportedPresentationSchema,
   storyboardMigrationMetadataSchema,
@@ -11,10 +10,7 @@ import {
   storyboardPlanSchema,
   storyboardPlanSettingsSchema,
 } from './storyboard-plan.contract';
-import {
-  storyboardOperationProjectionSchema,
-  storyboardRunQuoteSchema,
-} from './storyboard-run-quote.contract';
+import { storyboardRunQuoteSchema } from './storyboard-run-quote.contract';
 import {
   storyboardIdSchema,
   storyboardSourceSelectorSchema,
@@ -55,10 +51,6 @@ export const storyboardNativeRunConfigSchema = z
     generatedPlan: storyboardPlanSchema.optional(),
     quote: storyboardRunQuoteSchema.optional(),
     scenePipeline: brandRemixScenePipelineSchema.optional(),
-    characterReplacements: z
-      .array(storyboardCharacterReplacementSchema)
-      .max(12)
-      .optional(),
     error: z.string().max(1_000).optional(),
   })
   .strict();
@@ -105,7 +97,6 @@ export const storyboardRunSchema = z
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     config: storyboardRunConfigSchema,
-    operation: storyboardOperationProjectionSchema.nullable().optional(),
     migrationReview: storyboardMigrationReviewSchema.nullable().optional(),
     importedPresentation: storyboardImportedPresentationSchema
       .nullable()
@@ -122,13 +113,6 @@ export const createStoryboardRunSchema = z
 export const controlStoryboardRunSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
-/** Drafts a plan from the brief, or revises the current plan when `instruction` is set. */
-export const draftStoryboardPlanSchema = z
-  .object({
-    expectedRevision: z.number().int().positive(),
-    instruction: z.string().trim().min(1).max(2_000).optional(),
-  })
-  .strict();
 export const updateStoryboardSourceSchema = z
   .object({
     expectedRevision: z.number().int().positive(),
@@ -144,7 +128,6 @@ export type CreateStoryboardRun = z.infer<typeof createStoryboardRunSchema>;
 export type ControlStoryboardRun = z.infer<typeof controlStoryboardRunSchema>;
 export type ResetStoryboardPlan = ControlStoryboardRun;
 export type ApproveStoryboardPlan = ControlStoryboardRun;
-export type DraftStoryboardPlan = z.infer<typeof draftStoryboardPlanSchema>;
 export type UpdateStoryboardSource = z.infer<
   typeof updateStoryboardSourceSchema
 >;

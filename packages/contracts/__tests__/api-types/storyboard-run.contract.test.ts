@@ -1,25 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { storyboardImportedReferenceIdSchema } from '../../src/api-types/contracts/storyboard-migration.contract';
 import {
   storyboardImportedPlanSchema,
   storyboardPlanSchema,
-  updateStoryboardPlanSchema,
 } from '../../src/api-types/contracts/storyboard-plan.contract';
 import {
   createStoryboardRunSchema,
   storyboardRunConfigSchema,
 } from '../../src/api-types/contracts/storyboard-run.contract';
 import { storyboardVideoModelCapabilitySchema } from '../../src/api-types/contracts/storyboard-run-capabilities.contract';
-import {
-  controlStoryboardOperationSchema,
-  createStoryboardRunQuoteSchema,
-  storyboardOperationProjectionSchema,
-  storyboardRunQuoteSchema,
-} from '../../src/api-types/contracts/storyboard-run-quote.contract';
-import {
-  storyboardIdSchema,
-  storyboardSourceSnapshotSchema,
-} from '../../src/api-types/contracts/storyboard-source.contract';
+import { createStoryboardRunQuoteSchema } from '../../src/api-types/contracts/storyboard-run-quote.contract';
+import { storyboardSourceSnapshotSchema } from '../../src/api-types/contracts/storyboard-source.contract';
 
 const requestId = 'd160833e-d602-4617-a21b-721eb9aa7da8';
 const plan = {
@@ -145,15 +135,6 @@ describe('Canonical storyboard contract', () => {
       }).success,
     ).toBe(false);
     expect(
-      updateStoryboardPlanSchema.safeParse({
-        expectedRevision: 1,
-        plan: {
-          ...plan,
-          shots: [{ ...shot, transition: 'interpolate' }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
       storyboardPlanSchema.safeParse({
         ...plan,
         shots: [{ ...shot, transition: 'interpolate' }],
@@ -241,132 +222,6 @@ describe('Canonical storyboard contract', () => {
           cast: [],
         },
       }).success,
-    ).toBe(false);
-  });
-  it('validates priced planning maxima and stable still slots without exposing private funding snapshots', () => {
-    const line = {
-      key: 'text:1',
-      stage: 'plan',
-      model: 'provider/text',
-      credits: 1,
-      billingMode: 'platform',
-      attempt: 1,
-      slotOrdinal: null,
-    };
-    const quote = {
-      id: 'quote:1',
-      revision: 1,
-      operation: 'plan',
-      inputHash: 'hash:1',
-      createdAt: '2026-09-30T12:00:00.000Z',
-      expiresAt: '2026-09-30T12:15:00.000Z',
-      capabilityVersion: 'a'.repeat(64),
-      maximumShotCount: 2,
-      amountKind: 'maximum',
-      total: 5,
-      items: [
-        line,
-        ...[1, 2].map((slotOrdinal) => ({
-          ...line,
-          key: `slot:${slotOrdinal}`,
-          stage: 'image',
-          model: 'provider/image',
-          credits: 2,
-          slotOrdinal,
-        })),
-      ],
-    };
-    expect(storyboardRunQuoteSchema.parse(quote)).toEqual(quote);
-    for (const value of [
-      { ...quote, total: -1 },
-      { ...quote, total: Number.POSITIVE_INFINITY },
-      { ...quote, maximumShotCount: null },
-      { ...quote, amountKind: 'exact' },
-      { ...quote, privateQuote: { tariff: 1 } },
-      {
-        ...quote,
-        items: [line, quote.items[1], { ...quote.items[2], slotOrdinal: 1 }],
-      },
-      {
-        ...quote,
-        items: [
-          line,
-          quote.items[1],
-          { ...quote.items[2], shotId: 'not-yet-created' },
-        ],
-      },
-    ])
-      expect(storyboardRunQuoteSchema.safeParse(value).success).toBe(false);
-    expect(
-      controlStoryboardOperationSchema.parse({
-        expectedRevision: 2,
-        operationId: 'operation:original',
-      }),
-    ).toEqual({ expectedRevision: 2, operationId: 'operation:original' });
-    expect(
-      controlStoryboardOperationSchema.safeParse({ expectedRevision: 2 })
-        .success,
-    ).toBe(false);
-  });
-  it('retains accepted operation and quote bytes for control and projection', () => {
-    for (const id of [
-      'operation/old key',
-      ' operation/old key ',
-      's'.repeat(200),
-    ]) {
-      expect(
-        controlStoryboardOperationSchema.parse({
-          expectedRevision: 4,
-          operationId: id,
-        }).operationId,
-      ).toBe(id);
-      expect(
-        storyboardOperationProjectionSchema.parse({
-          id,
-          quoteId: id,
-          acceptedRevision: 3,
-          status: 'cancelled',
-          canResume: true,
-          reasonCode: null,
-        }),
-      ).toMatchObject({ id, quoteId: id });
-    }
-    for (const id of ['', ' ', 's'.repeat(201)]) {
-      expect(
-        controlStoryboardOperationSchema.safeParse({
-          expectedRevision: 4,
-          operationId: id,
-        }).success,
-      ).toBe(false);
-      expect(
-        storyboardOperationProjectionSchema.safeParse({
-          id,
-          quoteId: id,
-          acceptedRevision: 3,
-          status: 'cancelled',
-          canResume: true,
-          reasonCode: null,
-        }).success,
-      ).toBe(false);
-    }
-    expect(storyboardIdSchema.safeParse('operation/old key').success).toBe(
-      false,
-    );
-  });
-  it('preserves legacy reference bytes only in the read-only imported branch', () => {
-    for (const id of [
-      'asset/old key',
-      ' asset/old key ',
-      'scene:Mixed_ID',
-      's'.repeat(255),
-    ])
-      expect(storyboardImportedReferenceIdSchema.parse(id)).toBe(id);
-    expect(storyboardIdSchema.safeParse('asset/old key').success).toBe(false);
-    expect(storyboardImportedReferenceIdSchema.safeParse(' ').success).toBe(
-      false,
-    );
-    expect(
-      storyboardImportedReferenceIdSchema.safeParse('s'.repeat(256)).success,
     ).toBe(false);
   });
 });

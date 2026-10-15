@@ -1,11 +1,8 @@
 import {
   type StoryboardStoredRunConfig,
-  storyboardHasUnresolvedAssemblyJobs,
-  storyboardLegacyStages,
   storyboardLegacyState,
   storyboardStoredRunConfigSchema,
 } from '@api/collections/content-runs/services/storyboard-imported-run-state.schema';
-import { storyboardStillInput } from '@api/collections/content-runs/services/storyboard-still-state';
 import type { StoryboardPlan } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
 import {
   storyboardImportedPlanSchema,
@@ -60,7 +57,12 @@ export function assertStoryboardEditable(
 ): void {
   const legacy = storyboardLegacyState(config);
   const pipeline = config.scenePipeline ?? legacy?.scenePipeline;
-  const stages = storyboardLegacyStages(pipeline).map(({ stage }) => stage);
+  const stages = Object.values(pipeline?.scenes ?? {}).flatMap((scene) => [
+    scene.image,
+    scene.video,
+  ]);
+  const analysis = pipeline?.analysis;
+  if (analysis) stages.push(analysis.transcription, analysis.rewrite);
   if (
     ['analysing', 'generating', 'assembling'].includes(config.state) ||
     legacy?.generationClaim ||
@@ -69,12 +71,9 @@ export function assertStoryboardEditable(
     legacy?.execution?.variants.some((variant) =>
       ['queued', 'processing'].includes(variant.status),
     ) ||
-    stages.some(
-      (stage) =>
-        ['claimed', 'submitted', 'uncertain'].includes(stage.state) ||
-        Boolean(stage.groupId && !stage.assetId && stage.state !== 'ready'),
+    stages.some((stage) =>
+      ['claimed', 'submitted', 'uncertain'].includes(stage.state),
     ) ||
-    storyboardHasUnresolvedAssemblyJobs(pipeline) ||
     pipeline?.receipts.some((receipt) =>
       ['reserved', 'uncertain'].includes(receipt.state),
     )
@@ -85,11 +84,7 @@ export function assertStoryboardEditable(
   }
 }
 
-/**
- * Submitted asset/freshness changes never manufacture a fresh generated still.
- * Stills are server-owned: a still being generated stays `generating` across
- * edits, and its job decides fresh or stale when it lands.
- */
+/** Submitted asset/freshness changes never manufacture a fresh generated still. */
 export function editStoryboardPlan(
   config: StoryboardStoredRunConfig,
   submitted: StoryboardPlan,
@@ -123,30 +118,15 @@ export function editStoryboardPlan(
           JSON.stringify(conditioning(config.plan, old.id)) !==
             JSON.stringify(conditioning(submitted, shot.id)),
       );
-      const stillInputChanged = Boolean(
-        old &&
-          config.plan &&
-          storyboardStillInput(config.plan, old.id).fingerprint !==
-            storyboardStillInput(submitted, shot.id).fingerprint,
-      );
-      const stale =
-        styleChanged ||
-        castChanged ||
-        stillInputChanged ||
-        old?.action !== shot.action;
+      const stale = styleChanged || castChanged || old?.action !== shot.action;
       return {
         ...shot,
         stillAssetId: old?.stillAssetId,
-        stillFreshness:
-          old?.stillFreshness === 'generating'
-            ? 'generating'
-            : old?.stillAssetId
-              ? stale
-                ? 'stale'
-                : old.stillFreshness
-              : old?.stillFreshness === 'failed' && !stale
-                ? 'failed'
-                : 'missing',
+        stillFreshness: old?.stillAssetId
+          ? stale
+            ? 'stale'
+            : old.stillFreshness
+          : 'missing',
       };
     }),
   });
