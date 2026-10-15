@@ -262,12 +262,6 @@ export function buildClipFactoryFailureWorkflowDefinition(): SystemWorkflowGraph
       edges: [],
       inputVariables: [
         {
-          key: 'workflowError',
-          label: 'Workflow failure',
-          required: true,
-          type: 'string',
-        },
-        {
           key: 'job',
           label: 'Failed clip factory request',
           required: true,
@@ -278,7 +272,7 @@ export function buildClipFactoryFailureWorkflowDefinition(): SystemWorkflowGraph
         createGenfeedActionNode({
           actionId: CLIP_FACTORY_ACTION_IDS.FAIL,
           id: 'fail-factory',
-          inputVariableKeys: ['job', 'workflowError'],
+          inputVariableKeys: ['job'],
           position: { x: 0, y: 0 },
         }),
       ],
@@ -286,6 +280,6 @@ export function buildClipFactoryFailureWorkflowDefinition(): SystemWorkflowGraph
     description: 'Projects terminal failure for one clip factory run.',
     label: 'Fail Clip Factory',
     resultNodeId: 'fail-factory',
-    version: 2,
+    version: 1,
   };
 }

@@ -1312,6 +1312,21 @@ const INTERNAL_ACTIONS: readonly GenfeedActionDefinition[] = [
     'Builds bounded platform publishing inputs for one AI influencer post.',
   ),
   internalAction(
+    'ai-influencer.video.generate',
+    'Generate AI Influencer Video',
+    'Generates one video for an AI influencer post.',
+  ),
+  internalAction(
+    'ai-influencer.video.plan',
+    'Plan AI Influencer Video',
+    'Builds the video-generation input for one AI influencer post.',
+  ),
+  internalAction(
+    'ai-influencer.voice.generate',
+    'Generate AI Influencer Voice',
+    'Generates one voice track for an AI influencer video.',
+  ),
+  internalAction(
     'ads.credentials.discover',
     'Discover Ads Credentials',
     'Discovers bounded connected ad credentials for one provider workflow.',
@@ -1768,17 +1783,17 @@ const INTERNAL_ACTIONS: readonly GenfeedActionDefinition[] = [
     'Transcribes one prepared clip-analysis source.',
   ),
   internalAction(
-    'content.turbo.plan',
+    'content.batch.plan',
     'Plan Content Batch',
     'Builds the bounded child inputs for one content batch.',
   ),
   internalAction(
-    'content.turbo.item.prepare',
+    'content.batch.item.prepare',
     'Prepare Content Batch Item',
     'Projects one batch item into the exact input of a fixed skill workflow.',
   ),
   internalAction(
-    'content.turbo.rank',
+    'content.batch.rank',
     'Rank Content Batch',
     'Ranks the completed items in one content batch.',
   ),
@@ -2467,27 +2482,27 @@ const INTERNAL_ACTIONS: readonly GenfeedActionDefinition[] = [
     'Finalizes one campaign trigger evaluation.',
   ),
   internalAction(
-    'turbo.run.mark-queued',
+    'batch.generation.mark-queued',
     'Mark Batch Generation Queued',
     'Claims one batch generation request for workflow execution.',
   ),
   internalAction(
-    'turbo.run.process',
+    'batch.generation.process',
     'Process Batch Generation',
     'Generates one claimed batch through the shared generation service.',
   ),
   internalAction(
-    'turbo.run.settle',
+    'batch.generation.settle',
     'Settle Batch Generation',
     'Finalizes credits and durable state for one batch generation run.',
   ),
   internalAction(
-    'turbo-project.idea.dispatch-item',
+    'batch-project.idea.dispatch-item',
     'Dispatch Batch Project Idea',
     'Reserves one accepted quote line and starts generation of one batch idea.',
   ),
   internalAction(
-    'turbo-project.idea.fail-item',
+    'batch-project.idea.fail-item',
     'Fail Batch Project Idea',
     'Fails one batch idea whose generation could not start and releases its hold.',
   ),
@@ -2557,9 +2572,9 @@ const INTERNAL_ACTIONS: readonly GenfeedActionDefinition[] = [
     'Finalizes one knowledge-source ingestion workflow.',
   ),
   internalAction(
-    'breakout.response.execute',
-    'Execute Breakout Response',
-    'Runs one detected own-account breakout response through pricing, reservation and generation under its pinned initiating actor.',
+    'email-product-signals.dispatch',
+    'Discover email product signals',
+    'Discover email product signals through a hidden system workflow.',
   ),
   internalAction(
     'email-product-signals.generations',

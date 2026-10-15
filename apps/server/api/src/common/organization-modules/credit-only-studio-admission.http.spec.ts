@@ -2,7 +2,6 @@ import { StoryboardRunsController } from '@api/collections/content-runs/controll
 import { StoryboardCharacterReplaceService } from '@api/collections/content-runs/services/storyboard-character-replace.service';
 import { StoryboardRunCapabilitiesService } from '@api/collections/content-runs/services/storyboard-run-capabilities.service';
 import { StoryboardRunsService } from '@api/collections/content-runs/services/storyboard-runs.service';
-import { StoryboardStillsService } from '@api/collections/content-runs/services/storyboard-stills.service';
 import { ImagesUpscaleController } from '@api/collections/images/controllers/transformations/images-upscale.controller';
 import { ImageUpscaleService } from '@api/collections/images/services/image-upscale.service';
 import type { RequestWithContext } from '@api/common/middleware/request-context.middleware';
@@ -23,14 +22,6 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-/** Admin → Flags with nothing released: only Playground and Storyboard admit work. */
-const UNRELEASED_PLATFORM = {
-  getFeatureSettingsState: async () => ({
-    isResolved: true,
-    settings: { flags: {} },
-  }),
-};
 
 vi.mock('@genfeedai/config', async (original) => ({
   ...(await original<typeof import('@genfeedai/config')>()),
@@ -68,14 +59,13 @@ describe('credit-only Studio HTTP admission', () => {
           findUnique: vi.fn().mockResolvedValue({
             moduleOverrides: {
               motion: false,
-              turbo: false,
+              batch: false,
               automation: false,
             },
           }),
         },
       } as never,
       { isSubscriptionGatedFresh: paidGrant } as never,
-      UNRELEASED_PLATFORM as never,
     );
     const fixtureAuth = {
       canActivate: (context: ExecutionContext) => {
@@ -96,7 +86,6 @@ describe('credit-only Studio HTTP admission', () => {
         { provide: StoryboardRunsService, useValue: { approvePlan } },
         { provide: StoryboardRunCapabilitiesService, useValue: {} },
         { provide: StoryboardCharacterReplaceService, useValue: {} },
-        { provide: StoryboardStillsService, useValue: {} },
         { provide: ImageUpscaleService, useValue: { upscaleImage } },
         {
           provide: LoggerService,

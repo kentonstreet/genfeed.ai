@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import type { OrganizationModuleId } from '../../constants/organization-modules.constant';
-import type { ReleaseItemId } from '../../constants/release-items.constant';
 import type { IconComponent } from '../../types/icon';
 import type { ILabeledItem } from '../index';
 
@@ -12,12 +11,7 @@ export type AppContext =
   | 'library'
   | 'messages'
   | 'publishing'
-  | 'playground'
-  | 'storyboard'
-  | 'turbo'
-  | 'motion'
-  | 'clips'
-  | 'editor'
+  | 'studio'
   | 'automation'
   | 'analytics';
 
@@ -41,11 +35,6 @@ export interface MenuItemConfig {
   drillDown?: boolean;
   /** When true, this item shows a "Coming Soon" badge and is not clickable */
   isComingSoon?: boolean;
-  /**
-   * Destination listed only once released to the organization
-   * (`isReleaseItemVisible`): Admin → Flags `release_<id>`, or release preview.
-   */
-  releaseItemId?: ReleaseItemId;
   /** When true on the first item of a group, renders a visual divider above the group */
   hasDividerAbove?: boolean;
   /** When true on the first item of a named group, the group header can collapse its items */

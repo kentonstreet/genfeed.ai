@@ -30,12 +30,9 @@ import {
   type AgentGenerationQuote,
   type AgentGenerationQuoteInput,
   AgentGenerationQuoteUnavailableReason,
-  type ModelBillableQuoteSnapshot,
 } from '@genfeedai/contracts/interfaces';
-import { isAutoStudioModelKey } from '@genfeedai/pricing';
 import type { Model } from '@genfeedai/prisma';
 import { isRecord } from '@genfeedai/utils/data/extract.util';
-
 import { LoggerService } from '@libs/logger/logger.service';
 import {
   BadRequestException,
@@ -43,10 +40,6 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
-
-export type PreparedAgentGenerationQuote = AgentGenerationQuote & {
-  snapshot?: ModelBillableQuoteSnapshot;
-};
 
 type VideoEstimateModel = Pick<Model, 'provider'> &
   Partial<
@@ -98,15 +91,6 @@ export class AgentGenerationEstimateService {
   async estimate(
     input: AgentGenerationQuoteInput,
   ): Promise<AgentGenerationQuote> {
-    const { snapshot: _snapshot, ...quote } =
-      await this.estimateWithSnapshot(input);
-    return quote;
-  }
-
-  /** Server-only consent preparation; the public estimate omits tariff evidence. */
-  async estimateWithSnapshot(
-    input: AgentGenerationQuoteInput,
-  ): Promise<PreparedAgentGenerationQuote> {
     if (
       input.outputs !== undefined &&
       (!Number.isInteger(input.outputs) ||
@@ -119,14 +103,8 @@ export class AgentGenerationEstimateService {
     }
     const isEdit = input.category === 'image-edit';
     const category = this.resolveCategory(input);
-    // Prompt routing is image/video only. Music Auto resolves the registry
-    // default, the same way an edit default does, with no prompt.
-    if (
-      !input.modelKey &&
-      !isEdit &&
-      input.category !== 'music' &&
-      !input.prompt?.trim()
-    ) {
+    // Only routing by prompt needs one; an edit default resolves without it.
+    if (!input.modelKey && !isEdit && !input.prompt?.trim()) {
       return unavailableQuote(
         AgentGenerationQuoteUnavailableReason.INSUFFICIENT_INPUT,
       );
@@ -148,7 +126,6 @@ export class AgentGenerationEstimateService {
 
   private resolveCategory(input: AgentGenerationQuoteInput): ModelCategory {
     if (input.category === 'video') return ModelCategory.VIDEO;
-    if (input.category === 'music') return ModelCategory.MUSIC;
     return input.category === 'image-edit'
       ? ModelCategory.IMAGE_EDIT
       : ModelCategory.IMAGE;
@@ -158,14 +135,6 @@ export class AgentGenerationEstimateService {
     input: AgentGenerationQuoteInput,
     category: ModelCategory,
   ): Promise<string> {
-    if (input.category === 'music' && isAutoStudioModelKey(input.modelKey)) {
-      return (
-        await this.routerService.resolveModelKey({
-          category,
-          organizationId: input.organizationId,
-        })
-      ).key;
-    }
     if (input.modelKey) return input.modelKey;
     if (input.category === 'image-edit') {
       return (
@@ -225,9 +194,7 @@ export class AgentGenerationEstimateService {
     input: AgentGenerationQuoteInput,
     modelKey: string,
     model: VideoEstimateModel,
-  ): Promise<PreparedAgentGenerationQuote> {
-    if (input.category === 'music')
-      return this.quoteMusic(input, modelKey, model);
+  ): Promise<AgentGenerationQuote> {
     const isVideo = input.category === 'video';
     const dimensions =
       input.dimensions ??
@@ -280,41 +247,7 @@ export class AgentGenerationEstimateService {
     });
     const credits = quote.credits;
     return Number.isFinite(credits) && credits >= 0
-      ? { credits, isAvailable: true, modelKey, snapshot: quote }
-      : unavailableQuote(
-          AgentGenerationQuoteUnavailableReason.PRICING_UNRESOLVED,
-        );
-  }
-
-  /**
-   * Music admission prices the resolved model with no image dimensions.
-   * Duration is forwarded only when the caller has one; Lyria's tariff is
-   * per output and has no duration quantity.
-   */
-  private async quoteMusic(
-    input: AgentGenerationQuoteInput,
-    modelKey: string,
-    model: VideoEstimateModel,
-  ): Promise<PreparedAgentGenerationQuote> {
-    const provider = model.provider;
-    if (!provider)
-      return unavailableQuote(
-        AgentGenerationQuoteUnavailableReason.MODEL_UNAVAILABLE,
-      );
-    const outputs = input.outputs ?? 1;
-    const isBatchSupported = Boolean(
-      MODEL_OUTPUT_CAPABILITIES[modelKey]?.isBatchSupported,
-    );
-    const quote = await this.modelCreditQuote.quoteSnapshotByKey(modelKey, {
-      ...(input.duration !== undefined ? { duration: input.duration } : {}),
-      organizationId: input.organizationId,
-      outputs,
-      provider,
-      requests: isBatchSupported ? 1 : outputs,
-    });
-    const credits = quote.credits;
-    return Number.isFinite(credits) && credits >= 0
-      ? { credits, isAvailable: true, modelKey, snapshot: quote }
+      ? { credits, isAvailable: true, modelKey }
       : unavailableQuote(
           AgentGenerationQuoteUnavailableReason.PRICING_UNRESOLVED,
         );
@@ -351,25 +284,18 @@ export class AgentGenerationEstimateService {
         model.providerSchemaFamily &&
         isRecord(model.providerInputSchema)
       ) {
-        try {
-          providerInput = prepareFalVideoDispatch({
-            ...dimensions,
-            duration,
-            imageUrl: input.referenceUrls?.[0],
-            model: modelKey,
-            modelEndpoint: endpoint,
-            modelInputSchema: model.providerInputSchema,
-            modelProvider: provider,
-            modelSchemaFamily: model.providerSchemaFamily,
-            prompt: input.prompt ?? 'Price estimate',
-            promptParams: providerInput ?? {},
-          }).input;
-        } catch {
-          throw new ServiceUnavailableException({
-            code: 'PRICING_UNAVAILABLE',
-            message: 'Provider input cannot be priced for the selected schema',
-          });
-        }
+        providerInput = prepareFalVideoDispatch({
+          ...dimensions,
+          duration,
+          imageUrl: input.referenceUrls?.[0],
+          model: modelKey,
+          modelEndpoint: endpoint,
+          modelInputSchema: model.providerInputSchema,
+          modelProvider: provider,
+          modelSchemaFamily: model.providerSchemaFamily,
+          prompt: input.prompt ?? 'Price estimate',
+          promptParams: providerInput ?? {},
+        }).input;
       }
       return {
         duration,

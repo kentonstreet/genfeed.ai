@@ -1,8 +1,4 @@
-import type {
-  OrganizationModuleAccess,
-  OrganizationModuleId,
-  OrganizationModulePreferences,
-} from '@genfeedai/contracts/constants';
+import type { OrganizationModulePreferences } from '@genfeedai/contracts/constants';
 import type {
   AppRailItemConfig,
   AppRailNavigationEvent,
@@ -26,17 +22,8 @@ export interface AppRailBadge {
 }
 
 export interface AppRailProps {
-  /** Verified organization preferences for the daily loop. Null waits for settings; undefined is a neutral reusable surface. */
+  /** Verified organization preferences. Null waits for settings; undefined is a neutral reusable surface. */
   modulePreferences?: OrganizationModulePreferences | null;
-  /**
-   * Organization access per module for launcher apps (#5502). Null waits for
-   * settings, so launcher apps stay hidden; undefined is a neutral surface.
-   */
-  moduleAccess?: Readonly<
-    Partial<Record<OrganizationModuleId, OrganizationModuleAccess>>
-  > | null;
-  /** The member's installed apps here. Undefined is a neutral surface. */
-  installedAppIds?: readonly string[];
   surface?: AppRailSurface;
   onNavigationEvent?: (event: AppRailNavigationEvent) => void;
   /** Count pills keyed by app id; a missing or zero count renders nothing. */
@@ -62,20 +49,15 @@ export interface AppRailProps {
   preservedSearch?: string;
   /** Application-owned resolver for trusted shell launches. */
   resolveNavigation?: (href: string) => AppRailNavigationTarget;
-  /** Admin chrome: the rail lists admin categories instead of the app loop. */
-  isAdminChrome?: boolean;
   /** Include platform-admin navigation for users with platform access. */
   showAdmin?: boolean;
   /**
-   * Launcher apps the signed-in user pinned onto the rail, in pin order.
-   * Unknown, uninstalled and unavailable ids are ignored.
+   * More-menu apps the signed-in user pinned onto the rail, in pin order.
+   * Unknown ids are ignored.
    */
   pinnedAppIds?: readonly string[];
-}
-
-export interface TopbarAppsLinkProps {
-  /** Falls back to the organization resolved from the URL. */
-  orgSlug?: string;
+  /** Pins or unpins a More app. Absent in surfaces that cannot save a user. */
+  onTogglePin?: (appId: string) => void;
 }
 
 export interface AppRailItemProps {

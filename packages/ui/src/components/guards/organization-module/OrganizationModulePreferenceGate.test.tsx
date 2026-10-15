@@ -18,19 +18,6 @@ const state = vi.hoisted(() => ({
 vi.mock('@genfeedai/contexts/user/brand-context/brand-context', () => ({
   useBrand: () => state,
 }));
-// Admin → Flags as the release migration leaves it.
-vi.mock('@genfeedai/hooks/feature-flags/provider', () => ({
-  useFeatureFlagContext: () => ({
-    flags: {
-      release_analytics: true,
-      release_discovery: true,
-      release_publishing: true,
-      release_turbo: true,
-    },
-    isConfigured: true,
-    isReady: true,
-  }),
-}));
 vi.mock('@genfeedai/hooks/navigation/use-org-url', () => ({
   useOrgUrl: () => ({ orgHref: (path: string) => `/acme/~${path}` }),
 }));
@@ -51,15 +38,12 @@ vi.mock('next-intl', async () => {
             subscriptionHelp:
               'Existing data remains readable and exportable. A paid plan is required to start new work.',
             manageSubscription: 'Manage subscription',
-            unreleasedTitle: '{module} is not released yet',
-            unreleasedHelp:
-              'Existing projects remain readable and exportable. New work opens when the module is released.',
             loading: 'Loading module settings…',
             unavailable: 'Module settings are unavailable.',
             retry: 'Retry loading',
             loadFailed: 'Could not load module settings. Try again.',
             modules: {
-              turbo: { label: 'Turbo' },
+              batch: { label: 'Batch' },
               clips: { label: 'Clips' },
               editor: { label: 'Editor' },
               motion: { label: 'Motion' },
@@ -83,7 +67,7 @@ function CreationForm() {
   return <span>Create a project</span>;
 }
 function view(
-  moduleId: OrganizationModulePreferenceGateProps['moduleId'] = 'turbo',
+  moduleId: OrganizationModulePreferenceGateProps['moduleId'] = 'batch',
 ) {
   return (
     <OrganizationModulePreferenceGate moduleId={moduleId}>
@@ -100,42 +84,21 @@ beforeEach(() => {
   state.disposed.mockClear();
 });
 describe('credit-based module creation gate', () => {
-  it('does not mount turbo creation under cloud defaults', () => {
-    render(view('turbo'));
-    expect(state.created).not.toHaveBeenCalled();
-    expect(screen.queryByText('Create a project')).not.toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: 'Organization modules' }),
-    ).toHaveAttribute('href', '/acme/~/settings/general');
-  });
-  it.each(['clips', 'editor', 'motion'] as const)(
-    'shows %s as not released on cloud without release preview',
+  it.each(['batch', 'clips', 'editor', 'motion'] as const)(
+    'does not mount %s creation under cloud defaults',
     (moduleId) => {
-      state.settings = {
-        hasOrganizationBilling: true,
-        moduleOverrides: { [moduleId]: true },
-      };
       render(view(moduleId));
       expect(state.created).not.toHaveBeenCalled();
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'is not released yet',
-      );
-      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+      expect(screen.queryByText('Create a project')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: 'Organization modules' }),
+      ).toHaveAttribute('href', '/acme/~/settings/general');
     },
   );
-  it('mounts unreleased creation on release preview when shown', () => {
-    state.settings = {
-      hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
-      moduleOverrides: { clips: true },
-    };
-    render(view('clips'));
-    expect(state.created).toHaveBeenCalledTimes(1);
-  });
   it('mounts enabled credit-based work without subscription or balance signals', () => {
     state.settings = {
       hasOrganizationBilling: true,
-      moduleOverrides: { turbo: true },
+      moduleOverrides: { batch: true },
     };
     render(view());
     expect(state.created).toHaveBeenCalledTimes(1);
@@ -153,7 +116,7 @@ describe('credit-based module creation gate', () => {
     null,
     {},
     { hasOrganizationBilling: 'true', moduleOverrides: {} },
-    { hasOrganizationBilling: true, moduleOverrides: { turbo: 'true' } },
+    { hasOrganizationBilling: true, moduleOverrides: { batch: 'true' } },
   ])('does not mount creation from unknown settings: %j', (settings) => {
     state.settings = settings;
     render(view());
@@ -165,7 +128,7 @@ describe('credit-based module creation gate', () => {
   it('waits for settings loading and organization scope before mounting', () => {
     state.settings = {
       hasOrganizationBilling: true,
-      moduleOverrides: { turbo: true },
+      moduleOverrides: { batch: true },
     };
     state.settingsLoading = true;
     const { rerender } = render(view());
@@ -184,12 +147,12 @@ describe('credit-based module creation gate', () => {
   it('removes the creation view when the enabled preference is revoked', () => {
     state.settings = {
       hasOrganizationBilling: true,
-      moduleOverrides: { turbo: true },
+      moduleOverrides: { batch: true },
     };
     const { rerender } = render(view());
     state.settings = {
       hasOrganizationBilling: true,
-      moduleOverrides: { turbo: false },
+      moduleOverrides: { batch: false },
     };
     rerender(view());
     expect(state.disposed).toHaveBeenCalledTimes(1);
@@ -244,11 +207,9 @@ describe('paid module creation presentation', () => {
   it.each(['automation', 'messages', 'discovery'] as const)(
     'hides all %s creation UI behind the centered subscription state',
     (moduleId) => {
-      // Release preview isolates the subscription rule from the release gate.
       state.settings = {
         hasOrganizationBilling: true,
         hasPaidModuleSubscription: false,
-        isReleasePreviewEnabled: true,
         moduleOverrides: { [moduleId]: true },
       };
       render(view(moduleId));

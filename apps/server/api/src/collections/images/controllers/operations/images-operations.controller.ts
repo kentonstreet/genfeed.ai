@@ -167,6 +167,7 @@ export class ImagesOperationsController {
       );
     }
 
+    // Fetch the source image with metadata populated
     const sourceImage = await this.imagesService.findOne(
       {
         id: id,
@@ -190,6 +191,7 @@ export class ImagesOperationsController {
     const sourceMetadata =
       sourceImage.metadata as IngredientMetadataDocument | null;
 
+    // Get the image URL from CDN
     const imageUrl = this.configService.isAuthorizedMediaDeliveryEnabled
       ? ((
           await this.mediaIssuer.issueServerPublish(user.organizationId, [id])

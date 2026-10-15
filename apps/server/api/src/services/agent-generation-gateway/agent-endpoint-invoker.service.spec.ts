@@ -1,5 +1,3 @@
-import { testMcpApprovalPricing } from '@api/collections/mcp-approvals/schemas/mcp-approval-pricing.fixture';
-import { approvalGenerationConstraint } from '@api/collections/mcp-approvals/schemas/mcp-approval-pricing.schema';
 import { MembersService } from '@api/collections/members/services/members.service';
 import { RequestContextMiddleware } from '@api/common/middleware/request-context.middleware';
 import { OrganizationModuleAccessService } from '@api/common/organization-modules/organization-module-access.service';
@@ -117,7 +115,7 @@ describe('AgentEndpointInvoker', () => {
       }),
     };
     subscriptionGuard = {
-      assertActive: vi.fn(async () => {
+      assertActive: vi.fn(() => {
         order.push('subscription');
         return true;
       }),
@@ -153,49 +151,6 @@ describe('AgentEndpointInvoker', () => {
     vi.clearAllMocks();
   });
 
-  it('carries only server-approved pricing after the credit guard replaces its config', async () => {
-    const constraint = approvalGenerationConstraint(testMcpApprovalPricing());
-    if (!constraint) throw new Error('test quote unavailable');
-    creditsGuard.admit.mockImplementation(async (request) => {
-      request.creditsConfig = {
-        deferred: true,
-        source: ActivitySource.IMAGE_GENERATION,
-      };
-    });
-    const endpoint = buildEndpoint({
-      shouldDeferCreditsUntilModelResolution: true,
-      handle: vi.fn(async ({ request }) => {
-        expect(request.creditsConfig).toMatchObject({
-          deferred: true,
-          approvedGenerationQuote: constraint,
-        });
-        return 'generated';
-      }),
-    });
-    await expect(
-      invoker.invoke(endpoint, {
-        ...invocation,
-        approvedGenerationQuote: constraint,
-      }),
-    ).resolves.toBe('generated');
-  });
-  it.each(['/v1/images', '/v1/music', '/v1/alternate'])(
-    'rejects unsupported quote admission before credit admission: %s',
-    async (originalUrl) => {
-      const constraint = approvalGenerationConstraint(testMcpApprovalPricing());
-      if (!constraint) throw new Error('test quote unavailable');
-      const endpoint = buildEndpoint({ originalUrl });
-      await expect(
-        invoker.invoke(endpoint, {
-          ...invocation,
-          approvedGenerationQuote: constraint,
-        }),
-      ).rejects.toThrow('supported deferred');
-      expect(creditsGuard.admit).not.toHaveBeenCalled();
-      expect(endpoint.handle).not.toHaveBeenCalled();
-    },
-  );
-
   it('runs the HTTP enforcement chain in order and settles the credits', async () => {
     const endpoint = buildEndpoint();
 
@@ -220,7 +175,6 @@ describe('AgentEndpointInvoker', () => {
     expect(subscriptionGuard.assertActive).toHaveBeenCalledWith(
       expect.objectContaining({ originalUrl: '/v1/images' }),
       endpoint.creditsConfig,
-      'playground',
     );
     expect(creditsInterceptor.release).not.toHaveBeenCalled();
   });
@@ -310,7 +264,7 @@ describe('AgentEndpointInvoker', () => {
       creditsConfig: undefined,
       hasCreditsInterceptor: false,
     });
-    subscriptionGuard.assertActive.mockImplementation(async () => {
+    subscriptionGuard.assertActive.mockImplementation(() => {
       throw new ForbiddenException('Active subscription required');
     });
 
@@ -321,7 +275,6 @@ describe('AgentEndpointInvoker', () => {
     expect(subscriptionGuard.assertActive).toHaveBeenCalledWith(
       expect.objectContaining({ originalUrl: '/v1/images' }),
       undefined,
-      'playground',
     );
     expect(creditsGuard.admit).not.toHaveBeenCalled();
     expect(endpoint.handle).not.toHaveBeenCalled();
@@ -333,7 +286,7 @@ describe('AgentEndpointInvoker', () => {
       hasCreditsInterceptor: false,
       isSubscriptionCheckSkipped: true,
     });
-    subscriptionGuard.assertActive.mockImplementation(async () => {
+    subscriptionGuard.assertActive.mockImplementation(() => {
       throw new ForbiddenException('Active subscription required');
     });
 

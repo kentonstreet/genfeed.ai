@@ -26,7 +26,7 @@ vi.mock('@api/helpers/utils/response/response.util', () => ({
 
 describe('RSS HTTP Publishing module admission', () => {
   let app: INestApplication;
-  let releasePreviews: Map<string, boolean | null>;
+  let overrides: Map<string, boolean | null>;
   let actorFlags: { isApiKey?: boolean; isSuperAdmin?: boolean };
   const service = {
     createScoped: vi.fn(),
@@ -45,7 +45,7 @@ describe('RSS HTTP Publishing module admission', () => {
     service.findOneScoped.mockResolvedValue({ id: 'rss-1' });
     service.findAllScoped.mockResolvedValue([{ id: 'rss-1' }]);
     enqueueSource.mockResolvedValue('rss-job');
-    releasePreviews = new Map([
+    overrides = new Map([
       ['org-1', false],
       ['org-2', false],
     ]);
@@ -60,20 +60,15 @@ describe('RSS HTTP Publishing module admission', () => {
         organizationSetting: {
           findUnique: vi.fn(
             async ({ where }: { where: { organizationId: string } }) => {
-              const value = releasePreviews.get(where.organizationId);
-              return value === null ? null : { isReleasePreviewEnabled: value };
+              const value = overrides.get(where.organizationId);
+              return value === null
+                ? null
+                : { moduleOverrides: { publishing: value } };
             },
           ),
         },
       } as never,
       { isSubscriptionGatedFresh: vi.fn().mockResolvedValue(true) } as never,
-      // Publishing is unreleased: only organizations on release preview admit work.
-      {
-        getFeatureSettingsState: vi.fn(async () => ({
-          isResolved: true,
-          settings: { flags: { release_publishing: false } },
-        })),
-      } as never,
     );
     const auth = {
       canActivate(context: ExecutionContext) {
@@ -118,7 +113,7 @@ describe('RSS HTTP Publishing module admission', () => {
   }
 
   it.each([{}, { isApiKey: true }, { isSuperAdmin: true }])(
-    'blocks every mutation and poll for unreleased Publishing: %j',
+    'blocks every mutation and poll for disabled Publishing: %j',
     async (flags) => {
       actorFlags = flags;
       const calls = [
@@ -136,18 +131,18 @@ describe('RSS HTTP Publishing module admission', () => {
       for (const call of calls) {
         const response = await call();
         expect(response.status).toBe(403);
-        expect(response.body.code).toBe('ORGANIZATION_MODULE_UNRELEASED');
+        expect(response.body.code).toBe('ORGANIZATION_MODULE_DISABLED');
       }
       expectNoNewWork();
     },
   );
 
   it.each([false, null])(
-    'checks a privileged target org even when the actor org is on release preview: %j',
+    'checks a privileged target org even when the actor org is enabled: %j',
     async (target) => {
       actorFlags = { isSuperAdmin: true };
-      releasePreviews.set('org-1', true);
-      releasePreviews.set('org-2', target);
+      overrides.set('org-1', true);
+      overrides.set('org-2', target);
       for (const call of [
         () =>
           request(app.getHttpServer())
@@ -167,7 +162,7 @@ describe('RSS HTTP Publishing module admission', () => {
         expect(response.body.code).toBe(
           target === null
             ? 'ORGANIZATION_MODULE_UNAVAILABLE'
-            : 'ORGANIZATION_MODULE_UNRELEASED',
+            : 'ORGANIZATION_MODULE_DISABLED',
         );
       }
       expectNoNewWork();
@@ -175,7 +170,7 @@ describe('RSS HTTP Publishing module admission', () => {
     },
   );
 
-  it('keeps saved-source reads available while Publishing is unreleased', async () => {
+  it('keeps saved-source reads available while Publishing is disabled', async () => {
     expect(
       (await request(app.getHttpServer()).get('/rss-sources')).status,
     ).toBe(200);
@@ -190,8 +185,8 @@ describe('RSS HTTP Publishing module admission', () => {
   });
 
   it('rejects a normal actor target-org override before persistence', async () => {
-    releasePreviews.set('org-1', true);
-    releasePreviews.set('org-2', true);
+    overrides.set('org-1', true);
+    overrides.set('org-2', true);
     expect(
       (
         await request(app.getHttpServer())
@@ -204,8 +199,8 @@ describe('RSS HTTP Publishing module admission', () => {
 
   it('uses the enabled target grant without subscription and rechecks after revocation', async () => {
     actorFlags = { isSuperAdmin: true };
-    releasePreviews.set('org-1', true);
-    releasePreviews.set('org-2', true);
+    overrides.set('org-1', true);
+    overrides.set('org-2', true);
     const url = '/rss-sources/rss-1/poll?organizationId=org-2';
     expect((await request(app.getHttpServer()).post(url)).status).toBe(201);
     expect(enqueueSource).toHaveBeenCalledWith(
@@ -215,7 +210,7 @@ describe('RSS HTTP Publishing module admission', () => {
         userId: 'user-1',
       }),
     );
-    releasePreviews.set('org-2', false);
+    overrides.set('org-2', false);
     expect((await request(app.getHttpServer()).post(url)).status).toBe(403);
     expect(enqueueSource).toHaveBeenCalledTimes(1);
     expect(service.findOneScoped).toHaveBeenCalledTimes(1);

@@ -23,8 +23,6 @@ export interface ModelSelectionOptions {
   duration?: number;
   speech?: string;
   outputs?: number;
-  /** Restricts video routing to models that accept an end frame. */
-  requiresEndFrame?: boolean;
   /**
    * Makes org-private registry rows (customer trainings, BYO models) eligible
    * for selection. Omitted, only platform rows are considered.
@@ -92,12 +90,4 @@ export interface ModelCapabilities {
   supportsFeatures?: string[];
   speedTier: 'fast' | 'medium' | 'slow';
   qualityTier: 'basic' | 'standard' | 'high' | 'ultra';
-}
-
-export interface DefaultGenerationAffordabilityInput {
-  organizationId: string;
-  /** Authoritative wallet balance, already read by the caller. */
-  balance: number;
-  /** The organization's own default image model setting, when it has one. */
-  organizationDefaultImageModel?: string | null;
 }

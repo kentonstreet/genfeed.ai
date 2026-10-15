@@ -4,8 +4,8 @@ import { PostsService } from '@api/collections/posts/services/posts.service';
 import { OrganizationModuleAccessService } from '@api/common/organization-modules/organization-module-access.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { AutonomousPublishPolicyService } from '@api/services/autonomous-publishing/autonomous-publish-policy.service';
+import { BatchGenerationService } from '@api/services/batch-generation/batch-generation.service';
 import { PersonaPublisherService } from '@api/services/persona-content/persona-publisher.service';
-import { TurboRunService } from '@api/services/turbo-run/turbo-run.service';
 import {
   PostCategory,
   PostVisibility,
@@ -19,7 +19,7 @@ describe('PersonaPublisherService', () => {
   let service: PersonaPublisherService;
   let moduleAccess: { assertAccess: ReturnType<typeof vi.fn> };
   let review: {
-    createManualReviewTurboRun: ReturnType<typeof vi.fn>;
+    createManualReviewBatch: ReturnType<typeof vi.fn>;
     approveAutonomousItems: ReturnType<typeof vi.fn>;
   };
 
@@ -40,7 +40,7 @@ describe('PersonaPublisherService', () => {
     };
 
     review = {
-      createManualReviewTurboRun: vi
+      createManualReviewBatch: vi
         .fn()
         .mockResolvedValue({ id: 'batch-1', items: [{ id: 'item-1' }] }),
       approveAutonomousItems: vi.fn(),
@@ -50,7 +50,7 @@ describe('PersonaPublisherService', () => {
         PersonaPublisherService,
         { provide: OrganizationModuleAccessService, useValue: moduleAccess },
         {
-          provide: TurboRunService,
+          provide: BatchGenerationService,
           useValue: review,
         },
         {
@@ -79,18 +79,18 @@ describe('PersonaPublisherService', () => {
     service = module.get<PersonaPublisherService>(PersonaPublisherService);
   });
 
-  it.each(['unreleased', 'unavailable'])(
+  it.each(['disabled', 'unavailable'])(
     'rejects %s module access before any publication effect',
     async (reason) => {
       const denied = new HttpException(
         {
           code:
-            reason === 'unreleased'
-              ? 'ORGANIZATION_MODULE_UNRELEASED'
+            reason === 'disabled'
+              ? 'ORGANIZATION_MODULE_DISABLED'
               : 'ORGANIZATION_MODULE_UNAVAILABLE',
           moduleId: 'publishing',
         },
-        reason === 'unreleased'
+        reason === 'disabled'
           ? HttpStatus.FORBIDDEN
           : HttpStatus.SERVICE_UNAVAILABLE,
       );
@@ -111,7 +111,7 @@ describe('PersonaPublisherService', () => {
       expect(personasService.findOne).not.toHaveBeenCalled();
       expect(credentialsService.findOne).not.toHaveBeenCalled();
       expect(postsService.create).not.toHaveBeenCalled();
-      expect(review.createManualReviewTurboRun).not.toHaveBeenCalled();
+      expect(review.createManualReviewBatch).not.toHaveBeenCalled();
       expect(review.approveAutonomousItems).not.toHaveBeenCalled();
     },
   );
@@ -146,7 +146,7 @@ describe('PersonaPublisherService', () => {
       platform: 'INSTAGRAM',
     });
     postsService.create.mockResolvedValue({ id: 'post-1' });
-    review.createManualReviewTurboRun.mockRejectedValue(
+    review.createManualReviewBatch.mockRejectedValue(
       new Error('Review unavailable'),
     );
     const result = await service.publishToAll({
@@ -167,7 +167,7 @@ describe('PersonaPublisherService', () => {
       }),
     );
     expect(review.approveAutonomousItems).not.toHaveBeenCalled();
-    expect(review.createManualReviewTurboRun).toHaveBeenCalledWith(
+    expect(review.createManualReviewBatch).toHaveBeenCalledWith(
       expect.objectContaining({
         items: [expect.objectContaining({ postId: 'post-1' })],
       }),

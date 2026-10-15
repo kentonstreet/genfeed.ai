@@ -5,7 +5,6 @@ import {
   APP_ROUTES,
   resolveOrganizationModulePresentationAccess,
 } from '@genfeedai/contracts/constants';
-import { useFeatureFlagContext } from '@genfeedai/hooks/feature-flags/provider';
 import { useOrgUrl } from '@genfeedai/hooks/navigation/use-org-url';
 import type { OrganizationModulePreferenceGateProps } from '@genfeedai/props/guards/organization-module-preference-gate.props';
 import { Button } from '@ui/primitives/button';
@@ -29,11 +28,9 @@ function OrganizationModulePreferenceBody({
     useBrand();
   const { orgHref } = useOrgUrl();
   const t = useTranslations('common.settings.organizationModules');
-  const { flags: platformFlags } = useFeatureFlagContext();
   const access = resolveOrganizationModulePresentationAccess(
     settingsLoading ? null : settings,
     moduleId,
-    platformFlags,
   );
   const mounted = useRef(true);
   const retrying = useRef(false);
@@ -62,8 +59,6 @@ function OrganizationModulePreferenceBody({
   if (organizationId && access.isAllowed) return <>{children}</>;
   const isUnavailable = !organizationId || access.reason === 'unavailable';
   const isSubscriptionRequired = access.reason === 'subscription-required';
-  // Nothing in the organization can release a module; Admin → Flags does.
-  const isUnreleased = access.reason === 'unreleased';
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
       <p role="status" className="max-w-lg text-sm text-muted-foreground">
@@ -75,23 +70,11 @@ function OrganizationModulePreferenceBody({
               ? t('subscriptionTitle', {
                   module: t(`modules.${moduleId}.label`),
                 })
-              : isUnreleased
-                ? t('unreleasedTitle', {
-                    module: t(`modules.${moduleId}.label`),
-                  })
-                : t('disabledTitle', {
-                    module: t(`modules.${moduleId}.label`),
-                  })}
+              : t('disabledTitle', { module: t(`modules.${moduleId}.label`) })}
       </p>
       {!isUnavailable && (
         <p className="max-w-lg text-sm text-muted-foreground">
-          {t(
-            isSubscriptionRequired
-              ? 'subscriptionHelp'
-              : isUnreleased
-                ? 'unreleasedHelp'
-                : 'disabledHelp',
-          )}
+          {t(isSubscriptionRequired ? 'subscriptionHelp' : 'disabledHelp')}
         </p>
       )}
       {hasRetryFailed && (
@@ -106,7 +89,7 @@ function OrganizationModulePreferenceBody({
         >
           {t('retry')}
         </Button>
-      ) : isUnreleased ? null : (
+      ) : (
         <Button asChild>
           <Link
             href={orgHref(

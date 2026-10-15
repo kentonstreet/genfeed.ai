@@ -9,7 +9,6 @@ import {
   isFlux3ImageModel,
   isImageEditModel,
   LIBRARY_ASSETS_REFRESH_EVENT,
-  MEDIA_PROMPT_BRAND_ENHANCEMENT_FAILED_ERROR_CODE,
 } from '@genfeedai/contracts/constants';
 import type {
   IModel,
@@ -39,14 +38,6 @@ import {
   buildVideoPayload,
 } from '@pages/studio/playground/utils/generation-payloads';
 import {
-  buildStudioAvatarRequest,
-  resolveStudioAvatarScript,
-} from '@pages/studio/playground/utils/studio-avatar-request';
-import {
-  hasStudioAvatarSelection,
-  hasStudioVoiceSelection,
-} from '@pages/studio/playground/utils/studio-identity-selection';
-import {
   mergeStudioPlaygroundJobs,
   resolveJsonApiIngredientId,
   resolveStudioAssetDimensions,
@@ -61,20 +52,10 @@ import {
   readStudioPlaygroundSessionJobs,
   writeStudioPlaygroundSessionJobs,
 } from '@pages/studio/playground/utils/studio-playground-session';
-import {
-  buildStudioPromptData,
-  resolveModelKey,
-} from '@pages/studio/playground/utils/studio-playground-settings';
+import { buildStudioPromptData } from '@pages/studio/playground/utils/studio-playground-settings';
 import { getStudioPlaygroundTypeConfig } from '@pages/studio/playground/utils/studio-playground-types';
-import {
-  resolveSpeakingVoiceProvider,
-  resolveSpeechVoiceProvider,
-} from '@pages/studio/playground/utils/studio-voice-selection';
 import { IngredientsService } from '@services/content/ingredients.service';
-import {
-  getJsonApiErrorMember,
-  getPersistedVideoIngredientIds,
-} from '@services/core/json-api-error-message';
+import { getPersistedVideoIngredientIds } from '@services/core/json-api-error-message';
 import { logger } from '@services/core/logger.service';
 import { NotificationsService } from '@services/core/notifications.service';
 import { createMediaHandler } from '@services/core/socket-manager.service';
@@ -100,12 +81,6 @@ export interface UseStudioGenerationParams {
 export interface UseStudioGenerationReturn {
   cancelJob: (job: StudioPlaygroundJob) => Promise<void>;
   clearJobs: () => void;
-  /**
-   * Re-sends a generation that stopped on a brand enhancement failure with the
-   * prompt exactly as typed and no brand applied. No-op once the failure is
-   * gone (reload, removal) or while another request is in flight.
-   */
-  generateWithoutBrand: (job: StudioPlaygroundJob) => Promise<void>;
   isGenerating: boolean;
   jobs: readonly StudioPlaygroundJob[];
   rehydratePending: (jobs: readonly StudioPlaygroundJob[]) => void;
@@ -128,8 +103,6 @@ export interface StudioGenerationOptions {
   > | null;
   requestedSkillSlugs?: string[];
   harness?: boolean;
-  /** `raw` is the explicit "generate without brand" choice; never set otherwise. */
-  brandMode?: 'raw';
   /** Explicit Knowledge pick from the Library picker; absent means Auto. */
   knowledge?: KnowledgeSelection;
   promptId?: string;
@@ -143,11 +116,24 @@ export interface StudioGenerationReferences {
   videoReferenceIds?: string[];
 }
 
-function isBrandEnhancementFailure(error: unknown): boolean {
-  return (
-    getJsonApiErrorMember(error)?.code ===
-    MEDIA_PROMPT_BRAND_ENHANCEMENT_FAILED_ERROR_CODE
-  );
+/**
+ * Resolves the model key actually sent to the API. Auto routing and avatar
+ * both let the backend pick, so they submit an empty key.
+ */
+export function resolveModelKey(
+  settings: StudioPlaygroundSettings,
+  models: readonly IModel[],
+  hasModelSelection: boolean,
+): string {
+  if (!hasModelSelection || settings.modelKey === AUTO_MODEL_OPTION_VALUE) {
+    return '';
+  }
+
+  if (models.some((model) => model.key === settings.modelKey)) {
+    return settings.modelKey;
+  }
+
+  return models[0]?.key ?? '';
 }
 
 function toErrorMessage(error: unknown, fallback: string): string {
@@ -162,18 +148,12 @@ export function useStudioGeneration({
   type,
 }: UseStudioGenerationParams): UseStudioGenerationReturn {
   const translateCrun = useTranslations('pages.studioPlayground.crun');
-  const translateBrand = useTranslations(
-    'pages.studioPlayground.brandEnhancement',
-  );
   const { subscribe, connectionState } = useSocketManager();
   const activeBrandRef = useRef(brandId);
   activeBrandRef.current = brandId;
   const submittingRef = useRef(false);
   const consumedCrunQuoteRef = useRef<string | null>(null);
   const cancellingIds = useRef(new Set<string>());
-  /** Per failed run: re-sends the exact request, raw, with the settings it had. */
-  const brandRetriesRef = useRef(new Map<string, () => Promise<boolean>>());
-  const failedHydrationIdsRef = useRef(new Set<string>());
   const [jobs, setJobs] = useState<readonly StudioPlaygroundJob[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [jobsBrandId, setJobsBrandId] = useState(brandId);
@@ -247,7 +227,6 @@ export function useStudioGeneration({
   );
 
   const clearJobs = useCallback(() => {
-    brandRetriesRef.current.clear();
     setJobs([]);
   }, []);
 
@@ -456,7 +435,6 @@ export function useStudioGeneration({
     for (const unsubscribe of subscriptionsRef.current) unsubscribe();
     subscriptionsRef.current = [];
     subscribedIdsRef.current.clear();
-    failedHydrationIdsRef.current.clear();
     restoredBrandRef.current = brandId;
     const restored = readStudioPlaygroundSessionJobs(brandId);
 
@@ -589,95 +567,12 @@ export function useStudioGeneration({
     resolveFetchService,
   ]);
 
-  // A socket failure event and a session-restored card carry only the
-  // persisted ingredient ID. Without the server row the card cannot classify
-  // the failure, so it offered only Remove/Reprompt while Library offered
-  // Retry/Replace (#6398). Read each such row once, brand-scoped, and attach
-  // it only when it is still this brand's live FAILED ingredient.
-  useEffect(() => {
-    if (jobsBrandId !== brandId || connectionState === 'offline') return;
-    const unresolved = jobs.filter(
-      (job) =>
-        job.status === IngredientStatus.FAILED &&
-        Boolean(job.ingredientId) &&
-        job.id === job.ingredientId &&
-        job.ingredient?.id !== job.ingredientId &&
-        !failedHydrationIdsRef.current.has(job.id),
-    );
-    if (unresolved.length === 0) return;
-    const controller = new AbortController();
-    const claimedIds = unresolved.map((job) => job.id);
-    let isSettled = false;
-    for (const id of claimedIds) failedHydrationIdsRef.current.add(id);
-    void (async () => {
-      const settled = await Promise.all(
-        unresolved.map(async (job) => {
-          const id = job.id;
-          try {
-            const service = await resolveFetchService(job.type);
-            const ingredient = await service.findOne(
-              id,
-              { brandId },
-              controller.signal,
-            );
-            return ingredient &&
-              ingredient.id === id &&
-              ingredient.brandId === brandId &&
-              ingredient.status === IngredientStatus.FAILED &&
-              !ingredient.isDeleted
-              ? ingredient
-              : null;
-          } catch (error) {
-            if (controller.signal.aborted) return null;
-            const status = getErrorStatus(error);
-            // A refused row stays local-only; a transient read may retry on
-            // the next change to the job list.
-            if (status === undefined || status >= 500) {
-              failedHydrationIdsRef.current.delete(id);
-            }
-            logger.debug('Failed Studio generation could not be loaded', error);
-            return null;
-          }
-        }),
-      );
-      if (controller.signal.aborted || activeBrandRef.current !== brandId)
-        return;
-      isSettled = true;
-      const hydrated = new Map(
-        settled.flatMap((ingredient) =>
-          ingredient ? [[ingredient.id, ingredient] as const] : [],
-        ),
-      );
-      if (hydrated.size === 0) return;
-      setJobs((previous) =>
-        previous.map((job) => {
-          const ingredient = hydrated.get(job.id);
-          return ingredient &&
-            job.status === IngredientStatus.FAILED &&
-            job.ingredientId === ingredient.id
-            ? {
-                ...job,
-                error: job.error ?? ingredient.generationError ?? undefined,
-                ingredient,
-              }
-            : job;
-        }),
-      );
-    })();
-    return () => {
-      controller.abort();
-      // Release a run abandoned before publishing so the next run repeats it.
-      if (!isSettled)
-        for (const id of claimedIds) failedHydrationIdsRef.current.delete(id);
-    };
-  }, [brandId, connectionState, jobs, jobsBrandId, resolveFetchService]);
-
   const submit = useCallback(
-    async function submitGeneration(
+    async (
       promptText: string,
       references: StudioGenerationReferences = {},
       options?: StudioGenerationOptions,
-    ): Promise<boolean> {
+    ) => {
       if (submittingRef.current) {
         return false;
       }
@@ -705,22 +600,8 @@ export function useStudioGeneration({
         return false;
       }
 
-      if (
-        type === 'voice' &&
-        (!settings.voiceId || !resolveSpeechVoiceProvider(settings.voiceRef))
-      ) {
+      if (type === 'voice' && !settings.voiceId) {
         notificationsService.error('Pick a voice before generating');
-        return false;
-      }
-
-      if (
-        type === 'avatar' &&
-        (!hasStudioAvatarSelection(settings) ||
-          !hasStudioVoiceSelection(settings))
-      ) {
-        notificationsService.error(
-          'Pick an avatar and a voice before generating',
-        );
         return false;
       }
 
@@ -952,7 +833,6 @@ export function useStudioGeneration({
                 ...(options?.harness !== undefined
                   ? { harness: options.harness }
                   : {}),
-                ...(options?.brandMode ? { brandMode: options.brandMode } : {}),
                 ...(options?.knowledge ? { knowledge: options.knowledge } : {}),
               },
               promptData,
@@ -1008,7 +888,6 @@ export function useStudioGeneration({
                 ...(options?.harness !== undefined
                   ? { harness: options.harness }
                   : {}),
-                ...(options?.brandMode ? { brandMode: options.brandMode } : {}),
                 ...(options?.knowledge ? { knowledge: options.knowledge } : {}),
               },
               videoPromptData,
@@ -1048,32 +927,27 @@ export function useStudioGeneration({
 
           case 'avatar': {
             const service = await getHeyGenService();
-            const data = await service.generate(
-              buildStudioAvatarRequest(
-                settings,
-                resolveStudioAvatarScript(promptData.speech, promptData.text),
-                modelKey,
-              ),
-            );
+            // `avatarId` on this endpoint means a HeyGen catalog id. Genfeed
+            // portraits are our own ingredients, so they travel as `photoUrl`.
+            const data = await service.generate({
+              photoUrl: settings.avatarRef
+                ? undefined
+                : settings.avatarPhotoUrl,
+              avatarRef: settings.avatarRef,
+              useIdentity: true,
+              voiceRef: settings.voiceRef,
+              voiceProvider: settings.voiceRef?.provider,
+              text: promptData.speech?.trim() || promptData.text?.trim() || '',
+              voiceId: settings.voiceId,
+            });
             trackPendingIds([resolveJsonApiIngredientId(data)], pendingContext);
             isAccepted = true;
             break;
           }
 
           case 'voice': {
-            // `voiceProvider` says which catalog `voiceId` belongs to; without
-            // it the server cannot tell an ElevenLabs id from a HeyGen one.
-            const voiceProvider = resolveSpeechVoiceProvider(settings.voiceRef);
-            if (!settings.voiceId || !voiceProvider) {
+            if (!settings.voiceId) {
               notificationsService.error('Pick a voice before generating');
-              break;
-            }
-
-            const speakingProvider = resolveSpeakingVoiceProvider(modelKey);
-            if (speakingProvider && speakingProvider !== voiceProvider) {
-              notificationsService.error(
-                'Pick a voice that matches the selected speech model',
-              );
               break;
             }
 
@@ -1081,13 +955,9 @@ export function useStudioGeneration({
             // Text-to-speech runs inline on the API and returns the finished
             // ingredient, so there is no socket phase to wait on.
             const voice = await service.generate({
-              ...(modelKey
-                ? { model: modelKey }
-                : { autoSelectModel: true, prioritize: settings.prioritize }),
               speed: 1,
               text: promptData.speech?.trim() || promptText.trim(),
               voiceId: settings.voiceId,
-              voiceProvider,
             });
 
             if (activeBrandRef.current !== brandId) return false;
@@ -1118,27 +988,13 @@ export function useStudioGeneration({
       } catch (error) {
         if (activeBrandRef.current !== brandId) return false;
         logger.error('Studio generation failed', error);
-        const isBrandStop =
-          !modelKey.startsWith('crun/') && isBrandEnhancementFailure(error);
-        if (isBrandStop) {
-          brandRetriesRef.current.set(runId, () =>
-            submitGeneration(promptText, references, {
-              brandMode: 'raw',
-              ...(options?.originalText !== undefined
-                ? { originalText: options.originalText }
-                : {}),
-            }),
-          );
-        }
-        const message = isBrandStop
-          ? translateBrand('failed')
-          : modelKey.startsWith('crun/')
-            ? translateCrun(
-                error instanceof Error && error.message === 'CRUN_QUOTE_STALE'
-                  ? 'quoteStale'
-                  : 'reasons.CRUN_PROVIDER_UNAVAILABLE',
-              )
-            : toErrorMessage(error, `Failed to generate ${config.label}`);
+        const message = modelKey.startsWith('crun/')
+          ? translateCrun(
+              error instanceof Error && error.message === 'CRUN_QUOTE_STALE'
+                ? 'quoteStale'
+                : 'reasons.CRUN_PROVIDER_UNAVAILABLE',
+            )
+          : toErrorMessage(error, `Failed to generate ${config.label}`);
 
         const persistedIds =
           type === 'video' ? getPersistedVideoIngredientIds(error) : [];
@@ -1202,9 +1058,6 @@ export function useStudioGeneration({
                   {
                     createdAt: Date.now(),
                     error: message,
-                    ...(isBrandStop
-                      ? { failure: 'brand_enhancement' as const }
-                      : {}),
                     ...jobDimensions,
                     id: `failed-${crypto.randomUUID()}`,
                     modelKey: modelKey || undefined,
@@ -1243,31 +1096,14 @@ export function useStudioGeneration({
       settings,
       trackPendingIds,
       subscribeToPendingJob,
-      translateBrand,
       translateCrun,
       type,
     ],
   );
 
-  const generateWithoutBrand = useCallback(
-    async (job: StudioPlaygroundJob): Promise<void> => {
-      const retry = job.runId
-        ? brandRetriesRef.current.get(job.runId)
-        : undefined;
-      if (!job.runId || !retry || submittingRef.current) {
-        return;
-      }
-      brandRetriesRef.current.delete(job.runId);
-      removeJob(job.id);
-      await retry();
-    },
-    [removeJob],
-  );
-
   return {
     cancelJob,
     clearJobs,
-    generateWithoutBrand,
     isGenerating,
     jobs: jobsBrandId === brandId ? jobs : [],
     rehydratePending,

@@ -5,14 +5,11 @@ import { clearClientProtectedBootstrapCache } from '@genfeedai/contexts/provider
 import { MemberRole } from '@genfeedai/contracts';
 import {
   APP_ROUTES,
-  isOrganizationModuleOffered,
   ORGANIZATION_MODULE_IDS,
   ORGANIZATION_MODULES,
-  type OrganizationModuleId,
   organizationModuleOverridesSchema,
+  type ToggleableOrganizationModuleId,
 } from '@genfeedai/contracts/constants';
-import { useFeatureFlagContext } from '@genfeedai/hooks/feature-flags/provider';
-import type { OrganizationModuleTileProps } from '@genfeedai/props/settings/organization-modules-card.props';
 import { useAuthedService } from '@hooks/auth/use-authed-service/use-authed-service';
 import { useUserRole } from '@hooks/auth/use-user-role/use-user-role';
 import { useOrganization } from '@hooks/data/organization/use-organization/use-organization';
@@ -20,35 +17,17 @@ import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import { logger } from '@services/core/logger.service';
 import { OrganizationsService } from '@services/organization/organizations.service';
 import Card from '@ui/card/Card';
-import CollectionGrid from '@ui/collection/CollectionGrid';
-import CollectionSection from '@ui/collection/CollectionSection';
 import { Badge } from '@ui/primitives/badge';
 import { Button } from '@ui/primitives/button';
 import { Switch } from '@ui/primitives/switch';
-import { APP_RAIL_REGISTRY } from '@ui/shell/app-rail/app-rail.registry';
-import { Heading } from '@ui/typography/heading';
-import { Text } from '@ui/typography/text';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import StoreAppThumbnail from '@/components/store/StoreAppThumbnail';
-import {
-  STORE_APP_CATALOG,
-  STORE_CATEGORY_IDS,
-} from '@/components/store/store-app-catalog';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-/**
- * Settings → Modules: which apps the organization shows its members, laid
- * out on the Store's shelves. A switch only hides an app; work through the
- * API and MCP keeps running. Modules switched off for the platform or not
- * released to the organization are not listed (Admin → Flags owns both).
- */
 export default function OrganizationModulesCard() {
   const translate = useTranslations('common.settings.organizationModules');
-  const translateStore = useTranslations('common.store');
   const { organizationId } = useBrand();
   const { isLoading, refresh, settings } = useOrganization();
-  const { flags } = useFeatureFlagContext();
   const role = useUserRole();
   const { orgHref } = useOrgUrl();
   const getService = useAuthedService(
@@ -66,7 +45,9 @@ export default function OrganizationModulesCard() {
       typeof isBillingEnabled === 'boolean' &&
       !isLoading,
   );
-  const [pending, setPending] = useState<OrganizationModuleId | null>(null);
+  const [pending, setPending] = useState<ToggleableOrganizationModuleId | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const scope = useRef(organizationId);
@@ -89,22 +70,14 @@ export default function OrganizationModulesCard() {
     setNotice(null);
   }, [organizationId]);
 
-  const offeredModuleIds = useMemo(
-    () =>
-      ORGANIZATION_MODULE_IDS.filter((moduleId) =>
-        isOrganizationModuleOffered(moduleId, settings, flags),
-      ),
-    [flags, settings],
-  );
-
   async function changeModule(
-    moduleId: OrganizationModuleId,
-    isShown: boolean,
+    moduleId: ToggleableOrganizationModuleId,
+    isEnabled: boolean,
   ) {
     if (
       !canManage ||
-      !parsed.success ||
       !isAvailable ||
+      !parsed.success ||
       !organizationId ||
       operation.current
     )
@@ -124,7 +97,7 @@ export default function OrganizationModulesCard() {
       const service = await getService();
       if (!isCurrent()) return;
       await service.patchSettings(organization, {
-        moduleOverrides: { ...parsed.data, [moduleId]: isShown },
+        moduleOverrides: { ...parsed.data, [moduleId]: isEnabled },
       });
       isSaved = true;
       clearClientProtectedBootstrapCache();
@@ -156,34 +129,70 @@ export default function OrganizationModulesCard() {
     }
   }
 
-  function isModuleShown(moduleId: OrganizationModuleId): boolean {
-    if (!parsed.success || typeof isBillingEnabled !== 'boolean') return false;
-    return (
-      parsed.data[moduleId] ??
-      (!isBillingEnabled || ORGANIZATION_MODULES[moduleId].isDefaultEnabled)
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-8" aria-busy={Boolean(pending)}>
-      <div className="flex flex-col gap-1">
-        <Heading size="md">{translate('title')}</Heading>
-        <Text as="p" color="muted" size="sm">
-          {translate('description')}
-        </Text>
-        {!canManage ? (
-          <Text as="p" color="muted" size="xs">
-            {translate('adminOnly')}
-          </Text>
-        ) : null}
+    <Card
+      label={translate('title')}
+      description={translate('description')}
+      bodyClassName="gap-3 p-4"
+    >
+      {!canManage ? (
+        <p className="text-xs text-muted-foreground">
+          {translate('adminOnly')}
+        </p>
+      ) : null}
+      <div aria-busy={Boolean(pending)} className="divide-y divide-border">
+        {ORGANIZATION_MODULE_IDS.map((moduleId) => {
+          const module = ORGANIZATION_MODULES[moduleId];
+          const label = translate(`modules.${moduleId}.label`);
+          const description = translate(`modules.${moduleId}.description`);
+          const toggleable = moduleId as ToggleableOrganizationModuleId;
+          const isEnabled =
+            !module.isToggleable ||
+            (parsed.success &&
+              typeof isBillingEnabled === 'boolean' &&
+              (parsed.data[toggleable] ??
+                (!isBillingEnabled || module.isDefaultEnabled)));
+          return (
+            <div className="py-3 first:pt-0 last:pb-0" key={moduleId}>
+              {module.isToggleable ? (
+                <Switch
+                  aria-label={label}
+                  description={description}
+                  isChecked={Boolean(isEnabled)}
+                  isDisabled={!canManage || !isAvailable || Boolean(pending)}
+                  label={
+                    <span className="flex flex-wrap items-center gap-2">
+                      {label}
+                      {isBillingEnabled && module.requiresSubscription ? (
+                        <Badge>{translate('paidPlan')}</Badge>
+                      ) : null}
+                    </span>
+                  }
+                  onCheckedChange={(enabled) => {
+                    void changeModule(toggleable, enabled);
+                  }}
+                />
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-sm font-medium">{label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {description}
+                    </p>
+                  </div>
+                  <Badge className="shrink-0">{translate('alwaysOn')}</Badge>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-
       {isLoading ? (
         <p role="status" className="text-xs text-muted-foreground">
           {translate('loading')}
         </p>
       ) : !isAvailable ? (
-        <div className="flex flex-col items-start gap-2">
+        <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
             {translate('unavailable')}
           </p>
@@ -197,50 +206,7 @@ export default function OrganizationModulesCard() {
             {translate('retry')}
           </Button>
         </div>
-      ) : (
-        STORE_CATEGORY_IDS.map((categoryId) => {
-          const moduleIds = offeredModuleIds.filter(
-            (moduleId) => STORE_APP_CATALOG[moduleId].category === categoryId,
-          );
-          return (
-            <CollectionSection
-              key={categoryId}
-              data-testid={`modules-category-${categoryId}`}
-              description={translateStore(`categoryDescriptions.${categoryId}`)}
-              itemCount={moduleIds.length}
-              title={translateStore(`categories.${categoryId}`)}
-            >
-              <CollectionGrid>
-                {moduleIds.map((moduleId) => {
-                  const railApp = APP_RAIL_REGISTRY.find(
-                    (app) => app.id === moduleId,
-                  );
-                  if (!railApp) return null;
-                  return (
-                    <OrganizationModuleTile
-                      key={moduleId}
-                      description={translate(`modules.${moduleId}.description`)}
-                      icon={railApp.icon}
-                      isDisabled={!canManage || Boolean(pending)}
-                      isPaid={
-                        isBillingEnabled === true &&
-                        ORGANIZATION_MODULES[moduleId].requiresSubscription
-                      }
-                      isShown={isModuleShown(moduleId)}
-                      label={translate(`modules.${moduleId}.label`)}
-                      moduleId={moduleId}
-                      onShownChange={(isShown) => {
-                        void changeModule(moduleId, isShown);
-                      }}
-                    />
-                  );
-                })}
-              </CollectionGrid>
-            </CollectionSection>
-          );
-        })
-      )}
-
+      ) : null}
       {pending ? (
         <p role="status" className="text-xs text-muted-foreground">
           {translate('saving')}
@@ -256,72 +222,22 @@ export default function OrganizationModulesCard() {
           {notice}
         </p>
       ) : null}
-
-      <div className="flex flex-col gap-1 border-t border-border pt-4">
-        <p className="text-xs text-muted-foreground">{translate('dataHelp')}</p>
-        {isBillingEnabled ? (
-          <>
-            <p className="text-xs text-muted-foreground">
-              {translate('paidHelp')}
-            </p>
-            <Link
-              className="text-sm underline underline-offset-4"
-              href={orgHref(APP_ROUTES.SETTINGS.SUBSCRIPTION)}
-            >
-              {translate('subscription')}
-            </Link>
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function OrganizationModuleTile({
-  description,
-  icon,
-  isDisabled,
-  isPaid,
-  isShown,
-  label,
-  moduleId,
-  onShownChange,
-}: OrganizationModuleTileProps) {
-  const translate = useTranslations('common.settings.organizationModules');
-
-  return (
-    <Card
-      bodyClassName="flex h-full flex-col gap-0 p-0"
-      className="h-full"
-      data-shown={isShown}
-      data-testid={`module-card-${moduleId}`}
-    >
-      <StoreAppThumbnail
-        appId={moduleId}
-        icon={icon}
-        label={label}
-        size="standard"
-      />
-      <div className="flex flex-1 flex-col justify-between gap-4 p-4">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-foreground">
-              {label}
-            </h3>
-            {isPaid ? (
-              <Badge className="shrink-0">{translate('paidPlan')}</Badge>
-            ) : null}
-          </div>
-          <p className="text-xs text-muted-foreground">{description}</p>
+      <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+        {translate('dataHelp')}
+      </p>
+      {isBillingEnabled ? (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">
+            {translate('paidHelp')}
+          </p>
+          <Link
+            className="text-sm underline underline-offset-4"
+            href={orgHref(APP_ROUTES.SETTINGS.SUBSCRIPTION)}
+          >
+            {translate('subscription')}
+          </Link>
         </div>
-        <Switch
-          aria-label={label}
-          isChecked={isShown}
-          isDisabled={isDisabled}
-          label={translate(isShown ? 'shown' : 'hidden')}
-          onCheckedChange={onShownChange}
-        />
-      </div>
+      ) : null}
     </Card>
   );
 }

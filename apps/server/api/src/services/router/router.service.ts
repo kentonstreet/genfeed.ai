@@ -11,10 +11,7 @@ import type {
   PromptAnalysis,
 } from '@api/services/router/interfaces/router.interfaces';
 import { ModelCategory, ModelLifecycle } from '@genfeedai/contracts';
-import {
-  DEFAULT_CONTEXT_EMBEDDING_MODEL,
-  hasEndFrame,
-} from '@genfeedai/contracts/constants';
+import { DEFAULT_CONTEXT_EMBEDDING_MODEL } from '@genfeedai/contracts/constants';
 import {
   getRuntimeMarginMultiplier,
   quoteModelBillablePricing,
@@ -72,8 +69,6 @@ export class RouterService {
       ModelCategory.IMAGE,
       ModelCategory.IMAGE_EDIT,
       ModelCategory.VIDEO,
-      ModelCategory.VOICE,
-      ModelCategory.AVATAR,
     ]);
 
   /** Cheaper wins the tiebreak between two models of equal quality. */
@@ -769,12 +764,12 @@ export class RouterService {
         await this.getUsableModels(options.category, options.organizationId),
         options.organizationId,
       );
-      const eligibleModels = enabledModels.filter(
-        (model) =>
-          (options.eligibleModelKeys === undefined ||
-            options.eligibleModelKeys.includes(model.key)) &&
-          (!options.requiresEndFrame || hasEndFrame(model.key)),
-      );
+      const eligibleModels =
+        options.eligibleModelKeys === undefined
+          ? enabledModels
+          : enabledModels.filter((model) =>
+              options.eligibleModelKeys?.includes(model.key),
+            );
       const models = await this.restrictToQuotableModels(
         eligibleModels,
         options.category,

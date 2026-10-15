@@ -42,6 +42,7 @@ import {
   buildAgentSystemPrompt,
 } from '@api/services/agent-orchestrator/utils/agent-system-prompt.util';
 import {
+  fenceUntrustedContent,
   sanitizeAgentUntrustedInput,
   UNTRUSTED_USER_DATA_FRAMING,
 } from '@api/services/agent-orchestrator/utils/agent-untrusted-content.util';
@@ -65,19 +66,6 @@ function buildGenerationModePrompt(
     return 'The operator explicitly selected Video mode for this turn (generationType=video). Generate the video directly in this turn using the available visual-generation tool. Do not ask for another confirmation. Do not choose image.';
   }
   return '';
-}
-
-/**
- * Interactive chat turns may ask one missing brand-context question in-flow.
- * Onboarding asks its own cards, the brand interview runs its own script, and
- * proactive runs have nobody to answer.
- */
-function isInFlowBrandQuestionTurn(request: AgentChatRequest): boolean {
-  return (
-    request.source !== 'onboarding' &&
-    request.source !== 'proactive' &&
-    request.agentType !== AgentType.BRAND_INTERVIEW
-  );
 }
 
 @Injectable()
@@ -293,7 +281,6 @@ export class AgentOrchestratorContextService {
         brandGuidance: true,
         brandIdentity: true,
         brandMemory: true,
-        missingBrandContext: isInFlowBrandQuestionTurn(request),
         performancePatterns: true,
         ragContext: true,
         recentPosts: true,
@@ -301,7 +288,6 @@ export class AgentOrchestratorContextService {
       organizationId: context.organizationId,
       platform: policy.platform,
       query: request.content,
-      threadId: isEntityId(request.threadId) ? request.threadId : undefined,
       userId: context.userId,
       isApiKey: context.apiKeyContext?.isApiKey,
       apiKeyId: context.apiKeyContext?.apiKeyId,
@@ -443,7 +429,7 @@ export class AgentOrchestratorContextService {
           history.push({
             content: [
               {
-                text: sanitizeAgentUntrustedInput(msg.content || ''),
+                text: fenceUntrustedContent(msg.content || ''),
                 type: 'text',
               },
               ...attachments.map((a) => ({
@@ -454,12 +440,9 @@ export class AgentOrchestratorContextService {
             role: 'user',
           });
         } else {
-          // The signed-in user's own turns are the principal's instructions:
-          // sanitized (length cap, control chars, injection markers) but not
-          // framed as quoted data. Third-party content stays fenced below.
           const content =
             msg.role === AgentMessageRole.USER
-              ? sanitizeAgentUntrustedInput(msg.content || '')
+              ? fenceUntrustedContent(msg.content || '')
               : msg.content || '';
           history.push({
             content,

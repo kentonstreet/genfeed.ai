@@ -97,19 +97,6 @@ type VisualExecutionOwnership = WorkflowNodeClaimLease & {
 export class VisualProjectWorkflowService implements OnModuleInit {
   private readonly ownership =
     new AsyncLocalStorage<VisualExecutionOwnership>();
-  /** Shared system-principal lookup for both normal and failure binding proofs. */
-  private readSystemWorkflowMirror(workflowId: string) {
-    return crossOrgUnsafe(() =>
-      this.prisma.workflow.findFirstOrThrow({
-        where: {
-          id: workflowId,
-          organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-          userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-          isDeleted: false,
-        },
-      }),
-    );
-  }
   constructor(
     private readonly prisma: PrismaService,
     private readonly workflows: SystemWorkflowRunnerService,
@@ -133,55 +120,6 @@ export class VisualProjectWorkflowService implements OnModuleInit {
     this.workflows.registerAction(
       'visual-code.fail-internal',
       async (request) => this.failAdmittedExecution(request),
-    );
-    this.workflows.terminalFailures.register(
-      'visual-code.execute',
-      async ({ inputValues, organizationId }) =>
-        this.settleUnreconciledExecution(inputValues, organizationId),
-    );
-  }
-
-  /**
-   * Last resort when the execute and failure graphs both failed (#6655). No
-   * failure node lease exists to prove, so only the original execution's own
-   * claims guard the stop; receipts that need recovery still refuse it.
-   */
-  private async settleUnreconciledExecution(
-    inputValues: Record<string, unknown>,
-    organizationId: string,
-  ): Promise<void> {
-    const job = z
-      .strictObject({
-        revisionId: z.string().min(1),
-        organizationId: z.literal(organizationId),
-        brandId: z.string().min(1),
-        userId: z.string().min(1),
-      })
-      .parse(inputValues.job);
-    const revision = await this.prisma.visualRevision.findFirst({
-      where: {
-        id: job.revisionId,
-        organizationId,
-        brandId: job.brandId,
-        userId: job.userId,
-        isDeleted: false,
-      },
-    });
-    if (!revision || terminal.includes(revision.status)) return;
-    const original = await this.prisma.workflowExecution.findFirst({
-      where: {
-        organizationId,
-        userId: job.userId,
-        idempotencyKey: `visual-code-${revision.id}`,
-        isDeleted: false,
-      },
-      select: { id: true },
-    });
-    if (!original) return;
-    await this.dispatch.reconcileFailedExecution(
-      revision,
-      original.id,
-      async () => {},
     );
   }
   private async failAdmittedExecution({
@@ -268,7 +206,16 @@ export class VisualProjectWorkflowService implements OnModuleInit {
       [failure, buildVisualProjectFailureWorkflowDefinition()],
       [original, buildVisualProjectWorkflowDefinition()],
     ] as const) {
-      const mirror = await this.readSystemWorkflowMirror(execution.workflowId);
+      const mirror = await crossOrgUnsafe(() =>
+        this.prisma.workflow.findFirstOrThrow({
+          where: {
+            id: execution.workflowId,
+            organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            isDeleted: false,
+          },
+        }),
+      );
       if (
         !isHiddenSystemWorkflowMetadata(mirror.metadata) ||
         !isProtectedSystemWorkflowMetadata(mirror.metadata) ||
@@ -356,7 +303,17 @@ export class VisualProjectWorkflowService implements OnModuleInit {
     // The hidden system workflow mirror is platform-global (owned by the
     // system principal), so this binding check reads it as an explicit
     // cross-org operation.
-    const mirror = await this.readSystemWorkflowMirror(execution.workflowId);
+    const mirror = await crossOrgUnsafe(
+      async () =>
+        await this.prisma.workflow.findFirstOrThrow({
+          where: {
+            id: execution.workflowId,
+            organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            isDeleted: false,
+          },
+        }),
+    );
     const canonical = getSystemWorkflowMetadata(mirror.metadata);
     const result = z
       .object({

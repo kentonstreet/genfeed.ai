@@ -11,7 +11,6 @@ import { WorkflowSchedulerService } from '@api/collections/workflows/services/wo
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
 import { buildWorkflowListWhere } from '@api/collections/workflows/utils/workflow-list-where.util';
 import { withNextRunAt } from '@api/collections/workflows/utils/workflow-next-run.util';
-import { toWorkflowSchedulePrincipal } from '@api/collections/workflows/utils/workflow-schedule-actor.util';
 import { assertCanIncludeSystemWorkflows } from '@api/collections/workflows/utils/workflow-system-access.util';
 import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
@@ -100,7 +99,6 @@ export class WorkflowCrudController {
         user.organizationId,
         createWorkflowDto,
         user.brandId || undefined,
-        toWorkflowSchedulePrincipal(user),
       );
 
       return serializeSingle(
@@ -319,7 +317,6 @@ export class WorkflowCrudController {
           nextSchedule,
           nextTimezone,
           nextEnabled,
-          toWorkflowSchedulePrincipal(user),
         );
 
         const updated = await this.workflowsService.findVisibleOrThrow(

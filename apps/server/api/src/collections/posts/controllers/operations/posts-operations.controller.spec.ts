@@ -1,4 +1,4 @@
-import { PostAccountGenerationService } from '@api/collections/posts/services/post-account-generation.service';
+import { PostAccountLearningService } from '@api/collections/posts/services/post-account-learning.service';
 import { PostDraftGenerationService } from '@api/collections/posts/services/post-draft-generation.service';
 import { ORGANIZATION_MODULE_KEY } from '@api/common/organization-modules/organization-module.decorator';
 
@@ -43,7 +43,6 @@ import { PostsService } from '@api/collections/posts/services/posts.service';
 import type { SourcePostVariationRequest } from '@api/collections/posts/services/source-post-variation.types';
 import { TemplatesService } from '@api/collections/templates/services/templates.service';
 import { TrendReferenceCorpusService } from '@api/collections/trends/services/trend-reference-corpus.service';
-import { BrandedGenerationBlockedException } from '@api/helpers/exceptions/branded-generation-blocked/branded-generation-blocked.exception';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
@@ -192,9 +191,6 @@ describe('PostsOperationsController', () => {
   } as Request;
 
   // Mock Services
-  const mockAccountGeneration = {
-    start: vi.fn(),
-  };
   const mockActivitiesService = {
     record: vi.fn().mockResolvedValue(mockActivity),
     recordMany: vi.fn().mockResolvedValue(1),
@@ -399,8 +395,12 @@ Tweet 3: Tech innovation is changing the world.`,
           useValue: { generateDraftText: vi.fn() },
         },
         {
-          provide: PostAccountGenerationService,
-          useValue: mockAccountGeneration,
+          provide: PostAccountLearningService,
+          useValue: {
+            resolve: vi.fn(),
+            revalidate: vi.fn(),
+            bindArtifact: vi.fn(),
+          },
         },
         {
           provide: PostRepurposeService,
@@ -541,7 +541,7 @@ Tweet 3: Tech innovation is changing the world.`,
         creditCost: 2,
         groupId: 'group-1',
         requestedCount: 3,
-        reviewTurboRunId: 'batch-1',
+        reviewBatchId: 'batch-1',
         sourceKind: 'owned-post',
         voiceMode: 'brand-voice',
         voiceModeLabel: 'Brand voice',
@@ -588,7 +588,6 @@ Tweet 3: Tech innovation is changing the world.`,
       brandId,
       platform: CredentialPlatform.TWITTER,
       prompt: 'Launch day',
-      requestKey: '5b0f6c1e-7d3a-4c1e-9b0a-2f6d8a1c3e4f',
     };
     const deferredRequest = () =>
       ({
@@ -598,7 +597,18 @@ Tweet 3: Tech innovation is changing the world.`,
         creditsConfig: { deferred: boolean; amount: number };
       };
 
-    it('finalizes the deferred charge for a fresh draft', async () => {
+    it('finalizes the deferred charge for a legacy draft', async () => {
+      draftGeneration.generateDraftText.mockResolvedValue({
+        description: 'text',
+        model: 'model-a',
+      });
+      const request = deferredRequest();
+      await generationController.generateDraftText(request, dto, mockUser);
+
+      expect(request.creditsConfig.deferred).toBe(false);
+    });
+
+    it('finalizes the deferred charge for a fresh branded draft', async () => {
       draftGeneration.generateDraftText.mockResolvedValue({
         brandedReceipt: { isReplayed: false },
         description: 'text',
@@ -610,7 +620,7 @@ Tweet 3: Tech innovation is changing the world.`,
       expect(request.creditsConfig.deferred).toBe(false);
     });
 
-    it('leaves a replay uncharged', async () => {
+    it('leaves a branded replay uncharged', async () => {
       draftGeneration.generateDraftText.mockResolvedValue({
         brandedReceipt: { isReplayed: true },
         description: 'text',
@@ -631,125 +641,206 @@ Tweet 3: Tech innovation is changing the world.`,
 
       expect(request.creditsConfig.deferred).toBe(true);
     });
-
-    it('finalizes the known cost when the request stopped after a recorded provider attempt', async () => {
-      const stopped = new BrandedGenerationBlockedException(
-        422,
-        'channel_limit_exceeded',
-        'receipt-1',
-        { model: 'model-a' },
-      );
-      draftGeneration.generateDraftText.mockRejectedValue(stopped);
-      const request = deferredRequest();
-      await expect(
-        generationController.generateDraftText(request, dto, mockUser),
-      ).rejects.toBe(stopped);
-
-      expect(request.creditsConfig.deferred).toBe(false);
-    });
-
-    it('leaves the charge deferred (released) when the request stopped before any provider attempt', async () => {
-      draftGeneration.generateDraftText.mockRejectedValue(
-        new BrandedGenerationBlockedException(409, 'no_revision', 'receipt-1'),
-      );
-      const request = deferredRequest();
-      await expect(
-        generationController.generateDraftText(request, dto, mockUser),
-      ).rejects.toBeInstanceOf(BrandedGenerationBlockedException);
-
-      expect(request.creditsConfig.deferred).toBe(true);
-    });
   });
 
   // ==========================================================================
-  // POST /posts/account-generations - generateAccountContent
+  // POST /posts/account-generations - generateAccountContent (post format)
   // ==========================================================================
-  describe('generateAccountContent', () => {
-    const postDto = {
+  describe('generateAccountContent (post format)', () => {
+    const generateTweetsDto = {
       count: 3,
       credentialId,
       format: 'post' as const,
       tone: TweetTone.PROFESSIONAL,
       topic: 'AI technology',
     };
-    const threadDto = { ...postDto, count: 5, format: 'thread' as const };
 
-    beforeEach(() => {
-      mockAccountGeneration.start.mockResolvedValue([mockPost]);
-    });
-
-    it('starts the receipt-backed run with the caller identity and returns the placeholders', async () => {
+    it('should create posts with PROCESSING status and return them', async () => {
       const result = await generationController.generateAccountContent(
         mockRequest,
-        postDto,
+        generateTweetsDto,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        postDto,
-        mockUser,
+      expect(mockAccountPublishingContextService.resolve).toHaveBeenCalledWith({
+        brandId,
+        credentialId: generateTweetsDto.credentialId,
+        organizationId,
+        sourceLineage: {
+          sourceReferenceIds: undefined,
+          sourceUrl: undefined,
+          trendId: undefined,
+        },
+        surface: 'post',
+      });
+      expect(mockPostsService.create).toHaveBeenCalledTimes(3);
+      expect(mockPostsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: CredentialPlatform.TWITTER,
+        }),
       );
-      expect(result.data).toEqual([mockPost]);
+      expect(result).toBeDefined();
+      expect(result.data).toBeDefined();
     });
 
-    it('starts a thread run for a valid thread size', async () => {
+    it('should throw NOT_FOUND when credential does not exist', async () => {
+      const notFoundError = new HttpException(
+        {
+          detail: 'The specified account does not exist or is not connected',
+          title: 'Credential not found',
+        },
+        HttpStatus.NOT_FOUND,
+      );
+      mockAccountPublishingContextService.resolve
+        .mockRejectedValueOnce(notFoundError)
+        .mockRejectedValueOnce(notFoundError);
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(HttpException);
+
+      try {
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+      } catch (error) {
+        expect((error as HttpException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+      }
+    });
+
+    it('should handle internal error during post creation', async () => {
+      mockPostsService.create.mockRejectedValueOnce(new Error('DB error'));
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('should re-throw HttpException as-is', async () => {
+      const httpError = new HttpException('Custom error', HttpStatus.FORBIDDEN);
+      mockAccountPublishingContextService.resolve.mockRejectedValueOnce(
+        httpError,
+      );
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(httpError);
+    });
+
+    it('uses the selected account platform when creating generated drafts', async () => {
+      mockAccountPublishingContextService.resolve.mockResolvedValueOnce({
+        ...mockPublishingContext,
+        account: {
+          ...mockPublishingContext.account,
+          platform: CredentialPlatform.LINKEDIN,
+        },
+      });
+
       await generationController.generateAccountContent(
         mockRequest,
-        threadDto,
+        generateTweetsDto,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        threadDto,
-        mockUser,
+      expect(mockPostsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: CredentialPlatform.LINKEDIN,
+        }),
       );
     });
+  });
 
-    it.each([
-      [1, 'at least two'],
-      [10, 'at most 9'],
-    ])(
-      'rejects a thread of %i posts before any credit hold or placeholder',
-      async (count, detail) => {
-        await expect(
-          generationController.generateAccountContent(
-            mockRequest,
-            { ...threadDto, count },
-            mockUser,
-          ),
-        ).rejects.toMatchObject({
-          response: { detail: expect.stringContaining(detail) },
+  // ==========================================================================
+  // POST /posts/account-generations - generateAccountContent (thread format)
+  // ==========================================================================
+  describe('generateAccountContent (thread format)', () => {
+    const generateThreadDto = {
+      count: 5,
+      credentialId,
+      format: 'thread' as const,
+      tone: TweetTone.CASUAL,
+      topic: 'AI technology',
+    };
+
+    it('should create thread posts with parent relationships', async () => {
+      let callCount = 0;
+      mockPostsService.create.mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          ...mockPost,
+          id: testId('other'),
+          order: callCount - 1,
         });
-        expect(mockAccountGeneration.start).not.toHaveBeenCalled();
-      },
-    );
+      });
 
-    it('keeps an insufficient-credits refusal as the 402 the run raised', async () => {
-      const refusal = new HttpException(
-        { title: 'Insufficient credits' },
-        HttpStatus.PAYMENT_REQUIRED,
+      const result = await generationController.generateAccountContent(
+        mockRequest,
+        generateThreadDto,
+        mockUser,
       );
-      mockAccountGeneration.start.mockRejectedValueOnce(refusal);
 
-      await expect(
-        generationController.generateAccountContent(
-          mockRequest,
-          postDto,
-          mockUser,
-        ),
-      ).rejects.toBe(refusal);
+      expect(mockAccountPublishingContextService.resolve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          brandId,
+          credentialId: generateThreadDto.credentialId,
+          organizationId,
+          surface: 'thread',
+        }),
+      );
+      expect(mockPostsService.create).toHaveBeenCalledTimes(5);
+      expect(result).toBeDefined();
+      expect(result.data).toBeDefined();
     });
 
-    it('wraps an unexpected failure in the generic 500 shape', async () => {
-      mockAccountGeneration.start.mockRejectedValueOnce(new Error('DB error'));
+    it('should throw NOT_FOUND when credential not found', async () => {
+      mockAccountPublishingContextService.resolve.mockRejectedValueOnce(
+        new HttpException(
+          {
+            detail: 'The specified account does not exist or is not connected',
+            title: 'Credential not found',
+          },
+          HttpStatus.NOT_FOUND,
+        ),
+      );
 
       await expect(
         generationController.generateAccountContent(
           mockRequest,
-          postDto,
+          generateThreadDto,
           mockUser,
         ),
-      ).rejects.toMatchObject({ status: HttpStatus.INTERNAL_SERVER_ERROR });
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('should use default PROFESSIONAL tone when not specified', async () => {
+      const dtoWithoutTone = {
+        count: 3,
+        credentialId,
+        format: 'thread' as const,
+        topic: 'AI',
+      };
+
+      await generationController.generateAccountContent(
+        mockRequest,
+        dtoWithoutTone,
+        mockUser,
+      );
+
+      expect(mockPostsService.create).toHaveBeenCalled();
     });
   });
 
@@ -868,7 +959,7 @@ Tweet 3: Tech innovation is changing the world.`,
   // PATCH /posts/batch - batchUpdate
   // ==========================================================================
   describe('batchUpdate', () => {
-    const turboRunScheduleDto = {
+    const batchScheduleDto = {
       credentialId,
       items: [
         {
@@ -910,7 +1001,7 @@ Tweet 3: Tech innovation is changing the world.`,
     it('should schedule the whole batch with one service call', async () => {
       const result = await controller.batchUpdate(
         mockRequest,
-        turboRunScheduleDto,
+        batchScheduleDto,
         mockUser,
       );
 
@@ -945,7 +1036,7 @@ Tweet 3: Tech innovation is changing the world.`,
         await expect(
           controller.batchUpdate(
             mockRequest,
-            turboRunScheduleDto,
+            batchScheduleDto,
             apiKeyUser(scopes),
           ),
         ).rejects.toMatchObject({
@@ -960,7 +1051,7 @@ Tweet 3: Tech innovation is changing the world.`,
     );
 
     it('should record every scheduled activity in one insert', async () => {
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
+      await controller.batchUpdate(mockRequest, batchScheduleDto, mockUser);
 
       expect(mockActivitiesService.recordMany).toHaveBeenCalledTimes(1);
       expect(mockActivitiesService.record).not.toHaveBeenCalled();
@@ -973,7 +1064,7 @@ Tweet 3: Tech innovation is changing the world.`,
       mockCredentialsService.findOne.mockResolvedValueOnce(null);
 
       await expect(
-        controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser),
+        controller.batchUpdate(mockRequest, batchScheduleDto, mockUser),
       ).rejects.toThrow(HttpException);
     });
 
@@ -988,7 +1079,7 @@ Tweet 3: Tech innovation is changing the world.`,
 
       const result = await controller.batchUpdate(
         mockRequest,
-        turboRunScheduleDto,
+        batchScheduleDto,
         mockUser,
       );
 
@@ -999,7 +1090,7 @@ Tweet 3: Tech innovation is changing the world.`,
     it('should handle ingredient lookup for items with ingredientId', async () => {
       mockIngredientsService.findByIds.mockResolvedValueOnce([mockIngredient]);
 
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
+      await controller.batchUpdate(mockRequest, batchScheduleDto, mockUser);
 
       expect(mockIngredientsService.findByIds).toHaveBeenCalled();
     });
@@ -1010,7 +1101,7 @@ Tweet 3: Tech innovation is changing the world.`,
       // leave the post without the media its target expected.
       mockIngredientsService.findByIds.mockResolvedValueOnce([]);
 
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
+      await controller.batchUpdate(mockRequest, batchScheduleDto, mockUser);
 
       expect(mockPostsService.batchSchedule).toHaveBeenCalledWith(
         [expect.objectContaining({ postId, text: 'Scheduled tweet 1' })],
@@ -1458,23 +1549,6 @@ Tweet 3: Tech innovation is changing the world.`,
       expect(result).toBeDefined();
     });
 
-    it('should return a draft without saving when isDraft is set', async () => {
-      mockPostsService.patch.mockClear();
-
-      const result = await generationController.enhancePost(
-        mockRequest,
-        postId,
-        { ...enhancePostDto, isDraft: true },
-        mockUser,
-      );
-
-      expect(
-        mockReplicateService.generateTextCompletionSync,
-      ).toHaveBeenCalled();
-      expect(mockPostsService.patch).not.toHaveBeenCalled();
-      expect(result).toBeDefined();
-    });
-
     it('should throw NOT_FOUND when post not found', async () => {
       mockPostsService.findOne.mockResolvedValueOnce(null);
 
@@ -1667,6 +1741,46 @@ Tweet 3: Tech innovation is changing the world.`,
         expect(mockPostsService.create).toHaveBeenCalled();
       });
     });
+
+    describe('isValidPostLength', () => {
+      // Tested indirectly through parseTweetContent during async generation
+      it('should validate post length during tweet generation', async () => {
+        const generateTweetsDto = {
+          count: 2,
+          credentialId,
+          format: 'post' as const,
+          topic: 'Test',
+        };
+
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+
+        expect(mockPostsService.create).toHaveBeenCalled();
+      });
+    });
+
+    describe('extractLabelFromTweet', () => {
+      it('should extract label when creating posts', async () => {
+        const generateTweetsDto = {
+          count: 1,
+          credentialId,
+          format: 'post' as const,
+          topic: 'Test',
+        };
+
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+
+        // Label extraction happens during async processing
+        expect(mockPostsService.create).toHaveBeenCalled();
+      });
+    });
   });
 
   // ==========================================================================
@@ -1699,7 +1813,6 @@ Tweet 3: Tech innovation is changing the world.`,
         format: 'post' as const,
         topic: 'Test',
       };
-      mockAccountGeneration.start.mockResolvedValueOnce([mockPost]);
 
       await generationController.generateAccountContent(
         mockRequest,
@@ -1707,10 +1820,7 @@ Tweet 3: Tech innovation is changing the world.`,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        minimalDto,
-        mockUser,
-      );
+      expect(mockPostsService.create).toHaveBeenCalled();
     });
 
     it('should handle posts with no description', async () => {

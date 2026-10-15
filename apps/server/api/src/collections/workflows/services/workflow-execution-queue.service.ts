@@ -38,6 +38,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { HttpException, Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 
+// =============================================================================
+// TYPES
+// =============================================================================
+
 export interface WorkflowExecutionJobData {
   actionContext?: ActionOriginContext;
   organizationModuleContext?: Readonly<OrganizationModuleExecutionContext>;
@@ -135,6 +139,10 @@ export interface WorkflowSchedulerSyncRow {
   metadata?: unknown;
   status?: string | null;
 }
+
+// =============================================================================
+// SCHEDULER ID
+// =============================================================================
 
 /**
  * BullMQ Job Scheduler id for a workflow's cron schedule. One scheduler per

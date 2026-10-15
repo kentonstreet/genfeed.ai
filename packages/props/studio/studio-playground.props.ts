@@ -1,6 +1,5 @@
 import type { IngredientFormat, ViewType } from '@genfeedai/contracts';
 import type {
-  HeyGenGender,
   IIngredient,
   IModel,
   KnowledgeSelection,
@@ -29,16 +28,6 @@ export interface StudioIdentityFieldsProps {
   onChange: (patch: Partial<StudioPlaygroundSettings>) => void;
   settings: StudioPlaygroundSettings;
   type: StudioPlaygroundType;
-}
-
-export interface StudioIdentityVoiceRowProps {
-  gender?: HeyGenGender | null;
-  isDisabled?: boolean;
-  isSelected: boolean;
-  name: string;
-  onSelect: () => void;
-  previewUrl?: string;
-  source: string;
 }
 
 export interface StudioPlaygroundComposerProps {
@@ -103,11 +92,6 @@ export interface StudioPlaygroundAssetActions {
   onCopyPrompt: (ingredient: IIngredient) => void | Promise<void>;
   onCreateVariation: (ingredient: IIngredient) => void;
   onDeleteIngredient: (ingredient: IIngredient) => void;
-  /**
-   * Re-sends a generation that stopped on a brand enhancement failure with the
-   * prompt exactly as typed and no brand applied (`brandMode: 'raw'`).
-   */
-  onGenerateWithoutBrand?: (job: StudioPlaygroundJob) => void | Promise<void>;
   onMarkArchived: (ingredient: IIngredient) => void | Promise<void>;
   onMarkRejected: (ingredient: IIngredient) => void | Promise<void>;
   onMarkValidated: (ingredient: IIngredient) => void | Promise<void>;
@@ -210,8 +194,6 @@ export interface StudioPlaygroundResultsProps {
   isUseAsReferenceEnabled?: (job: StudioPlaygroundJob) => boolean;
   /** Attaches a ready asset to the open composer without changing its type. */
   onUseAsReference?: (job: StudioPlaygroundJob) => void;
-  /** Successful Inspector preview retries, keyed by job id. */
-  previewRevisions?: Readonly<Record<string, number>>;
   selectedJobId?: string | null;
   view: ViewType.GRID | ViewType.LIST;
 }
@@ -231,11 +213,6 @@ export interface StudioPlaygroundCardProps {
   isUseAsReferenceEnabled?: boolean;
   /** Attaches a ready asset to the open composer without changing its type. */
   onUseAsReference?: (job: StudioPlaygroundJob) => void;
-  /**
-   * Bumped after the Inspector recovers this asset's saved preview. A new
-   * value clears the card's preview failure and reauthorizes its media.
-   */
-  previewRevision?: number;
   view: ViewType.GRID | ViewType.LIST;
 }
 
@@ -243,36 +220,13 @@ export interface StudioPlaygroundInspectorProps {
   isFocused?: boolean;
   job: StudioPlaygroundJob;
   onOpenPreview?: () => void;
-  /**
-   * A retried saved preview actually loaded. `recoveredUrl` is the freshly
-   * read stored URL when one was re-read (legacy delivery), else undefined.
-   */
-  onPreviewRecovered?: (
-    job: StudioPlaygroundJob,
-    recoveredUrl: string | undefined,
-  ) => void;
   /** Attaches a finished image to the composer as an image reference. */
   onRemix: (job: StudioPlaygroundJob) => void;
   onEdit?: (job: StudioPlaygroundJob) => void;
   onSelect: (job: StudioPlaygroundJob) => void;
   onUseInPost: (ingredient: IIngredient) => void;
-  /** Attaches the asset to the composer under its reference role. */
-  onUseAsReference?: (job: StudioPlaygroundJob) => void;
-  /** False when the current composer type cannot take this asset as a reference. */
-  isUseAsReferenceEnabled?: boolean;
   onVary: (job: StudioPlaygroundJob) => void;
-  /** The asset this one was transformed from (extend, upscale, reframe, …). */
-  parentJob?: StudioPlaygroundJob;
   runJobs: readonly StudioPlaygroundJob[];
-}
-
-/** One asset's successful Inspector preview retry, as the gallery applies it. */
-export interface StudioPlaygroundPreviewRecovery {
-  revision: number;
-  /** The gallery URL that failed; the override applies only while it is current. */
-  staleUrl?: string;
-  /** The freshly read stored URL, when the retry re-read one. */
-  url?: string;
 }
 
 export interface StudioPlaygroundFocusedPreviewProps {
@@ -295,8 +249,6 @@ export interface StudioGenerationSummaryProps {
   label: string;
   crunQuote?: UseCrunGenerationQuoteReturn;
   estimate: StudioGenerationCostEstimate;
-  /** Auto mode: the routed model is unknown, so only the balance is shown. */
-  isEstimateHidden?: boolean;
   model?: IModel;
   type: StudioPlaygroundType;
 }

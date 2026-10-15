@@ -13,11 +13,6 @@ import type {
   VisualCodeJson,
   VisualCodeQuoteRequest,
 } from '@genfeedai/contracts/interfaces';
-import { useFeatureFlagContext } from '@genfeedai/hooks/feature-flags/provider';
-import type {
-  MotionPreset,
-  MotionPresetId,
-} from '@genfeedai/props/studio/motion-presets.props';
 import { useAuthIdentity } from '@hooks/auth/use-auth-identity/use-auth-identity';
 import { useVisualProjects } from '@hooks/data/content/use-visual-projects';
 import { useOrgUrl } from '@hooks/navigation/use-org-url';
@@ -42,7 +37,6 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useEffect, useRef, useState } from 'react';
-import MotionPresetPanel from './components/MotionPresetPanel';
 
 export default function MotionContent() {
   const { orgId, userId, sessionId } = useAuthIdentity();
@@ -77,10 +71,8 @@ function MotionWorkspace() {
     settings: organizationSettings,
     settingsLoading,
   } = useBrand();
-  const { flags: platformFlags } = useFeatureFlagContext();
   const modulePreferences = resolveOrganizationModulePreferences(
     settingsLoading ? null : organizationSettings,
-    platformFlags,
   );
   const isModuleWorkEnabled = Boolean(
     organizationId && modulePreferences?.motion === true,
@@ -112,8 +104,6 @@ function MotionWorkspace() {
   >();
   const [selectedRevision, setSelectedRevision] = useState<number | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [appliedPresetId, setAppliedPresetId] = useState<MotionPresetId>();
-  const composeRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (isModuleWorkEnabled) return;
     quoteEpoch.current++;
@@ -139,27 +129,6 @@ function MotionWorkspace() {
     quoteEpoch.current++;
     setReview(null);
     setIsAcknowledged(false);
-  }
-  /** Fills the compose form only; the creator still requests and confirms a quote. */
-  function applyPreset(preset: MotionPreset) {
-    invalidateQuote();
-    setMode('prompt');
-    setLabel(t(`presets.items.${preset.id}.title`));
-    setText(preset.prompt);
-    setSettings({
-      ...VISUAL_CODE_DEFAULT_SETTINGS,
-      durationFrames: preset.durationFrames,
-      height: preset.height,
-      width: preset.width,
-    });
-    setPropsText('{}');
-    setFormats(['mp4']);
-    setFrames('0');
-    setAppliedPresetId(preset.id);
-    composeRef.current?.scrollIntoView?.({
-      behavior: 'smooth',
-      block: 'start',
-    });
   }
   function outputs(): IVisualCodeOutputRequest[] {
     const result: IVisualCodeOutputRequest[] = [];
@@ -586,20 +555,7 @@ function MotionWorkspace() {
             </section>
           )}
           <OrganizationModulePreferenceGate moduleId="motion">
-            {!projectId && !project && (
-              <MotionPresetPanel
-                appliedPresetId={appliedPresetId}
-                isFirstRun={
-                  !api.projects.isLoading &&
-                  !api.projects.data?.pages.some(
-                    (page) => page.projects.length > 0,
-                  )
-                }
-                onApply={applyPreset}
-              />
-            )}
             <section
-              ref={composeRef}
               className="space-y-4 rounded-xl border border-border p-5"
               aria-label={t('compose')}
               onChange={invalidateQuote}

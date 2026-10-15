@@ -1,5 +1,3 @@
-import type { SeedanceNativeOutputQuoteEvidence } from '@api/collections/videos/services/seedance-native-output-quote.util';
-import type { SeedanceReferenceQuoteEvidence } from '@api/collections/videos/services/seedance-reference-evidence.util';
 import type { PreparedFalVideoDispatch } from '@api/collections/videos/services/video-generation.types';
 import type { WorkflowEngineExecutorHelperService } from '@api/collections/workflows/services/workflow-engine-executor-helper.service';
 import type { RunImageGenerationBriefResult } from '@api/services/generation-brief/run-image-generation-brief';
@@ -56,17 +54,6 @@ export interface WorkflowFalVideoProviderPlan
   target: { endpoint: string };
   preparedFalDispatch: PreparedFalVideoDispatch;
   reviewedOutput: Extract<WorkflowReviewedOutputContract, { provider: 'fal' }>;
-  referenceQuoteEvidence?: SeedanceReferenceQuoteEvidence;
-  nativeOutputQuoteEvidence?: SeedanceNativeOutputQuoteEvidence;
-  schemaPreparation: {
-    kind: 'reviewed-provider-schema';
-    modelKey: string;
-    mediaKind: 'video';
-    schemaVersion: string;
-    schemaFamily: string;
-    inputSchemaHash: string;
-    adapterVersion: 1;
-  };
 }
 
 export type WorkflowVideoProviderPlan =

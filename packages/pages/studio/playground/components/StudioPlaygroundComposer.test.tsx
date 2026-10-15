@@ -145,12 +145,9 @@ vi.mock('@ui/dropdowns/generation-setup/GenerationSetupPopover', () => ({
   default: (props: Record<string, unknown>) => {
     generationSetupPopoverMocks.props = props;
     return (
-      <>
-        <button type="button" aria-label="Setup">
-          {props.triggerLabel as string}
-        </button>
-        {props.outputControls as React.ReactNode}
-      </>
+      <button type="button" aria-label="Setup">
+        {props.triggerLabel as string}
+      </button>
     );
   },
 }));
@@ -198,23 +195,6 @@ vi.mock('@pages/studio/playground/hooks/useStudioGenerationEstimate', () => ({
       credits: null,
       status: 'loading',
     },
-}));
-
-const avatarEstimateMocks = vi.hoisted(() => ({
-  resolve: vi.fn(),
-}));
-
-// The avatar estimate is the avatar admission quote for the submitted body.
-vi.mock('@pages/studio/playground/hooks/useStudioAvatarEstimate', () => ({
-  useStudioAvatarEstimate: (request: unknown) =>
-    avatarEstimateMocks.resolve(request) ??
-    (request
-      ? { credits: null, status: 'loading' }
-      : {
-          credits: null,
-          status: 'unavailable',
-          unavailableReason: 'INSUFFICIENT_INPUT',
-        }),
 }));
 
 vi.mock(
@@ -343,7 +323,6 @@ describe('StudioPlaygroundComposer', () => {
       showCredits: true,
     });
     vi.clearAllMocks();
-    avatarEstimateMocks.resolve.mockReset();
   });
 
   it('shows the selected settings in the picker and keeps library access in the context menu', () => {
@@ -392,7 +371,7 @@ describe('StudioPlaygroundComposer', () => {
       advancedModeMocks.isAdvancedMode = true;
     });
 
-    it('shows only the output type and no estimate in Auto', () => {
+    it('keeps Auto priorities available while hiding the manual catalogue in simple mode', () => {
       advancedModeMocks.isAdvancedMode = false;
       render(
         <StudioPlaygroundComposer
@@ -404,95 +383,13 @@ describe('StudioPlaygroundComposer', () => {
         />,
       );
 
-      expect(screen.getByRole('button', { name: 'Setup' }).textContent).toBe(
-        'Image',
-      );
-      expect(screen.getByTestId('studio-generation-summary').textContent).toBe(
-        '120',
+      expect(screen.getByRole('button', { name: 'Setup' })).toHaveTextContent(
+        '1:1 · 1K · x1',
       );
       expect(generationSetupPopoverMocks.props.models).toEqual([]);
       expect(generationSetupPopoverMocks.props.capabilities).toMatchObject({
         hasModelSelection: true,
       });
-      expect(generationSetupPopoverMocks.props.advancedMode).toMatchObject({
-        isEnabled: false,
-      });
-    });
-
-    it('keeps the Auto/Advanced picker and the same type tiles for Avatar', () => {
-      advancedModeMocks.isAdvancedMode = false;
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          prompt="Say hello"
-          settings={{ ...settings, voiceId: 'voice-1' }}
-          type="avatar"
-        />,
-      );
-
-      expect(generationSetupPopoverMocks.props.advancedMode).toMatchObject({
-        isEnabled: false,
-      });
-      expect(generationSetupPopoverMocks.props.imageEditing).toMatchObject({
-        isEnabled: false,
-      });
-    });
-
-    it('offers the avatar engines as a real Advanced model choice', () => {
-      advancedModeMocks.isAdvancedMode = true;
-      const engines = [
-        { key: 'heygen/avatar-iv', label: 'HeyGen Avatar IV' } as IModel,
-        { key: 'heygen/avatar-v', label: 'HeyGen Avatar V' } as IModel,
-      ];
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          models={engines}
-          prompt="Say hello"
-          settings={{ ...settings, voiceId: 'voice-1' }}
-          type="avatar"
-        />,
-      );
-
-      expect(generationSetupPopoverMocks.props.capabilities).toMatchObject({
-        hasModelSelection: true,
-      });
-      expect(generationSetupPopoverMocks.props.models).toEqual(engines);
-    });
-
-    it('offers the speech models for Voice in Advanced and none in Auto', () => {
-      const speechModels = [
-        { key: MODEL_KEYS.ELEVENLABS_V4, label: 'Eleven v4' } as IModel,
-        { key: MODEL_KEYS.HEYGEN_VOICE, label: 'HeyGen Voice' } as IModel,
-      ];
-      advancedModeMocks.isAdvancedMode = true;
-      const view = render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          models={speechModels}
-          prompt="Say hello"
-          settings={settings}
-          type="voice"
-        />,
-      );
-
-      expect(generationSetupPopoverMocks.props.capabilities).toMatchObject({
-        hasModelSelection: true,
-      });
-      expect(generationSetupPopoverMocks.props.models).toEqual(speechModels);
-
-      advancedModeMocks.isAdvancedMode = false;
-      view.rerender(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          models={speechModels}
-          prompt="Say hello"
-          settings={settings}
-          type="voice"
-        />,
-      );
-
-      expect(generationSetupPopoverMocks.props.models).toEqual([]);
       expect(generationSetupPopoverMocks.props.advancedMode).toMatchObject({
         isEnabled: false,
       });
@@ -811,245 +708,6 @@ describe('StudioPlaygroundComposer', () => {
     }
   });
 
-  it.each([
-    ['no avatar or voice', {}],
-    ['only an avatar', { avatarPhotoUrl: 'https://assets.test/photo.jpg' }],
-    ['only a voice', { voiceId: 'voice-1' }],
-  ])('blocks an avatar video with %s', (_label, identity) => {
-    render(
-      <StudioPlaygroundComposer
-        {...baseProps}
-        prompt="Say hello"
-        settings={{ ...settings, ...identity }}
-        type="avatar"
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: 'Generate' })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
-  });
-
-  it('allows an avatar video once both an avatar and a voice are chosen', () => {
-    render(
-      <StudioPlaygroundComposer
-        {...baseProps}
-        prompt="Say hello"
-        settings={{
-          ...settings,
-          avatarPhotoUrl: 'https://assets.test/photo.jpg',
-          voiceId: 'voice-1',
-        }}
-        type="avatar"
-      />,
-    );
-
-    expect(
-      screen.getByRole('button', { name: 'Generate' }),
-    ).not.toHaveAttribute('aria-disabled', 'true');
-  });
-
-  describe('avatar estimate', () => {
-    const avatarIdentity = {
-      avatarPhotoUrl: 'https://assets.test/photo.jpg',
-      voiceId: 'voice-1',
-    };
-    const engines = [
-      { key: MODEL_KEYS.HEYGEN_AVATAR_IV, label: 'HeyGen Avatar IV' } as IModel,
-      { key: MODEL_KEYS.HEYGEN_AVATAR_V, label: 'HeyGen Avatar V' } as IModel,
-    ];
-
-    afterEach(() => {
-      advancedModeMocks.isAdvancedMode = true;
-    });
-
-    it('quotes the body Generate submits and shows its credits and clip length', () => {
-      avatarEstimateMocks.resolve.mockReturnValue({
-        billingMode: 'platform',
-        credits: 52,
-        estimatedSeconds: 4,
-        status: 'estimated',
-      });
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          prompt="Say hello"
-          settings={{ ...settings, ...avatarIdentity }}
-          type="avatar"
-        />,
-      );
-
-      expect(avatarEstimateMocks.resolve).toHaveBeenLastCalledWith({
-        autoSelectModel: true,
-        avatarRef: undefined,
-        photoUrl: avatarIdentity.avatarPhotoUrl,
-        prioritize: RouterPriority.BALANCED,
-        text: 'Say hello',
-        useIdentity: true,
-        voiceId: 'voice-1',
-        voiceProvider: undefined,
-        voiceRef: undefined,
-      });
-      expect(screen.getByText('~52 · ~4 s')).toBeVisible();
-      expect(
-        screen.getByLabelText('Estimated 52 credits for a ~4 s clip'),
-      ).toBeVisible();
-      expect(
-        screen.queryByText('Estimate unavailable'),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Generate' }),
-      ).not.toHaveAttribute('aria-disabled', 'true');
-    });
-
-    it('quotes the script field and the chosen Advanced engine', () => {
-      avatarEstimateMocks.resolve.mockReturnValue({
-        billingMode: 'platform',
-        credits: 160,
-        estimatedSeconds: 4,
-        status: 'estimated',
-      });
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          models={engines}
-          prompt="A founder update"
-          settings={{
-            ...settings,
-            ...avatarIdentity,
-            modelKey: MODEL_KEYS.HEYGEN_AVATAR_V,
-            speech: 'Welcome to the launch',
-          }}
-          type="avatar"
-        />,
-      );
-
-      expect(avatarEstimateMocks.resolve).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          autoSelectModel: false,
-          model: MODEL_KEYS.HEYGEN_AVATAR_V,
-          text: 'Welcome to the launch',
-        }),
-      );
-      expect(avatarEstimateMocks.resolve.mock.lastCall?.[0]).not.toHaveProperty(
-        'prioritize',
-      );
-      expect(screen.getByText('~160 · ~4 s')).toBeVisible();
-    });
-
-    it('keeps the avatar price visible in Auto, where the server picks the engine', () => {
-      advancedModeMocks.isAdvancedMode = false;
-      avatarEstimateMocks.resolve.mockReturnValue({
-        billingMode: 'platform',
-        credits: 52,
-        estimatedSeconds: 4,
-        status: 'estimated',
-      });
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          models={engines}
-          prompt="Say hello"
-          settings={{ ...settings, ...avatarIdentity }}
-          type="avatar"
-        />,
-      );
-
-      expect(screen.getByTestId('studio-generation-summary').textContent).toBe(
-        '~52 · ~4 s/120',
-      );
-    });
-
-    it('shows that a BYOK render costs no platform credits', () => {
-      avatarEstimateMocks.resolve.mockReturnValue({
-        billingMode: 'byok',
-        credits: 0,
-        status: 'estimated',
-      });
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          prompt="Say hello"
-          settings={{ ...settings, ...avatarIdentity }}
-          type="avatar"
-        />,
-      );
-
-      expect(screen.getByText('Your API key · 0 credits')).toBeVisible();
-    });
-
-    it.each([
-      ['no script', '', avatarIdentity],
-      ['no avatar', 'Say hello', { voiceId: 'voice-1' }],
-      [
-        'no voice',
-        'Say hello',
-        { avatarPhotoUrl: avatarIdentity.avatarPhotoUrl },
-      ],
-    ])(
-      'asks for the missing input instead of an error when there is %s',
-      (_label, prompt, identity) => {
-        render(
-          <StudioPlaygroundComposer
-            {...baseProps}
-            prompt={prompt}
-            settings={{ ...settings, ...identity }}
-            type="avatar"
-          />,
-        );
-
-        expect(avatarEstimateMocks.resolve).toHaveBeenLastCalledWith(null);
-        expect(
-          screen.getByText(
-            'Write a script and choose an avatar and a voice to see a price.',
-          ),
-        ).toBeVisible();
-        expect(
-          screen.queryByText('Estimate unavailable'),
-        ).not.toBeInTheDocument();
-      },
-    );
-
-    it('does not quote while the engine list is loading', () => {
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          isLoadingModels
-          prompt="Say hello"
-          settings={{ ...settings, ...avatarIdentity }}
-          type="avatar"
-        />,
-      );
-
-      expect(avatarEstimateMocks.resolve).toHaveBeenLastCalledWith(null);
-      expect(screen.getByLabelText('Loading estimate…')).toBeVisible();
-    });
-
-    it('never blocks Generate on a failed avatar price check', () => {
-      avatarEstimateMocks.resolve.mockReturnValue({
-        credits: null,
-        status: 'unavailable',
-        unavailableReason: 'ERROR',
-      });
-      render(
-        <StudioPlaygroundComposer
-          {...baseProps}
-          prompt="Say hello"
-          settings={{ ...settings, ...avatarIdentity }}
-          type="avatar"
-        />,
-      );
-
-      expect(
-        screen.getByLabelText('The price check failed. Try again.'),
-      ).toBeVisible();
-      expect(
-        screen.getByRole('button', { name: 'Generate' }),
-      ).not.toHaveAttribute('aria-disabled', 'true');
-    });
-  });
-
   it('shows the Identity chip only for identity-capable types', () => {
     render(
       <StudioPlaygroundComposer
@@ -1352,70 +1010,6 @@ describe('StudioPlaygroundComposer', () => {
     );
   });
 
-  it('quotes Auto and Lyria 3 Pro through the catalog music default, without a duration', () => {
-    advancedModeMocks.isAdvancedMode = false;
-    try {
-      const lyria = {
-        category: ModelCategory.MUSIC,
-        isActive: true,
-        isDefault: true,
-        key: MODEL_KEYS.FAL_LYRIA3_PRO,
-        label: 'Lyria 3 Pro',
-        provider: ModelProvider.FAL,
-      } as IModel;
-      estimateMocks.resolve.mockReturnValue({
-        credits: 8,
-        status: 'estimated',
-      });
-      const props = {
-        ...baseProps,
-        models: [lyria],
-        prompt: 'A warm soundtrack',
-        type: 'music' as const,
-      };
-      const { rerender } = render(
-        <StudioPlaygroundComposer
-          {...props}
-          settings={{ ...settings, modelKey: AUTO_MODEL_OPTION_VALUE }}
-        />,
-      );
-
-      expect(estimateMocks.resolve).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          category: 'music',
-          modelKey: MODEL_KEYS.FAL_LYRIA3_PRO,
-          outputs: 1,
-        }),
-      );
-      expect(estimateMocks.resolve.mock.lastCall?.[0]).not.toHaveProperty(
-        'duration',
-      );
-      expect(screen.getByText('~8')).toBeVisible();
-      expect(generationSetupPopoverMocks.props.capabilities).toMatchObject({
-        hasDuration: false,
-      });
-
-      rerender(
-        <StudioPlaygroundComposer
-          {...props}
-          settings={{ ...settings, modelKey: MODEL_KEYS.FAL_LYRIA3_PRO }}
-        />,
-      );
-      expect(estimateMocks.resolve).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          category: 'music',
-          modelKey: MODEL_KEYS.FAL_LYRIA3_PRO,
-        }),
-      );
-      expect(estimateMocks.resolve.mock.lastCall?.[0]).not.toHaveProperty(
-        'duration',
-      );
-      expect(screen.getByText('~8')).toBeVisible();
-    } finally {
-      advancedModeMocks.isAdvancedMode = true;
-    }
-  });
-
   it('reconciles external music settings without mounting Output, idempotently', () => {
     const onSettingsChange = vi.fn();
     const musicSettings = {
@@ -1551,31 +1145,6 @@ describe('StudioPlaygroundComposer', () => {
     expect(
       screen.getByRole('button', { name: 'Generate' }),
     ).toBeInTheDocument();
-  });
-
-  it('offers start and end frames in Auto video', async () => {
-    advancedModeMocks.isAdvancedMode = false;
-    render(
-      <StudioPlaygroundComposer
-        {...baseProps}
-        prompt="Continue the motion"
-        settings={{ ...settings, modelKey: AUTO_MODEL_OPTION_VALUE }}
-        type="video"
-      />,
-    );
-    advancedModeMocks.isAdvancedMode = true;
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Add context' }));
-
-    expect(
-      await screen.findByRole('menuitem', { name: 'Start frame' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('menuitem', { name: 'End frame' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('menuitem', { name: 'Video reference' }),
-    ).not.toBeInTheDocument();
   });
 
   it('offers frame and video-reference slots from one add menu', async () => {

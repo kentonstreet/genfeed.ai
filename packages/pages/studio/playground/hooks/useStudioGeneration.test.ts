@@ -2,19 +2,18 @@ import {
   IngredientCategory,
   IngredientStatus,
   RouterPriority,
-  VoiceProvider,
 } from '@genfeedai/contracts';
-import {
-  LIBRARY_ASSETS_REFRESH_EVENT,
-  MEDIA_PROMPT_BRAND_ENHANCEMENT_FAILED_ERROR_CODE,
-  MODEL_KEYS,
-} from '@genfeedai/contracts/constants';
+import { LIBRARY_ASSETS_REFRESH_EVENT } from '@genfeedai/contracts/constants';
 import type { IIngredient, IModel } from '@genfeedai/contracts/interfaces';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { AUTO_MODEL_OPTION_VALUE } from '@ui/dropdowns/model-selector/model-selector.constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next-intl', () => ({ useTranslations: () => (key: string) => key }));
+
+// ────────────────────────────────────────────────────────────
+// Mock every service boundary before importing the hook
+// ────────────────────────────────────────────────────────────
 
 const mockSubscribe = vi.fn();
 const mockUnsubscribe = vi.fn();
@@ -105,12 +104,12 @@ vi.mock('@services/core/socket-manager.service', () => ({
   ) => ({ onFailed, onSuccess }),
 }));
 
-import { writeStudioPlaygroundSessionJobs } from '@pages/studio/playground/utils/studio-playground-session';
-import {
-  getDefaultStudioPlaygroundSettings,
-  resolveModelKey,
-} from '@pages/studio/playground/utils/studio-playground-settings';
-import { useStudioGeneration } from './useStudioGeneration';
+import { getDefaultStudioPlaygroundSettings } from '@pages/studio/playground/utils/studio-playground-settings';
+import { resolveModelKey, useStudioGeneration } from './useStudioGeneration';
+
+// ────────────────────────────────────────────────────────────
+// Fixtures
+// ────────────────────────────────────────────────────────────
 
 function makeModel(key: string): IModel {
   return { isActive: true, key, label: key } as IModel;
@@ -166,6 +165,10 @@ beforeEach(() => {
     status: IngredientStatus.PROCESSING,
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// Tests
+// ────────────────────────────────────────────────────────────
 
 describe('resolveModelKey', () => {
   const settings = {
@@ -540,9 +543,7 @@ describe('useStudioGeneration avatar submits', () => {
     });
 
     expect(mockHeyGenGenerate).toHaveBeenCalledWith({
-      autoSelectModel: true,
       photoUrl: 'https://cdn.genfeed.test/portrait.png',
-      prioritize: avatarSettings.prioritize,
       text: 'Hello from Genfeed',
       voiceId: 'voice-1',
       voiceRef: undefined,
@@ -552,28 +553,6 @@ describe('useStudioGeneration avatar submits', () => {
     });
     expect(mockHeyGenGenerate.mock.calls[0]?.[0]).not.toHaveProperty(
       'avatarId',
-    );
-  });
-
-  it('sends the Advanced avatar engine instead of Auto', async () => {
-    const { result } = renderStudioGeneration({
-      models: [makeModel(MODEL_KEYS.HEYGEN_AVATAR_V)],
-      settings: { ...avatarSettings, modelKey: MODEL_KEYS.HEYGEN_AVATAR_V },
-      type: 'avatar',
-    });
-
-    await act(async () => {
-      await result.current.submit('Hello from Genfeed');
-    });
-
-    expect(mockHeyGenGenerate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        autoSelectModel: false,
-        model: MODEL_KEYS.HEYGEN_AVATAR_V,
-      }),
-    );
-    expect(mockHeyGenGenerate.mock.calls[0]?.[0]).not.toHaveProperty(
-      'prioritize',
     );
   });
 
@@ -603,12 +582,9 @@ describe('useStudioGeneration avatar submits', () => {
     expect(mockIngredientsFindOne).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['avatar', { avatarPhotoUrl: undefined }],
-    ['voice', { voiceId: undefined }],
-  ])('refuses an avatar video without a chosen %s', async (_label, patch) => {
+  it('lets the server resolve saved avatar defaults', async () => {
     const { result } = renderStudioGeneration({
-      settings: { ...avatarSettings, ...patch },
+      settings: { ...avatarSettings, avatarPhotoUrl: undefined },
       type: 'avatar',
     });
 
@@ -616,9 +592,8 @@ describe('useStudioGeneration avatar submits', () => {
       await result.current.submit('Hello from Genfeed');
     });
 
-    expect(mockHeyGenGenerate).not.toHaveBeenCalled();
-    expect(mockNotificationsError).toHaveBeenCalledWith(
-      'Pick an avatar and a voice before generating',
+    expect(mockHeyGenGenerate).toHaveBeenCalledWith(
+      expect.objectContaining({ useIdentity: true, photoUrl: undefined }),
     );
   });
 });
@@ -695,182 +670,14 @@ describe('useStudioGeneration failures', () => {
   });
 });
 
-function brandEnhancementStop() {
-  return {
-    response: {
-      data: {
-        errors: [
-          {
-            code: MEDIA_PROMPT_BRAND_ENHANCEMENT_FAILED_ERROR_CODE,
-            detail: 'Brand prompt enhancement failed at the provider step.',
-            status: '502',
-            title: 'Brand prompt enhancement failed',
-          },
-        ],
-      },
-      status: 502,
-    },
-  };
-}
-
-describe('useStudioGeneration brand enhancement stop', () => {
-  it.each(['image', 'video'] as const)(
-    'stops %s on a brand enhancement failure with a typed card and no silent raw retry',
-    async (type) => {
-      const post = type === 'image' ? mockImagesPost : mockVideosPost;
-      post.mockRejectedValue(brandEnhancementStop());
-      const { result } = renderStudioGeneration({ type });
-      let isAccepted: boolean | undefined;
-
-      await act(async () => {
-        isAccepted = await result.current.submit('A founder at a desk');
-      });
-
-      expect(isAccepted).toBe(false);
-      expect(post).toHaveBeenCalledTimes(1);
-      expect(post.mock.calls[0]?.[0]).not.toHaveProperty('brandMode');
-      expect(result.current.jobs).toHaveLength(1);
-      expect(result.current.jobs[0]).toMatchObject({
-        error: 'failed',
-        failure: 'brand_enhancement',
-        prompt: 'A founder at a desk',
-        status: IngredientStatus.FAILED,
-        type,
-      });
-      expect(mockNotificationsError).toHaveBeenCalledWith('failed');
-    },
-  );
-
-  it('keeps unrelated failures untyped', async () => {
-    mockImagesPost.mockRejectedValue(new Error('Insufficient credits'));
-    const { result } = renderStudioGeneration();
-
-    await act(async () => {
-      await result.current.submit('A founder at a desk');
-    });
-
-    expect(result.current.jobs[0]).not.toHaveProperty('failure');
-    await act(async () => {
-      await result.current.generateWithoutBrand(result.current.jobs[0]);
-    });
-    expect(mockImagesPost).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(['image', 'video'] as const)(
-    'generates %s without brand only on the explicit action, as raw, replacing the failed card',
-    async (type) => {
-      const post = type === 'image' ? mockImagesPost : mockVideosPost;
-      post.mockRejectedValueOnce(brandEnhancementStop());
-      const { result } = renderStudioGeneration({ type });
-      await act(async () => {
-        await result.current.submit(
-          'A founder at a desk',
-          {},
-          {
-            harness: true,
-            knowledge: { sourceIds: ['source-1'] },
-            promptId: 'prompt-1',
-            requestedSkillSlugs: ['cinema'],
-          },
-        );
-      });
-      const failed = result.current.jobs[0];
-      expect(post).toHaveBeenCalledTimes(1);
-
-      await act(async () => {
-        await result.current.generateWithoutBrand(failed);
-      });
-
-      expect(post).toHaveBeenCalledTimes(2);
-      const rawBody = post.mock.calls[1]?.[0];
-      expect(rawBody).toMatchObject({
-        brandMode: 'raw',
-        text: 'A founder at a desk',
-      });
-      for (const key of [
-        'harness',
-        'knowledge',
-        'promptId',
-        'requestedSkillSlugs',
-      ])
-        expect(rawBody).not.toHaveProperty(key);
-      expect(result.current.jobs.some((job) => job.id === failed.id)).toBe(
-        false,
-      );
-      expect(result.current.jobs.some((job) => job.failure)).toBe(false);
-
-      await act(async () => {
-        await result.current.generateWithoutBrand(failed);
-      });
-      expect(post).toHaveBeenCalledTimes(2);
-    },
-  );
-
-  it('never lets a raw retry re-send itself after another brand stop', async () => {
-    mockImagesPost.mockRejectedValue(brandEnhancementStop());
-    const { result } = renderStudioGeneration();
-    await act(async () => {
-      await result.current.submit('A founder at a desk');
-    });
-    await act(async () => {
-      await result.current.generateWithoutBrand(result.current.jobs[0]);
-    });
-    expect(mockImagesPost).toHaveBeenCalledTimes(2);
-    expect(mockImagesPost.mock.calls[1]?.[0]).toMatchObject({
-      brandMode: 'raw',
-    });
-    await waitFor(() =>
-      expect(
-        result.current.jobs.filter(
-          (job) => job.failure === 'brand_enhancement',
-        ),
-      ).toHaveLength(1),
-    );
-  });
-
-  it('drops the retry when the jobs are cleared', async () => {
-    mockImagesPost.mockRejectedValueOnce(brandEnhancementStop());
-    const { result } = renderStudioGeneration();
-    await act(async () => {
-      await result.current.submit('A founder at a desk');
-    });
-    const failed = result.current.jobs[0];
-    act(() => result.current.clearJobs());
-    await act(async () => {
-      await result.current.generateWithoutBrand(failed);
-    });
-    expect(mockImagesPost).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('useStudioGeneration inline voice', () => {
-  const elevenLabsRef = {
-    externalVoiceId: 'voice-1',
-    provider: VoiceProvider.ELEVENLABS,
-    source: 'catalog',
-  } as const;
-  const heyGenRef = {
-    externalVoiceId: 'clone-1',
-    ownership: 'private',
-    provider: VoiceProvider.HEYGEN,
-    source: 'catalog',
-  } as const;
-
-  function voiceSettings(
-    overrides: Partial<ReturnType<typeof getDefaultStudioPlaygroundSettings>>,
-  ) {
-    return {
-      ...getDefaultStudioPlaygroundSettings('voice'),
-      prioritize: RouterPriority.QUALITY,
-      voiceId: 'voice-1',
-      voiceRef: elevenLabsRef,
-      ...overrides,
-    };
-  }
-
   it('lands a finished card with no socket phase', async () => {
     const { result } = renderStudioGeneration({
-      settings: voiceSettings({ modelKey: AUTO_MODEL_OPTION_VALUE }),
+      settings: {
+        ...getDefaultStudioPlaygroundSettings('voice'),
+        prioritize: RouterPriority.BALANCED,
+        voiceId: 'voice-1',
+      },
       type: 'voice',
     });
 
@@ -886,102 +693,6 @@ describe('useStudioGeneration inline voice', () => {
       status: IngredientStatus.GENERATED,
       url: 'https://a/v.mp3',
     });
-  });
-
-  it('asks the server to route Auto for the voice provider', async () => {
-    const { result } = renderStudioGeneration({
-      settings: voiceSettings({
-        modelKey: AUTO_MODEL_OPTION_VALUE,
-        voiceId: 'clone-1',
-        voiceRef: heyGenRef,
-      }),
-      type: 'voice',
-    });
-
-    await act(async () => {
-      await result.current.submit('Hello from Genfeed');
-    });
-
-    expect(mockVoicesGenerate).toHaveBeenCalledExactlyOnceWith({
-      autoSelectModel: true,
-      prioritize: RouterPriority.QUALITY,
-      speed: 1,
-      text: 'Hello from Genfeed',
-      voiceId: 'clone-1',
-      voiceProvider: VoiceProvider.HEYGEN,
-    });
-  });
-
-  it('sends the explicit speech model with the voice provider', async () => {
-    const { result } = renderStudioGeneration({
-      models: [
-        makeModel(MODEL_KEYS.ELEVENLABS_V4),
-        makeModel(MODEL_KEYS.HEYGEN_VOICE),
-      ],
-      settings: voiceSettings({
-        modelKey: MODEL_KEYS.HEYGEN_VOICE,
-        voiceId: 'clone-1',
-        voiceRef: heyGenRef,
-      }),
-      type: 'voice',
-    });
-
-    await act(async () => {
-      await result.current.submit('Hello from HeyGen');
-    });
-
-    expect(mockVoicesGenerate).toHaveBeenCalledExactlyOnceWith({
-      model: MODEL_KEYS.HEYGEN_VOICE,
-      speed: 1,
-      text: 'Hello from HeyGen',
-      voiceId: 'clone-1',
-      voiceProvider: VoiceProvider.HEYGEN,
-    });
-  });
-
-  it('refuses a voice from another provider than the selected speech model', async () => {
-    const { result } = renderStudioGeneration({
-      models: [
-        makeModel(MODEL_KEYS.ELEVENLABS_V4),
-        makeModel(MODEL_KEYS.HEYGEN_VOICE),
-      ],
-      settings: voiceSettings({
-        modelKey: MODEL_KEYS.HEYGEN_VOICE,
-        voiceRef: elevenLabsRef,
-      }),
-      type: 'voice',
-    });
-
-    await act(async () => {
-      await result.current.submit('Mismatch');
-    });
-
-    expect(mockVoicesGenerate).not.toHaveBeenCalled();
-    expect(mockNotificationsError).toHaveBeenCalledWith(
-      'Pick a voice that matches the selected speech model',
-    );
-  });
-
-  it.each([
-    ['no voice', { voiceId: undefined, voiceRef: undefined }],
-    ['a voice with no provider', { voiceRef: undefined }],
-  ])('blocks generation with %s', async (_label, overrides) => {
-    const { result } = renderStudioGeneration({
-      settings: voiceSettings({
-        modelKey: AUTO_MODEL_OPTION_VALUE,
-        ...overrides,
-      }),
-      type: 'voice',
-    });
-
-    await act(async () => {
-      await result.current.submit('Hello');
-    });
-
-    expect(mockVoicesGenerate).not.toHaveBeenCalled();
-    expect(mockNotificationsError).toHaveBeenCalledWith(
-      'Pick a voice before generating',
-    );
   });
 });
 
@@ -1849,172 +1560,5 @@ describe('collect-first persisted video hydration', () => {
     expect(mockVideosFindOne).toHaveBeenCalledOnce();
     expect(onGenerated).not.toHaveBeenCalled();
     expect(mockSubscribe).not.toHaveBeenCalled();
-  });
-});
-
-describe('failed Studio card recovery hydration (#6398)', () => {
-  function failedVideoRow(overrides: Partial<IIngredient> = {}): IIngredient {
-    return {
-      id: 'vid-1',
-      brandId: 'brand-1',
-      category: IngredientCategory.VIDEO,
-      generationError: 'Service unavailable (503)',
-      modelUsed: 'hailuo-02',
-      promptText: 'Saved prompt',
-      status: IngredientStatus.FAILED,
-      ...overrides,
-    } as IIngredient;
-  }
-
-  it('attaches the persisted FAILED row after a socket failure so the card can offer recovery', async () => {
-    const captured = captureHandler();
-    const row = failedVideoRow();
-    const { result } = renderStudioGeneration({ type: 'video' });
-    await act(async () => {
-      await result.current.submit('Saved prompt');
-    });
-    // Status polling reads without a scope and still sees PROCESSING; only the
-    // brand-scoped failed-row read returns the persisted FAILED ingredient.
-    mockVideosFindOne.mockImplementation(
-      async (_id: string, scope?: { brandId: string }) =>
-        scope ? row : { id: 'vid-1', status: IngredientStatus.PROCESSING },
-    );
-
-    await act(async () => {
-      captured.current?.onFailed('Hailuo generation failed');
-    });
-
-    await waitFor(() =>
-      expect(result.current.jobs[0]).toMatchObject({
-        id: 'vid-1',
-        ingredientId: 'vid-1',
-        ingredient: row,
-        error: 'Hailuo generation failed',
-        status: IngredientStatus.FAILED,
-      }),
-    );
-    expect(mockVideosFindOne).toHaveBeenCalledWith(
-      'vid-1',
-      { brandId: 'brand-1' },
-      expect.any(AbortSignal),
-    );
-    const reads = mockVideosFindOne.mock.calls.length;
-
-    act(() => window.dispatchEvent(new Event('focus')));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(mockVideosFindOne).toHaveBeenCalledTimes(reads);
-  });
-
-  it('hydrates a session-restored failed card that lost its row on reload', async () => {
-    writeStudioPlaygroundSessionJobs('brand-1', [
-      {
-        createdAt: 1,
-        error: 'Hailuo generation failed',
-        id: 'vid-1',
-        ingredientId: 'vid-1',
-        prompt: 'Saved prompt',
-        status: IngredientStatus.FAILED,
-        type: 'video',
-      },
-      {
-        createdAt: 2,
-        error: 'Rejected before a placeholder existed',
-        id: 'failed-local',
-        prompt: 'Local only',
-        status: IngredientStatus.FAILED,
-        type: 'video',
-      },
-    ]);
-    const row = failedVideoRow();
-    mockVideosFindOne.mockResolvedValue(row);
-
-    const { result } = renderStudioGeneration({ type: 'video' });
-
-    await waitFor(() =>
-      expect(
-        result.current.jobs.find((job) => job.id === 'vid-1')?.ingredient,
-      ).toEqual(row),
-    );
-    expect(
-      result.current.jobs.find((job) => job.id === 'failed-local')?.ingredient,
-    ).toBeUndefined();
-    expect(mockVideosFindOne).toHaveBeenCalledOnce();
-    expect(mockVideosFindOne).toHaveBeenCalledWith(
-      'vid-1',
-      { brandId: 'brand-1' },
-      expect.any(AbortSignal),
-    );
-  });
-
-  it('repeats every read of a run abandoned by a job-list change', async () => {
-    writeStudioPlaygroundSessionJobs('brand-1', [
-      ...['vid-1', 'vid-2'].map((id, index) => ({
-        createdAt: index + 1,
-        id,
-        ingredientId: id,
-        prompt: 'Saved prompt',
-        status: IngredientStatus.FAILED,
-        type: 'video' as const,
-      })),
-      {
-        createdAt: 3,
-        id: 'failed-local',
-        prompt: 'Local only',
-        status: IngredientStatus.FAILED,
-        type: 'video',
-      },
-    ]);
-    const firstSecondRead = deferredVideo();
-    let secondReads = 0;
-    mockVideosFindOne.mockImplementation(async (id: string) => {
-      if (id === 'vid-2' && secondReads++ === 0) return firstSecondRead.promise;
-      return failedVideoRow({ id });
-    });
-    const { result } = renderStudioGeneration({ type: 'video' });
-    await waitFor(() => expect(mockVideosFindOne).toHaveBeenCalledTimes(2));
-
-    act(() => result.current.removeJob('failed-local'));
-    await act(async () => {
-      firstSecondRead.resolve(failedVideoRow({ id: 'vid-2' }));
-    });
-
-    await waitFor(() =>
-      expect(
-        result.current.jobs.map((job) => job.ingredient?.id ?? null),
-      ).toEqual(['vid-1', 'vid-2']),
-    );
-  });
-
-  it.each([
-    ['foreign brand', { brandId: 'brand-2' }],
-    ['deleted', { isDeleted: true }],
-    ['no longer failed', { status: IngredientStatus.GENERATED }],
-    ['different id', { id: 'vid-2' }],
-  ])('keeps a %s row off the failed card', async (_label, overrides) => {
-    writeStudioPlaygroundSessionJobs('brand-1', [
-      {
-        createdAt: 1,
-        id: 'vid-1',
-        ingredientId: 'vid-1',
-        prompt: 'Saved prompt',
-        status: IngredientStatus.FAILED,
-        type: 'video',
-      },
-    ]);
-    mockVideosFindOne.mockResolvedValue(failedVideoRow(overrides));
-
-    const { result } = renderStudioGeneration({ type: 'video' });
-
-    await waitFor(() => expect(mockVideosFindOne).toHaveBeenCalledOnce());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(result.current.jobs[0]).toMatchObject({
-      id: 'vid-1',
-      status: IngredientStatus.FAILED,
-    });
-    expect(result.current.jobs[0]?.ingredient).toBeUndefined();
   });
 });

@@ -134,7 +134,6 @@
     "platformCallback": {
       "actions": {
         "back": "Go back",
-        "restart": "Restart authorization",
         "retry": "Try again",
         "signIn": "Sign in to continue"
       },
@@ -147,15 +146,7 @@
         "denied": "Authorization was denied. You can try connecting again.",
         "description": "Failed to verify your account. Please try again.",
         "failed": "The provider rejected this authorization. Please try again.",
-        "restartFailed": "Could not restart the connection. Go back and connect again.",
-        "title": "Connection Failed",
-        "youtubeAuthorizationFailed": "YouTube could not finish this connection. Restart authorization and try again.",
-        "youtubeChannelMissing": "No YouTube channel was found for the Google account you selected. Restart authorization and choose the YouTube channel or Brand Account, not only the Google identity.",
-        "youtubeChannelMissingTitle": "No YouTube channel found",
-        "youtubeMissingScopes": "YouTube did not grant the permissions this connection needs. Restart authorization and accept the requested access.",
-        "youtubeProviderFailure": "YouTube could not verify this account. Restart the connection and try again.",
-        "youtubeStateInvalid": "This YouTube connection session is no longer valid. Restart authorization to try again.",
-        "youtubeTokenExchange": "YouTube could not exchange this authorization. Restart the connection and try again."
+        "title": "Connection Failed"
       },
       "success": {
         "description": "Redirecting you back…",
@@ -395,18 +386,13 @@
   },
   "settings": {
     "creditsBalance": {
-      "balance": "Balance",
       "creditsLeft": "Credits left",
       "cycleNote": "Based on this cycle's total: subscription credits plus packs bought this cycle.",
-      "loadError": "Your credit balance could not be loaded.",
-      "lowCreditsWarning": "Low credits warning: your organization is below 1,000 credits.",
       "ofTotal": "of {total}",
       "progressLabel": "Credits left this cycle",
       "referralDescription": "Share your referral link and earn on referred customers' credit purchases.",
       "referralTitle": "Earn 10% in credits",
       "resets": "Resets",
-      "retryBalance": "Retry balance",
-      "title": "Credits",
       "viewReferrals": "View referrals"
     },
     "members": {
@@ -415,18 +401,20 @@
       "columnMember": "Member"
     },
     "organizationIdentity": {
-      "editHandle": "Edit organization handle",
-      "editName": "Edit organization name",
-      "generateLogo": "Generate logo",
-      "generateLogoFailed": "Could not generate a logo. Try again.",
+      "name": "Organization name",
+      "handle": "Handle",
       "handleHint": "Used in your organization URL. Changing it updates the URL for everyone in this organization.",
-      "handleInvalid": "Use 2–48 lowercase letters, numbers or hyphens. Start and end with a letter or number.",
-      "logoAlt": "{label} logo",
       "nameRequired": "Enter an organization name.",
-      "ownerOnly": "Only the organization owner can edit its name and handle.",
-      "saveFailed": "Could not save the organization. Try again.",
+      "handleInvalid": "Use 2–48 lowercase letters, numbers or hyphens. Start and end with a letter or number.",
+      "save": "Save changes",
+      "cancel": "Cancel",
       "saved": "Organization updated.",
       "savedRefreshFailed": "Organization saved. Reload the page to refresh the organization switcher.",
+      "saveFailed": "Could not save the organization. Try again.",
+      "ownerOnly": "Only the organization owner can edit its name and handle.",
+      "logoAlt": "{label} logo",
+      "logoHint": "Square PNG, JPG or WebP. Shown in the organization switcher.",
+      "replaceLogo": "Replace logo",
       "title": "Organization",
       "uploadLogo": "Upload logo"
     },
@@ -494,40 +482,6 @@
         "description": "API access is included on paid plans. Upgrade to {tier} to create Genfeed API keys for CLI, MCP, and unattended workflows.",
         "label": "Unlock API keys with {tier}"
       }
-    },
-    "brandMove": {
-      "cancel": "Cancel",
-      "close": "Close",
-      "description": "Each brand takes its content, connected accounts, and workflows with it. Members who only have access through this organization lose access. This cannot be easily undone.",
-      "destinationLabel": "Destination organization",
-      "destinationPlaceholder": "Choose an organization",
-      "batchAllFailed": "{count, plural, one {Couldn't move # brand.} other {Couldn't move # brands.}}",
-      "batchMoved": "{count, plural, one {Moved # brand.} other {Moved # brands.}}",
-      "batchPartial": "{moved, plural, one {Moved # brand} other {Moved # brands}}; {failed} couldn't be moved.",
-      "checkFailed": "Couldn't check this brand.",
-      "membersLost": "{count, plural, one {# member lost access.} other {# members lost access.}}",
-      "membersWillLose": "{count, plural, one {# member will lose access.} other {# members will lose access.}}",
-      "moveFailed": "Couldn't move this brand.",
-      "moveMany": "Move {count} brands",
-      "moveNone": "Move",
-      "moveOne": "Move 1 brand",
-      "moveSelected": "Move {count} selected",
-      "onlyBrand": "An organization keeps at least one brand, so its last brand can't be moved.",
-      "personasWillReset": "{count, plural, one {# shared character will be limited to this brand only.} other {# shared characters will be limited to this brand only.}}",
-      "rowAction": "Move to organization",
-      "schedulesWillPause": "{count, plural, one {# schedule will pause until someone saves it again.} other {# schedules will pause until someone saves them again.}}",
-      "setupFailed": "Couldn't start the move. Please try again.",
-      "status": {
-        "blocked": "Blocked",
-        "checking": "Checking",
-        "failed": "Failed",
-        "moved": "Moved",
-        "moving": "Moving",
-        "ready": "Ready"
-      },
-      "titleMany": "Move {count} brands to another organization",
-      "titleOne": "Move 1 brand to another organization",
-      "workflowsMove": "{count, plural, one {# dedicated workflow moves with it.} other {# dedicated workflows move with it.}}"
     },
     "characters": {
       "availability": {
@@ -909,58 +863,12 @@
       },
       "samplePrompt": "Help me explore a small {channel} example for the skill named {name}."
     },
-    "organizationAutomation": {
-      "title": "Breakouts and brand checks",
-      "description": "Opt in to paid and automatic work. Everything here is off until an owner or admin turns it on.",
-      "adminOnly": "Only owners and admins can change these settings.",
-      "loading": "Loading settings…",
-      "saving": "Saving…",
-      "saved": "Setting saved.",
-      "saveFailed": "Could not save the setting. Try again.",
-      "breakoutResponses": {
-        "label": "Breakout responses",
-        "description": "When one of your posts takes off, draft responses while it is still hot. Spends credits within your strategy budgets. Drafts wait for review."
-      },
-      "breakoutAutoPublish": {
-        "label": "Breakout auto-publish",
-        "description": "Let a response that passes every check schedule itself. That includes your brand rules, the quality gate and the fact check. Off keeps every response as a draft for review.",
-        "requiresResponses": "Turn on breakout responses first."
-      },
-      "brandVision": {
-        "label": "Brand vision checks",
-        "description": "Read your images and videos for required text, logos and products before they can be approved.",
-        "cost": "Costs about $0.005 per image, charged in credits."
-      }
-    },
-    "organizationCustomModels": {
-      "title": "Custom Models",
-      "description": "Your organization's dedicated models for consistent, on-brand generation.",
-      "controlsHeading": "Custom models are connected",
-      "nsfw": {
-        "label": "Reveal NSFW assets from custom models",
-        "description": "When enabled, sensitive assets from your custom models can be revealed in brand library views. When off, they stay blurred.",
-        "adminOnly": "Only owners and admins can change this setting."
-      },
-      "saveFailed": "Could not save this setting. Try again.",
-      "loading": "Loading custom model settings…",
-      "cta": {
-        "title": "A custom model, trained for you",
-        "description": "Get a LoRA model trained on your own character, style or product, so every image and video comes out consistent and recognizably yours. We set it up and run it for you.",
-        "points": {
-          "consistent": "One character, style or product that stays the same across every asset.",
-          "trained": "Trained by our team on your reference material.",
-          "managed": "Hosted and managed for you. Nothing to install or maintain."
-        },
-        "action": "Book a call"
-      }
-    },
     "organizationModules": {
       "title": "Modules",
-      "description": "Choose which apps your organization's members see.",
+      "description": "Choose which tools your organization can use.",
       "adminOnly": "Only owners and admins can change module settings.",
       "paidPlan": "Paid plan",
-      "shown": "Shown",
-      "hidden": "Hidden",
+      "alwaysOn": "Always on",
       "loading": "Loading module settings…",
       "saving": "Saving module settings…",
       "saved": "Module settings saved.",
@@ -969,7 +877,7 @@
       "loadFailed": "Could not load module settings. Try again.",
       "unavailable": "Module settings are unavailable. Reload before making changes.",
       "retry": "Retry loading",
-      "dataHelp": "Hiding a module removes its app for everyone in your organization. Work through the API and MCP keeps running, and existing projects stay readable and exportable.",
+      "dataHelp": "Disabling a module blocks new work. Existing projects remain readable and exportable. Playground and Storyboard use credits and stay available.",
       "paidHelp": "All paid plans unlock subscription modules. Credits still cover usage.",
       "subscription": "Manage subscription",
       "modules": {
@@ -997,8 +905,8 @@
           "label": "Clips",
           "description": "Turn long videos and audio into clips."
         },
-        "turbo": {
-          "label": "Turbo",
+        "batch": {
+          "label": "Batch",
           "description": "Create content in bulk."
         },
         "editor": {
@@ -1018,14 +926,12 @@
           "description": "Explore trends and content opportunities."
         }
       },
-      "disabledTitle": "{module} is hidden for your organization",
-      "disabledHelp": "An owner or admin can show it again in organization settings. Existing projects remain readable and exportable.",
+      "disabledTitle": "{module} is disabled",
+      "disabledHelp": "An owner or admin can enable this module in organization settings. Existing projects remain readable and exportable.",
       "manageModules": "Organization modules",
       "subscriptionTitle": "{module} requires an active paid subscription",
       "subscriptionHelp": "Existing data remains readable and exportable. A paid plan is required to start new work.",
-      "manageSubscription": "Manage subscription",
-      "unreleasedTitle": "{module} is not released yet",
-      "unreleasedHelp": "Existing projects remain readable and exportable. New work opens when the module is released."
+      "manageSubscription": "Manage subscription"
     }
   },
   "workspaceOverlay": {
@@ -1874,33 +1780,6 @@
       "chooseBrandToConnect": "Choose a brand in the conversation filters before connecting an account.",
       "noMessages": "No messages in this thread yet."
     },
-    "overview": {
-      "actionsTitle": "Open the inbox",
-      "cards": {
-        "inbox": {
-          "cta": "Open inbox",
-          "description": "Every open conversation across connected accounts.",
-          "label": "Inbox"
-        },
-        "kind": {
-          "cta": "Open {kind}",
-          "description": "{count, plural, =0 {Nothing open.} one {# open conversation.} other {# open conversations.}}"
-        }
-      },
-      "description": "What is waiting for a reply, by conversation type.",
-      "error": "Message counts could not be loaded.",
-      "kinds": {
-        "comments": "Comments",
-        "dms": "DMs",
-        "replies": "Replies"
-      },
-      "kpi": {
-        "openHelp": "Open conversations",
-        "unread": "Unread",
-        "unreadHelp": "Conversations with unread messages"
-      },
-      "title": "Overview"
-    },
     "pagination": {
       "conversationCount": "{count, plural, one {# conversation} other {# conversations}}",
       "conversationPage": "Page {page} of {pages}",
@@ -1941,8 +1820,7 @@
       "surfaces": {
         "all": "All",
         "comments": "Comments",
-        "dms": "DMs",
-        "replies": "Replies"
+        "dms": "DMs"
       },
       "syncNow": "Sync now",
       "title": "Conversations",
@@ -1998,7 +1876,7 @@
     "loadingTitle": "Loading article…",
     "publicPage": {
       "title": "Public page",
-      "notHosted": "Not hosted on genfeed.ai. The genfeed.ai blog only carries Genfeed's own articles. Publish to your own blog from Delivery, or mark the article published in your workspace.",
+      "notHosted": "Not hosted on genfeed.ai. The genfeed.ai blog only carries Genfeed's own articles, so publishing marks this article done in your workspace. Share it through posts on your connected accounts.",
       "live": "Live on genfeed.ai",
       "notLive": "Not live yet",
       "previewHint": "Private preview link. Anyone with it can read this draft until it expires.",
@@ -2350,8 +2228,8 @@
     "generate": "Generate draft",
     "error": "Unable to generate newsletter"
   },
-  "turboRewrite": {
-    "action": "Rewrite selected",
+  "batchRewrite": {
+    "action": "Rewrite batch",
     "progress": "Rewriting…",
     "error": "Unable to start the rewrite. Please try again.",
     "queued": "Rewrite queued — you can keep reviewing.",
@@ -2365,48 +2243,9 @@
     "insufficientCredits": "Not enough credits to rewrite the remaining items.",
     "cancelled": "Rewrite stopped. {count, plural, =0 {No captions were rewritten.} one {# caption was rewritten.} other {# captions were rewritten.}}"
   },
-  "store": {
-    "title": "Store",
-    "description": "Install apps into your own setup. Installing never changes your organization's access or starts any work.",
-    "appsTitle": "Apps",
-    "featuredTitle": "Featured",
-    "yoursTitle": "Your apps",
-    "yoursDescription": "Installed apps you can open now, pinned ones first.",
-    "pinned": "Pinned",
-    "filterAll": "All",
-    "categories": {
-      "create": "Create",
-      "publish": "Publish & grow",
-      "automate": "Automate"
-    },
-    "categoryDescriptions": {
-      "create": "Generate, plan and edit images, video and sequences.",
-      "publish": "Research what works and keep up with your audience.",
-      "automate": "Run workflows and programs on your content."
-    },
-    "workflowsTitle": "Workflows",
-    "workflowsDescription": "Browse the workflow library and install a workflow for this brand.",
-    "openWorkflows": "Open workflow library",
-    "install": "Install",
-    "uninstall": "Uninstall",
-    "open": "Open",
-    "installFailed": "Couldn't install {app}. Try again.",
-    "uninstallFailed": "Couldn't uninstall {app}. Try again.",
-    "loadFailed": "Couldn't load your apps. Reload the page to try again.",
-    "loadingApp": "Loading app",
-    "organizationDisabled": "Hidden by your organization.",
-    "manageModules": "Organization settings",
-    "subscriptionRequired": "Needs a paid plan.",
-    "viewPlans": "View plans",
-    "unavailable": "Unavailable right now."
-  },
   "appRail": {
     "apps": "Apps",
-    "launcher": "Apps",
-    "search": "Search apps",
-    "noApps": "No apps installed yet.",
-    "noMatches": "No matching apps.",
-    "store": "Store",
+    "more": "More",
     "pin": "Pin {app}",
     "unpin": "Unpin {app}",
     "navigation": "App navigation",
@@ -2423,29 +2262,9 @@
       "label": "Workspace",
       "description": "Command center."
     },
-    "playground": {
-      "label": "Playground",
-      "description": "Generate and iterate on assets."
-    },
-    "storyboard": {
-      "label": "Storyboard",
-      "description": "Plan scenes and shots."
-    },
-    "turbo": {
-      "label": "Turbo",
-      "description": "Produce content in volume."
-    },
-    "motion": {
-      "label": "Motion",
-      "description": "Compose animated visuals."
-    },
-    "clips": {
-      "label": "Clips",
-      "description": "Cut highlights from long videos."
-    },
-    "editor": {
-      "label": "Editor",
-      "description": "Finish videos on a timeline."
+    "studio": {
+      "label": "Studio",
+      "description": "Create assets."
     },
     "library": {
       "label": "Library",
@@ -2474,72 +2293,10 @@
     "admin": {
       "label": "Admin",
       "description": "Platform management."
-    },
-    "adminOverview": {
-      "label": "Overview",
-      "description": "Dashboard, analytics and activity."
-    },
-    "adminContent": {
-      "label": "Content",
-      "description": "Posts, templates, prompts and generations."
-    },
-    "adminAutomation": {
-      "label": "AI & Automation",
-      "description": "Models, trainings, bots and workflows."
-    },
-    "adminConfiguration": {
-      "label": "Configuration",
-      "description": "Elements, presets, fonts and tags."
-    },
-    "adminAdministration": {
-      "label": "Administration",
-      "description": "Organizations, users, billing and flags."
     }
   },
   "windowChrome": {
     "back": "Back",
     "forward": "Forward"
-  },
-  "longFormDelivery": {
-    "title": "Delivery",
-    "articleIntro": "Publish this article to a blog you connected. Genfeed records the live link here.",
-    "newsletterIntro": "Send this issue through a Beehiiv publication you connected. Genfeed records the live link here.",
-    "noArticleAccounts": "No Ghost, WordPress, Medium or Dev.to account is connected to this brand. Connect one, or copy the article and publish it yourself.",
-    "noNewsletterAccounts": "No Beehiiv publication is connected to this brand. Connect one, or copy the issue and send it yourself.",
-    "connectAccounts": "Connect an account",
-    "copyHtml": "Copy HTML",
-    "copyMarkdown": "Copy Markdown",
-    "saveFirst": "Save your changes before you publish.",
-    "addContentFirst": "Add content before you publish.",
-    "publishTo": "Publish to {account}",
-    "publishConfirmTitle": "Publish to {account}",
-    "publishConfirmMessage": "This publishes the saved article on {account} and marks it published in your workspace.",
-    "publishQueued": "Publishing to {account}. The live link appears here when it is ready.",
-    "publishFailed": "Could not publish to {account}.",
-    "account": "Beehiiv publication",
-    "mode": "Delivery",
-    "modeSend": "Send now",
-    "modeDraft": "Save as a Beehiiv draft",
-    "modeSchedule": "Schedule the send",
-    "sendAt": "Send at",
-    "deliver": "Deliver to Beehiiv",
-    "deliverQueued": "Sent to Beehiiv. The issue link appears here when it is ready.",
-    "deliverFailed": "Could not deliver the issue to Beehiiv.",
-    "scheduleRequired": "Choose a future send time.",
-    "history": "Deliveries",
-    "historyEmpty": "Nothing delivered yet.",
-    "open": "Open",
-    "providerDraft": "Draft on {platform}",
-    "externalUrlLabel": "Published somewhere else?",
-    "externalUrlHint": "Paste the live link so Genfeed can track where this went.",
-    "externalUrlPlaceholder": "https://",
-    "externalUrlInvalid": "Enter a full http or https link.",
-    "externalUrlSave": "Save link",
-    "externalUrlClear": "Remove link",
-    "externalUrlSaved": "Live link saved",
-    "externalUrlFailed": "Could not save the live link",
-    "substackTitle": "Import into Substack",
-    "substackHint": "Substack has no publishing API. In Substack, open Settings, choose Import, and paste this feed. It lists the brand’s published issues.",
-    "copyFeed": "Copy feed URL"
   }
 }

@@ -79,12 +79,6 @@ export class OrganizationSettingsService extends BaseService<
     if (!settings) return null;
     if (!settings.hasOrganizationBilling)
       return { ...settings, hasPaidModuleSubscription: true };
-    // Internal credential/onboarding reads can retain their caller-owned settings
-    // while a selected superadmin GET has another active tenant. A runtime
-    // entitlement hint must remain unavailable rather than query that other scope.
-    const tenant = getTenantContext();
-    if (tenant && tenant.organizationId !== settings.organizationId)
-      return settings;
     try {
       const paidAccess = this.moduleRef.get(OrganizationPaidAccessService, {
         strict: false,
@@ -303,9 +297,6 @@ export class OrganizationSettingsService extends BaseService<
         brandsLimit: 0,
         enabledModelIds,
         isAutoEvaluateEnabled: false,
-        isBrandVisionChecksEnabled: false,
-        isBreakoutAutoPublishEnabled: false,
-        isBreakoutResponsesEnabled: false,
         isGenerateArticlesEnabled: false,
         isGenerateImagesEnabled: true,
         isGenerateMusicEnabled: true,
@@ -409,9 +400,6 @@ export class OrganizationSettingsService extends BaseService<
       LOWEST_COST_IMAGE_MODEL_KEY,
       LOWEST_COST_VIDEO_MODEL_KEY,
       MODEL_KEYS.REPLICATE_IDEOGRAM_AI_IDEOGRAM_4_5,
-      // Avatar renders route through the allowlist; Avatar IV is the
-      // cheaper engine and renders every priced look type.
-      MODEL_KEYS.HEYGEN_AVATAR_IV,
     ]);
     const activeModels = await this.getModelsService().findAllActive({
       organizationId: null,
@@ -468,6 +456,7 @@ export class OrganizationSettingsService extends BaseService<
     const filteredModelIds: string[] = [];
 
     grouped.forEach((group) => {
+      // Find the highest major version
       const maxMajor = Math.max(...group.map((item) => item.major));
 
       // Keep all models from the highest major version (including all minor versions)

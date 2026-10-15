@@ -179,6 +179,7 @@ export class PostsAnalyticsController {
       return returnNotFound(this.constructorName, postId);
     }
 
+    // Get analytics summary
     const summary = await this.postAnalyticsService.getPostAnalyticsSummary(
       postId,
       user.organizationId,

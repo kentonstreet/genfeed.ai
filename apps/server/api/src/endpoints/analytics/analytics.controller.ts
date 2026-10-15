@@ -8,7 +8,7 @@ import {
   buildAnalyticsCacheKey,
   buildOwnedAnalyticsCacheKey,
   buildTopContentAnalyticsCacheKey,
-  resolveAnalyticsOrganizationId,
+  resolveAnalyticsTenantScope,
   resolveOwnedAnalyticsTenantScope,
 } from '@api/endpoints/analytics/analytics-tenant-scope';
 import { BusinessAnalyticsService } from '@api/endpoints/analytics/business-analytics.service';
@@ -68,6 +68,21 @@ import type {
 @UseInterceptors(RedisCacheInterceptor)
 export class AnalyticsController {
   private readonly constructorName: string = String(this.constructor.name);
+
+  private getScopedOrganizationId(
+    user: User,
+    request?: ExpressRequest,
+  ): string | undefined {
+    return resolveAnalyticsTenantScope(user, request).organizationId;
+  }
+
+  /**
+   * For routes that return post titles, provider ids, or per-post rows. See
+   * `resolveOwnedAnalyticsTenantScope`.
+   */
+  private getOwnedOrganizationId(user: User, request?: ExpressRequest): string {
+    return resolveOwnedAnalyticsTenantScope(user, request);
+  }
 
   constructor(
     private readonly loggerService: LoggerService,
@@ -240,7 +255,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     await this.analyticsService.assertBrandInScope(
       query.brandId,
       organizationId,
@@ -302,7 +317,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -330,7 +345,7 @@ export class AnalyticsController {
     @Query() query: TopContentQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveOwnedAnalyticsTenantScope(user, req);
+    const organizationId = this.getOwnedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -367,7 +382,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsDateRangeDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -401,7 +416,7 @@ export class AnalyticsController {
     @Query() query: GrowthQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -436,7 +451,7 @@ export class AnalyticsController {
     @Query() query: AnalyticsFilterQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveAnalyticsOrganizationId(user, req);
+    const organizationId = this.getScopedOrganizationId(user, req);
     this.loggerService.log(url, { query });
     await this.analyticsService.assertBrandInScope(
       query.brandId,
@@ -470,12 +485,10 @@ export class AnalyticsController {
     @Query() query: ViralHooksQueryDto,
   ): Promise<unknown> {
     const url = `${this.constructorName} ${CallerUtil.getCallerName()}`;
-    const organizationId = resolveOwnedAnalyticsTenantScope(user, req);
+    const organizationId = this.getOwnedOrganizationId(user, req);
     this.loggerService.log(url, { query });
-    await this.analyticsService.assertBrandInScope(
-      query.brandId,
-      organizationId,
-    );
+    // biome-ignore format: keep file-lines at the complexity ratchet
+    await this.analyticsService.assertBrandInScope(query.brandId, organizationId);
     const data = await this.analyticsService.getViralHooks(
       query.startDate,
       query.endDate,

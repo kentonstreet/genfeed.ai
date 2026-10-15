@@ -115,28 +115,6 @@ describe('SystemWorkflowRunnerService definitions', () => {
     );
   });
 
-  it('refuses synchronous execution of a funded system graph before creating a mirror or output', async () => {
-    const { runner } = createRunner();
-    runner.registerWorkflow({
-      ...definition,
-      canonicalId: 'funded-generation',
-      generationAdmission: true,
-    });
-    const input = {
-      actionType: 'video.extend',
-      canonicalId: 'funded-generation',
-      organizationId: 'org-1',
-      source: 'test',
-      userId: 'user-1',
-    };
-    await expect(runner.startWorkflow(input)).rejects.toThrow(
-      'queued execution admission',
-    );
-    await expect(runner.runWorkflow(input)).rejects.toThrow(
-      'queued execution admission',
-    );
-  });
-
   it('rejects a registered workflow whose result node is absent', () => {
     expect(() =>
       service.registerWorkflow({
@@ -610,34 +588,6 @@ describe('SystemWorkflowRunnerService definitions', () => {
     ).toBeUndefined();
   });
 
-  it('settles a double failure through the registered last resort only', async () => {
-    const { runner } = createRunner();
-    const handler = vi.fn().mockResolvedValue(undefined);
-    const input = {
-      canonicalId: 'clip.analysis',
-      inputValues: { job: { projectId: 'project-1' } },
-      organizationId: 'org-1',
-    };
-
-    await expect(
-      runner.terminalFailures.settle(input, 'compensation failed'),
-    ).resolves.toBe(false);
-
-    runner.terminalFailures.register('clip.analysis', handler);
-    expect(() =>
-      runner.terminalFailures.register('clip.analysis', handler),
-    ).toThrow('Duplicate system workflow terminal failure handler');
-
-    await expect(
-      runner.terminalFailures.settle(input, 'compensation failed'),
-    ).resolves.toBe(true);
-    expect(handler).toHaveBeenCalledWith({
-      inputValues: input.inputValues,
-      organizationId: 'org-1',
-      workflowError: 'compensation failed',
-    });
-  });
-
   it.each([
     'agent.turn.execute',
     'agent.thread.ui-action',
@@ -884,115 +834,6 @@ describe('SystemWorkflowRunnerService definitions', () => {
     expect(runner.runWorkflow).toHaveBeenCalledTimes(2);
   });
 
-  it('propagates the parent execution retention contract to awaited for-each children (#5634)', async () => {
-    const retention = { purgeAfterHours: 1, scrubNodePayloads: 'all' };
-    const prisma = {
-      workflowExecution: {
-        findFirst: vi.fn().mockResolvedValue({
-          result: { metadata: { executionRetention: retention } },
-        }),
-      },
-    };
-    const { executors, runner } = createRunner(undefined, prisma);
-    runner.onModuleInit();
-    runner.registerWorkflow(definition);
-    vi.spyOn(runner, 'runWorkflow').mockResolvedValue({
-      provenance: {
-        executionId: 'child-execution',
-        workflowId: 'child-workflow',
-        workflowLabel: 'Child workflow',
-      },
-      result: 'done',
-    });
-
-    await executors.get(WORKFLOW_FOR_EACH_ACTION_ID)?.(
-      executableForEachNode({
-        childWorkflowId: definition.canonicalId,
-        itemInputKey: 'item',
-      }),
-      new Map([['items', ['a', 'b']]]),
-      executionContext(),
-    );
-
-    expect(prisma.workflowExecution.findFirst).toHaveBeenCalledWith({
-      select: { result: true },
-      where: {
-        id: 'parent-execution',
-        isDeleted: false,
-        organizationId: 'org-1',
-      },
-    });
-    expect(runner.runWorkflow).toHaveBeenCalledTimes(2);
-    for (const [input] of vi.mocked(runner.runWorkflow).mock.calls) {
-      expect(input.metadata).toMatchObject({
-        executionRetention: retention,
-        parentExecutionId: 'parent-execution',
-      });
-    }
-  });
-
-  it('propagates the parent execution retention contract to scheduled for-each children (#5634)', async () => {
-    const retention = { purgeAfterHours: 1, scrubNodePayloads: 'all' };
-    const queueSystemWorkflow = vi
-      .fn()
-      .mockImplementation(async (_input, jobId) => jobId);
-    const prisma = {
-      workflowExecution: {
-        findFirst: vi.fn().mockResolvedValue({
-          result: { metadata: { executionRetention: retention } },
-        }),
-      },
-    };
-    const { executors, runner } = createRunner({ queueSystemWorkflow }, prisma);
-    runner.onModuleInit();
-    runner.registerWorkflow(definition);
-
-    await executors.get(WORKFLOW_FOR_EACH_ACTION_ID)?.(
-      executableForEachNode({
-        childWorkflowId: definition.canonicalId,
-        itemInputKey: 'item',
-        mode: 'scheduled',
-      }),
-      new Map([['items', ['a']]]),
-      executionContext(),
-    );
-
-    expect(queueSystemWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        metadata: expect.objectContaining({ executionRetention: retention }),
-      }),
-      expect.any(String),
-      expect.anything(),
-    );
-  });
-
-  it('leaves for-each children without retention when the parent carries none (#5634)', async () => {
-    const { executors, runner } = createRunner();
-    runner.onModuleInit();
-    runner.registerWorkflow(definition);
-    vi.spyOn(runner, 'runWorkflow').mockResolvedValue({
-      provenance: {
-        executionId: 'child-execution',
-        workflowId: 'child-workflow',
-        workflowLabel: 'Child workflow',
-      },
-      result: 'done',
-    });
-
-    await executors.get(WORKFLOW_FOR_EACH_ACTION_ID)?.(
-      executableForEachNode({
-        childWorkflowId: definition.canonicalId,
-        itemInputKey: 'item',
-      }),
-      new Map([['items', ['a']]]),
-      executionContext(),
-    );
-
-    expect(
-      vi.mocked(runner.runWorkflow).mock.calls[0]?.[0].metadata,
-    ).not.toHaveProperty('executionRetention');
-  });
-
   it('executes the exact tenant workflow version for every pinned child', async () => {
     const executePinnedManualWorkflow = vi.fn().mockResolvedValue({
       execution: {
@@ -1005,7 +846,7 @@ describe('SystemWorkflowRunnerService definitions', () => {
     });
     const { executors, runner } = createRunner(
       undefined,
-      { workflowExecution: { findFirst: vi.fn().mockResolvedValue(null) } },
+      {},
       { executePinnedManualWorkflow },
     );
     runner.onModuleInit();
@@ -1070,7 +911,7 @@ describe('SystemWorkflowRunnerService definitions', () => {
     });
     const { executors, runner } = createRunner(
       undefined,
-      { workflowExecution: { findFirst: vi.fn().mockResolvedValue(null) } },
+      {},
       { executePinnedManualWorkflow },
     );
     runner.onModuleInit();
@@ -1316,7 +1157,6 @@ describe('SystemWorkflowRunnerService definitions', () => {
           { id: 'org-3', userId: 'owner-3' },
         ]),
       },
-      workflowExecution: { findFirst: vi.fn().mockResolvedValue(null) },
       workflow: {
         findFirst: vi.fn().mockResolvedValue({
           metadata: {
@@ -1954,9 +1794,7 @@ describe('stored delay module ownership', () => {
 
 function createRunner(
   queue = { queueSystemWorkflow: vi.fn() },
-  prisma: object = {
-    workflowExecution: { findFirst: vi.fn().mockResolvedValue(null) },
-  },
+  prisma: object = {},
   workflowExecutor: object = {},
   workflowExecutions: object = {},
   moduleAccess: object = {},
@@ -2240,36 +2078,9 @@ describe('registered Clips module admission', () => {
     '$graph.canonicalId $nodeId respects fresh access after revocation',
     async ({ graph, nodeId, allowed }) => {
       const assertAccess = vi.fn().mockResolvedValue(undefined);
-      const pin = buildWorkflowVersionDefinition(graph.definition);
       const { runner, executors } = createRunner(
         undefined,
-        {
-          workflowExecution: {
-            findFirst: vi.fn().mockResolvedValue({
-              workflowVersion: {
-                id: 'parent-version',
-                workflowId: 'parent-workflow',
-                organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-                userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-                contentHash: pin.contentHash,
-                graph: pin.graph,
-                inputSchema: pin.inputSchema,
-                workflow: {
-                  isDeleted: false,
-                  organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-                  userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-                  metadata: {
-                    sourceType: HIDDEN_SYSTEM_WORKFLOW_SOURCE_TYPE,
-                    [SYSTEM_WORKFLOW_METADATA_KEY]:
-                      buildHiddenSystemWorkflowMetadata({
-                        canonicalId: graph.canonicalId,
-                      }),
-                  },
-                },
-              },
-            }),
-          },
-        },
+        {},
         {},
         {},
         { assertAccess },

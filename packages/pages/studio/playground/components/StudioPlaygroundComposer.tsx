@@ -55,26 +55,14 @@ import {
   crunFieldOptions,
   useCrunInputControls,
 } from '@pages/studio/playground/hooks/useCrunInputControls';
-import { useStudioAvatarEstimate } from '@pages/studio/playground/hooks/useStudioAvatarEstimate';
 import { useStudioGenerationEstimate } from '@pages/studio/playground/hooks/useStudioGenerationEstimate';
 import { useStudioGenerationSetupLookOptions } from '@pages/studio/playground/hooks/useStudioGenerationSetupLookOptions';
 import {
   presetToGenerationSetupValues,
   useStudioLooks,
 } from '@pages/studio/playground/hooks/useStudioLooks';
-import {
-  buildStudioAvatarRequest,
-  resolveStudioAvatarScript,
-} from '@pages/studio/playground/utils/studio-avatar-request';
 import { getDefaultGenerationSetupValues } from '@pages/studio/playground/utils/studio-generation-setup-bridge';
-import {
-  hasStudioAvatarSelection,
-  hasStudioVoiceSelection,
-} from '@pages/studio/playground/utils/studio-identity-selection';
-import {
-  buildStudioPromptData,
-  resolveModelKey,
-} from '@pages/studio/playground/utils/studio-playground-settings';
+import { buildStudioPromptData } from '@pages/studio/playground/utils/studio-playground-settings';
 import {
   getStudioPlaygroundTypeConfig,
   isStudioPlaygroundType,
@@ -113,11 +101,10 @@ import PromptBarCrunControls from '@ui/prompt-bars/components/crun-controls/Prom
 import PromptBarCrunVideoControls from '@ui/prompt-bars/components/crun-controls/PromptBarCrunVideoControls';
 import PromptBarComposer from '@ui/prompt-bars/components/shell/PromptBarComposer';
 import PromptBarReferenceControls from '@ui/prompt-bars/components/toolbar/PromptBarReferenceControls';
-import PromptBarSendButton from '@ui/prompt-bars/components/toolbar/PromptBarSendButton';
 import PromptBarSubmitSlot from '@ui/prompt-bars/components/toolbar/PromptBarSubmitSlot';
 import PromptBarToolbar from '@ui/prompt-bars/components/toolbar/PromptBarToolbar';
 import PromptEditor from '@ui/prompt-editor/PromptEditor';
-import { WandSparkles } from 'lucide-react';
+import { ArrowUp, WandSparkles } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import type { ReactElement } from 'react';
 import { useCallback, useEffect, useState } from 'react';
@@ -262,8 +249,6 @@ export default function StudioPlaygroundComposer({
   const { presets: presetCatalog } = usePromptBarContext();
   const systemPresets = resolveStudioSystemPresets(presetCatalog, type);
   const isModelChoiceVisible = capabilities.hasModelSelection && isAdvancedMode;
-  // Auto: the user picks only the output type; routing picks the rest.
-  const isAutoView = capabilities.hasModelSelection && !isAdvancedMode;
   const handleAdvancedModeChange = useCallback(
     (next: boolean) => {
       void setAdvancedMode(next);
@@ -296,11 +281,6 @@ export default function StudioPlaygroundComposer({
     settings.modelKey === MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_OMNI_VIDEO &&
     settings.resolution === '4k' &&
     attachedAssets.some((asset) => asset.role === 'videoReference');
-  // An avatar video needs both an avatar and a voice; a voice clip needs a voice.
-  const isIdentityMissing =
-    capabilities.hasIdentity &&
-    ((type === 'avatar' && !hasStudioAvatarSelection(settings)) ||
-      !hasStudioVoiceSelection(settings));
   // Submitting mid-catalog-load would resolve the model against an empty or
   // stale list, so the send button waits for the type's models to land.
   const isAwaitingModels = capabilities.hasModelSelection && isLoadingModels;
@@ -323,39 +303,19 @@ export default function StudioPlaygroundComposer({
     settings: displaySettings,
     type,
   });
-  // Image and video Auto stay unpriced until routing picks a model. Music
-  // Auto quotes the catalog default already loaded for this type. With no
-  // default flagged, the request omits the key and the server resolves the
-  // registry music default.
-  const isMusicAuto =
-    type === 'music' && isAutoStudioModelKey(settings.modelKey);
-  const quoteModelKey = isMusicAuto
-    ? models.find(
-        (model) => model.isDefault && model.category === ModelCategory.MUSIC,
-      )?.key
-    : displaySettings.modelKey;
-  const quotedModel = models.find((model) => model.key === quoteModelKey);
+  // Only explicitly selected models can be quoted before Auto has routed.
   const isServerPricedModel =
     !isLoadingModels &&
-    quotedModel?.provider !== 'crun' &&
-    (isMusicAuto ||
-      (quotedModel !== undefined &&
-        quotedModel.key === displaySettings.modelKey &&
-        !isAutoStudioModelKey(settings.modelKey)));
-  const quoteDuration =
-    type === 'music'
-      ? normalizeMusicSettings(quoteModelKey, {
-          duration: displaySettings.duration,
-          instrumental: displaySettings.instrumental,
-          lyrics: displaySettings.lyrics,
-        }).duration
-      : costPromptData.duration;
+    !isAutoStudioModelKey(settings.modelKey) &&
+    selectedModel !== undefined &&
+    selectedModel.key === displaySettings.modelKey &&
+    selectedModel.provider !== 'crun';
   // The server quote admission charges; Studio never recalculates it.
   const serverEstimate = useStudioGenerationEstimate(
     isServerPricedModel
       ? buildStudioGenerationQuoteRequest({
           aspectRatio: displaySettings.aspectRatio,
-          duration: quoteDuration,
+          duration: costPromptData.duration,
           editSize: hasEditMask ? 'source' : displaySettings.editSize,
           referenceUrls: attachedAssets
             .filter(
@@ -370,7 +330,7 @@ export default function StudioPlaygroundComposer({
             ),
           height: costPromptData.height,
           isAudioEnabled: displaySettings.isAudioEnabled,
-          modelKey: quoteModelKey,
+          modelKey: displaySettings.modelKey,
           outputs: costPromptData.outputs,
           resolution: costPromptData.resolution,
           type,
@@ -378,42 +338,21 @@ export default function StudioPlaygroundComposer({
         })
       : null,
   );
-  // An avatar is quoted for the body Generate submits (script, identity and
-  // the resolved engine); until all three exist there is nothing to price.
-  const avatarScript = resolveStudioAvatarScript(settings.speech, prompt);
-  const avatarEstimate = useStudioAvatarEstimate(
-    type === 'avatar' && !isIdentityMissing && avatarScript && !isLoadingModels
-      ? buildStudioAvatarRequest(
-          settings,
-          avatarScript,
-          resolveModelKey(settings, models, capabilities.hasModelSelection),
-        )
-      : null,
-  );
   const estimate: StudioGenerationCostEstimate =
-    type === 'avatar'
-      ? isLoadingModels
+    type !== 'image' && type !== 'image-edit' && type !== 'video'
+      ? { credits: null, status: 'unavailable' }
+      : isLoadingModels
         ? { credits: null, status: 'loading' }
-        : avatarEstimate
-      : type !== 'image' &&
-          type !== 'image-edit' &&
-          type !== 'video' &&
-          type !== 'music'
-        ? { credits: null, status: 'unavailable' }
-        : isLoadingModels
-          ? { credits: null, status: 'loading' }
-          : isAutoStudioModelKey(settings.modelKey) && type !== 'music'
-            ? { credits: null, status: 'auto' }
-            : !isMusicAuto &&
-                (!selectedModel ||
-                  selectedModel.key !== displaySettings.modelKey)
-              ? {
-                  credits: null,
-                  status: 'unavailable',
-                  unavailableReason:
-                    AgentGenerationQuoteUnavailableReason.MODEL_UNAVAILABLE,
-                }
-              : serverEstimate;
+        : isAutoStudioModelKey(settings.modelKey)
+          ? { credits: null, status: 'auto' }
+          : !selectedModel || selectedModel.key !== displaySettings.modelKey
+            ? {
+                credits: null,
+                status: 'unavailable',
+                unavailableReason:
+                  AgentGenerationQuoteUnavailableReason.MODEL_UNAVAILABLE,
+              }
+            : serverEstimate;
   // Admission refuses these outright, so Generate waits instead of failing after submit.
   // ERROR, loading, Auto and Crun never block.
   const isEstimateBlocking =
@@ -434,7 +373,6 @@ export default function StudioPlaygroundComposer({
     isRuntimeBlocked ||
     isGenerating ||
     isPromptEmpty ||
-    isIdentityMissing ||
     isFirstFrameMissing ||
     isReferenceCombinationInvalid ||
     isKling4KReferenceInvalid ||
@@ -648,7 +586,7 @@ export default function StudioPlaygroundComposer({
     capabilities.hasOutputs ? `x${costPromptData.outputs ?? 1}` : undefined,
   ].filter(Boolean);
   const setupLabel =
-    !isAutoView && setupParts.length > 0
+    setupParts.length > 0
       ? setupParts.join(' · ')
       : typeOptions.find((option) => option.value === type)?.label;
 
@@ -694,9 +632,8 @@ export default function StudioPlaygroundComposer({
       inputControls.videoRules?.referenceMode === 'start-end')
   ) {
     addReferenceSource('startFrame', translateAssets('startFrame'), 'image/*');
-    // Auto routes to a model that accepts the end frame when one is attached.
     if (
-      isAutoMode ||
+      !isAutoMode &&
       (inputControls?.mediaKind === 'video'
         ? inputControls.videoRules?.referenceMode === 'start-end'
         : hasEndFrame(settings.modelKey))
@@ -715,108 +652,6 @@ export default function StudioPlaygroundComposer({
       );
     }
   }
-
-  // Model-specific controls live in the setup popover's Output section.
-  const outputControls =
-    inputControls?.mediaKind === 'image' ||
-    (inputControls?.mediaKind === 'video' && settings.crunControls) ? (
-      <>
-        {inputControls?.mediaKind === 'image' ? (
-          <PromptBarCrunControls
-            controls={inputControls}
-            value={settings.crunControls?.outputFormat}
-            isDisabled={isGenerating}
-            onChange={(outputFormat) =>
-              onSettingsChange({
-                crunControls: {
-                  modelKey: settings.modelKey,
-                  contractVersion: inputControls.version,
-                  outputFormat,
-                },
-              })
-            }
-          />
-        ) : null}
-        {inputControls?.mediaKind === 'video' && settings.crunControls ? (
-          <>
-            {(crunReferenceCount ?? 0) >
-              (inputControls.videoRules?.referenceMode === 'start-end'
-                ? 1
-                : 0) && (
-              <Label role="alert">
-                {translate('crun.videoReferencesUnsupported')}
-              </Label>
-            )}
-            <PromptBarCrunVideoControls
-              controls={inputControls}
-              value={{
-                modelKey: settings.crunControls.modelKey,
-                contractVersion: settings.crunControls.contractVersion,
-                prompt,
-                duration: settings.duration,
-                aspectRatio: settings.aspectRatio || undefined,
-                resolution: settings.resolution || undefined,
-                negativePrompt: settings.crunControls.negativePrompt,
-                guidanceScale: settings.crunControls.guidanceScale,
-                translatePrompt: settings.crunControls.translatePrompt,
-                startFrameId: crunStartFrameId,
-                endFrameId: crunEndFrameId,
-              }}
-              isDisabled={isGenerating || isUploading || isEnhancingPrompt}
-              labels={{
-                duration: translate('crun.duration'),
-                aspectRatio: translate('crun.aspectRatio'),
-                resolution: translate('crun.resolution'),
-                negativePrompt: translate('crun.negativePrompt'),
-                guidanceScale: translate('crun.guidanceScale'),
-                translatePrompt: translate('crun.translatePrompt'),
-                pricingReviewRequired: translate('crun.pricingReviewRequired'),
-                aspectFromFrames: translate('crun.aspectFromFrames'),
-                invalidContract: translate('crun.invalidContract'),
-                errorMessages: {
-                  required: translate('crun.fieldRequired'),
-                  unknown: translate('crun.fieldUnknown'),
-                  type: translate('crun.fieldType'),
-                  enum: translate('crun.fieldEnum'),
-                  bounds: translate('crun.fieldBounds'),
-                  uri: translate('crun.fieldUri'),
-                  reference_required: translate('crun.fieldReferenceRequired'),
-                  pricing_unavailable: translate('crun.pricingReviewRequired'),
-                  contract_mismatch: translate('crun.invalidContract'),
-                },
-              }}
-              onChange={(patch) =>
-                onSettingsChange({
-                  ...(Object.hasOwn(patch, 'duration')
-                    ? { duration: patch.duration }
-                    : {}),
-                  ...(Object.hasOwn(patch, 'aspectRatio')
-                    ? { aspectRatio: patch.aspectRatio ?? '' }
-                    : {}),
-                  ...(Object.hasOwn(patch, 'resolution')
-                    ? { resolution: patch.resolution ?? '' }
-                    : {}),
-                  crunControls: {
-                    ...settings.crunControls,
-                    modelKey: settings.modelKey,
-                    contractVersion: inputControls.version,
-                    ...(Object.hasOwn(patch, 'negativePrompt')
-                      ? { negativePrompt: patch.negativePrompt }
-                      : {}),
-                    ...(Object.hasOwn(patch, 'guidanceScale')
-                      ? { guidanceScale: patch.guidanceScale }
-                      : {}),
-                    ...(Object.hasOwn(patch, 'translatePrompt')
-                      ? { translatePrompt: patch.translatePrompt }
-                      : {}),
-                  },
-                })
-              }
-            />
-          </>
-        ) : null}
-      </>
-    ) : undefined;
 
   return (
     <PromptBarComposer
@@ -1048,23 +883,27 @@ export default function StudioPlaygroundComposer({
               showEnhancementSettings={type === 'image' || type === 'video'}
               align="start"
               isIconOnly
-              // Always offered so the Auto type grid keeps the same tiles
-              // whatever type is selected.
-              imageEditing={{
-                isEnabled: type === 'image-edit',
-                label: getStudioPlaygroundTypeConfig('image-edit').label,
-                onChange: (isEditing) =>
-                  onTypeChange(isEditing ? 'image-edit' : 'image'),
-              }}
+              imageEditing={
+                type === 'image' || type === 'image-edit'
+                  ? {
+                      isEnabled: type === 'image-edit',
+                      label: getStudioPlaygroundTypeConfig('image-edit').label,
+                      onChange: (isEditing) =>
+                        onTypeChange(isEditing ? 'image-edit' : 'image'),
+                    }
+                  : undefined
+              }
               triggerLabel={setupLabel}
               inputControls={inputControls}
               referenceCount={crunReferenceCount ?? attachedAssets.length}
-              // Every type keeps the Auto/Advanced layout; Avatar just has
-              // no model to choose in Advanced.
-              advancedMode={{
-                isEnabled: isAdvancedMode,
-                onChange: handleAdvancedModeChange,
-              }}
+              advancedMode={
+                capabilities.hasModelSelection
+                  ? {
+                      isEnabled: isAdvancedMode,
+                      onChange: handleAdvancedModeChange,
+                    }
+                  : undefined
+              }
               capabilities={capabilities}
               favoriteModelKeys={favoriteModelKeys}
               isDisabled={isGenerating}
@@ -1080,7 +919,6 @@ export default function StudioPlaygroundComposer({
               onResetField={handleResetField}
               onSavePreset={handleSavePreset}
               onSetField={handleSetField}
-              outputControls={outputControls}
               onTypeChange={(nextType) => {
                 // The shared popover speaks GenerationSetupType; Studio only
                 // offers its own registry, so anything else is not a Studio pick.
@@ -1114,6 +952,107 @@ export default function StudioPlaygroundComposer({
                 setup={setupForComposer}
               />
             ) : null}
+            {inputControls?.mediaKind === 'image' ? (
+              <PromptBarCrunControls
+                controls={inputControls}
+                value={settings.crunControls?.outputFormat}
+                isDisabled={isGenerating}
+                onChange={(outputFormat) =>
+                  onSettingsChange({
+                    crunControls: {
+                      modelKey: settings.modelKey,
+                      contractVersion: inputControls.version,
+                      outputFormat,
+                    },
+                  })
+                }
+              />
+            ) : null}
+            {inputControls?.mediaKind === 'video' && settings.crunControls ? (
+              <>
+                {(crunReferenceCount ?? 0) >
+                  (inputControls.videoRules?.referenceMode === 'start-end'
+                    ? 1
+                    : 0) && (
+                  <Label role="alert">
+                    {translate('crun.videoReferencesUnsupported')}
+                  </Label>
+                )}
+                <PromptBarCrunVideoControls
+                  controls={inputControls}
+                  value={{
+                    modelKey: settings.crunControls.modelKey,
+                    contractVersion: settings.crunControls.contractVersion,
+                    prompt,
+                    duration: settings.duration,
+                    aspectRatio: settings.aspectRatio || undefined,
+                    resolution: settings.resolution || undefined,
+                    negativePrompt: settings.crunControls.negativePrompt,
+                    guidanceScale: settings.crunControls.guidanceScale,
+                    translatePrompt: settings.crunControls.translatePrompt,
+                    startFrameId: crunStartFrameId,
+                    endFrameId: crunEndFrameId,
+                  }}
+                  isDisabled={isGenerating || isUploading || isEnhancingPrompt}
+                  labels={{
+                    duration: translate('crun.duration'),
+                    aspectRatio: translate('crun.aspectRatio'),
+                    resolution: translate('crun.resolution'),
+                    negativePrompt: translate('crun.negativePrompt'),
+                    guidanceScale: translate('crun.guidanceScale'),
+                    translatePrompt: translate('crun.translatePrompt'),
+                    pricingReviewRequired: translate(
+                      'crun.pricingReviewRequired',
+                    ),
+                    aspectFromFrames: translate('crun.aspectFromFrames'),
+                    invalidContract: translate('crun.invalidContract'),
+                    errorMessages: {
+                      required: translate('crun.fieldRequired'),
+                      unknown: translate('crun.fieldUnknown'),
+                      type: translate('crun.fieldType'),
+                      enum: translate('crun.fieldEnum'),
+                      bounds: translate('crun.fieldBounds'),
+                      uri: translate('crun.fieldUri'),
+                      reference_required: translate(
+                        'crun.fieldReferenceRequired',
+                      ),
+                      pricing_unavailable: translate(
+                        'crun.pricingReviewRequired',
+                      ),
+                      contract_mismatch: translate('crun.invalidContract'),
+                    },
+                  }}
+                  onChange={(patch) =>
+                    onSettingsChange({
+                      ...(Object.hasOwn(patch, 'duration')
+                        ? { duration: patch.duration }
+                        : {}),
+                      ...(Object.hasOwn(patch, 'aspectRatio')
+                        ? { aspectRatio: patch.aspectRatio ?? '' }
+                        : {}),
+                      ...(Object.hasOwn(patch, 'resolution')
+                        ? { resolution: patch.resolution ?? '' }
+                        : {}),
+                      crunControls: {
+                        ...settings.crunControls,
+                        modelKey: settings.modelKey,
+                        contractVersion: inputControls.version,
+                        ...(Object.hasOwn(patch, 'negativePrompt')
+                          ? { negativePrompt: patch.negativePrompt }
+                          : {}),
+                        ...(Object.hasOwn(patch, 'guidanceScale')
+                          ? { guidanceScale: patch.guidanceScale }
+                          : {}),
+                        ...(Object.hasOwn(patch, 'translatePrompt')
+                          ? { translatePrompt: patch.translatePrompt }
+                          : {}),
+                      },
+                    })
+                  }
+                />
+              </>
+            ) : null}
+
             {capabilities.hasIdentity ? (
               <StudioIdentityFields
                 isDisabled={isGenerating}
@@ -1188,29 +1127,25 @@ export default function StudioPlaygroundComposer({
                 <StudioGenerationSummary
                   crunQuote={crunQuote}
                   estimate={estimate}
-                  // Music Auto is one catalog default with a tariff, and an
-                  // avatar quote resolves its Auto engine on the server, so
-                  // both stay visible. Image and video Auto hide it.
-                  isEstimateHidden={
-                    isAutoView && type !== 'music' && type !== 'avatar'
-                  }
                   model={selectedModel}
                   type={type}
                   isDisabled={isGenerating}
                   label={translate('generate')}
                 >
-                  <PromptBarSendButton
+                  <Button
                     ariaLabel={translate('generate')}
-                    className={
-                      isSubmitBlocked
-                        ? 'cursor-not-allowed opacity-50'
-                        : undefined
-                    }
-                    density="compact"
-                    isAriaDisabled={Boolean(isSubmitBlocked)}
+                    className={cn(
+                      'size-8 shrink-0 min-h-0 min-w-0 p-0',
+                      isSubmitBlocked && 'cursor-not-allowed opacity-50',
+                    )}
+                    aria-disabled={isSubmitBlocked || undefined}
+                    icon={<ArrowUp className={SHELL_ICON_CLASS} />}
                     isDisabled={isGenerating}
                     isLoading={isGenerating}
                     onClick={guardedSubmit}
+                    size={ButtonSize.ICON}
+                    variant={ButtonVariant.DEFAULT}
+                    withWrapper={false}
                   />
                 </StudioGenerationSummary>
               }

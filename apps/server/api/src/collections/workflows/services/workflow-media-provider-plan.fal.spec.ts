@@ -1,9 +1,7 @@
 import type { WorkflowEngineExecutorHelperService } from '@api/collections/workflows/services/workflow-engine-executor-helper.service';
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
-import type { FilesClientService } from '@api/services/files-microservice/client/files-client.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
-import { IngredientCategory } from '@genfeedai/contracts';
 import {
   createExecutableActionNode,
   type ExecutionContext,
@@ -96,37 +94,13 @@ function fixture() {
         : undefined,
   } as unknown as WorkflowEngineExecutorHelperService;
   const personas = personasServiceStub();
-  const findStoredVideo = vi
-    .fn()
-    .mockResolvedValue({ s3Key: 'videos/source-1.mp4' });
-  const files = {
-    getPresignedDownloadUrl: vi
-      .fn()
-      .mockResolvedValue('https://stored.test/source.mp4'),
-    getPresignedDownloadUrlForObjectKey: vi
-      .fn()
-      .mockResolvedValue('https://stored.test/source.mp4'),
-    fingerprintMedia: vi
-      .fn()
-      .mockResolvedValue({ assetHash: 'a'.repeat(64), sizeBytes: 1000 }),
-    probeMediaFromUrl: vi.fn().mockResolvedValue({
-      sizeBytes: 1000,
-      durationSeconds: 3,
-      width: 864,
-      height: 496,
-      frameRate: 24,
-    }),
-  };
-  const prisma = {
-    model: { findFirst },
-    ingredient: { findFirst: findStoredVideo },
-  } as unknown as PrismaService;
+  const prisma = { model: { findFirst } } as unknown as PrismaService;
   const service = new WorkflowMediaProviderPlanService(
     helper,
     { warn: vi.fn() } as unknown as LoggerService,
     personas,
     undefined,
-    files as unknown as FilesClientService,
+    undefined,
     undefined,
     undefined,
     prisma,
@@ -158,8 +132,6 @@ function fixture() {
     effects,
     personas,
     service,
-    files,
-    findStoredVideo,
   };
 }
 
@@ -183,11 +155,6 @@ describe('reviewed Fal workflow provider preparation', () => {
     });
     expect(prepared.reviewedOutput.version).toBe(f.snapshot.version);
     expect(prepared.generationBriefEvidence.status).toBe('exempted');
-    expect(prepared.schemaPreparation).toMatchObject({
-      kind: 'reviewed-provider-schema',
-      schemaVersion: f.snapshot.version,
-      inputSchemaHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
     expect(f.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -212,46 +179,10 @@ describe('reviewed Fal workflow provider preparation', () => {
       task: 'extension',
       aspect_ratio: 'auto',
       image_urls: ['https://api.test/images/still-1'],
-      video_urls: ['https://stored.test/source.mp4'],
-    });
-    if (prepared.provider !== 'fal') throw new Error('Expected Fal plan');
-    expect(prepared.nativeOutputQuoteEvidence).toMatchObject({
-      width: 864,
-      height: 496,
-      duration: 6,
-      sourceVersion: 'a'.repeat(64),
-    });
-    expect(prepared.referenceQuoteEvidence).toMatchObject({
-      inputDuration: 3,
-      referenceEvidenceHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-    });
-    expect(f.findStoredVideo).toHaveBeenCalledWith({
-      select: { s3Key: true },
-      where: {
-        id: 'source-1',
-        organizationId: 'org-1',
-        isDeleted: false,
-        category: IngredientCategory.VIDEO,
-      },
+      video_urls: ['https://api.test/videos/source-1'],
     });
     expect(prepared.output.parentIngredientId).toBe('source-1');
     expect(prepared.output.references).toContain('source-1');
-  });
-  it('refuses an admitted video whose bytes changed while measuring the quote input', async () => {
-    const f = fixture();
-    f.files.fingerprintMedia
-      .mockReset()
-      .mockResolvedValueOnce({ assetHash: 'a'.repeat(64), sizeBytes: 1000 })
-      .mockResolvedValueOnce({ assetHash: 'b'.repeat(64), sizeBytes: 1000 });
-    await expect(
-      f.prepare({
-        task: 'extension',
-        videoReferences: ['https://api.test/videos/source-1'],
-        parentIngredientId: 'source-1',
-      }),
-    ).rejects.toThrow();
-    for (const effect of Object.values(f.effects))
-      expect(effect).not.toHaveBeenCalled();
   });
   it('rejects an unreviewed model instead of substituting a provider', async () => {
     const f = fixture();

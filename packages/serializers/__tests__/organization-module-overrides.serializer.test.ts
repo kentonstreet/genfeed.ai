@@ -5,14 +5,14 @@ describe('organization module preferences serialization', () => {
   it('returns persisted module preferences through the canonical settings serializer', () => {
     const result = OrganizationSettingSerializer.serialize({
       id: 'settings-1',
-      moduleOverrides: { automation: true, turbo: false },
+      moduleOverrides: { automation: true, batch: false },
       hasOrganizationBilling: true,
       hasPaidModuleSubscription: false,
       unrelatedInternalValue: 'hidden',
     }) as { data: { attributes: Record<string, unknown> } };
     expect(result.data.attributes.moduleOverrides).toEqual({
       automation: true,
-      turbo: false,
+      batch: false,
     });
     expect(result.data.attributes).not.toHaveProperty('unrelatedInternalValue');
     expect(result.data.attributes.hasOrganizationBilling).toBe(true);

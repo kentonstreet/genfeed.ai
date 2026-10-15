@@ -7,7 +7,6 @@ import {
   CLIP_CONTINUITY_FAILURE_WORKFLOW_ID,
   CLIP_CONTINUITY_WORKFLOW_ID,
 } from '@api/collections/clip-projects/services/clip-continuity-workflow-definition';
-import { assertClipWorkflowActor } from '@api/collections/clip-projects/services/clip-workflow-actor.util';
 import { ClipResultsService } from '@api/collections/clip-results/clip-results.service';
 import { WorkflowExecutionQueueService } from '@api/collections/workflows/services/workflow-execution-queue.service';
 import {
@@ -68,35 +67,6 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     this.runner.registerWorkflow(
       buildClipContinuityFailureWorkflowDefinition(),
     );
-    this.runner.terminalFailures.register(
-      CLIP_CONTINUITY_WORKFLOW_ID,
-      ({ inputValues, organizationId }) =>
-        this.settleTerminalFailure(inputValues, organizationId),
-    );
-  }
-
-  /**
-   * Last resort when the continuity run and its failure graph both failed
-   * (#6655). Only the generation run that queued this QA may be marked
-   * failed, and a finished QA is never overwritten.
-   */
-  private async settleTerminalFailure(
-    inputValues: Record<string, unknown>,
-    organizationId: string,
-  ): Promise<void> {
-    const projectId = this.requiredString(inputValues.projectId, 'projectId');
-    const generationWorkflowExecutionId = this.requiredString(
-      inputValues.generationWorkflowExecutionId,
-      'generationWorkflowExecutionId',
-    );
-    await this.prisma.clipProject.updateMany({
-      data: { continuityQaStatus: 'failed' },
-      where: scopedWhere(organizationId, {
-        continuityQaStatus: { in: ['queued', 'running'] },
-        id: projectId,
-        workflowExecutionId: generationWorkflowExecutionId,
-      }),
-    });
   }
 
   async queueIfReady(project: ClipProjectDocument): Promise<boolean> {
@@ -157,11 +127,28 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
         `Clip continuity found no persisted clip results for generation execution ${generationWorkflowExecutionId}`,
       );
     }
-    const descriptors = this.buildClipDescriptors(
-      clipRows,
-      orderedClipIds,
-      references.length > 0,
-    );
+    const clipsById = new Map(clipRows.map((clip) => [clip.id, clip]));
+    const hasCanonicalReferences = references.length > 0;
+    let qaIndex = 0;
+    const descriptors: ClipDescriptor[] = orderedClipIds.flatMap((id) => {
+      const clip = clipsById.get(id);
+      if (!clip) {
+        return [];
+      }
+      const videoUrl =
+        this.readString(clip.captionedVideoUrl) ??
+        this.readString(clip.videoUrl);
+      const descriptor: ClipDescriptor = {
+        id,
+        status: String(clip.status),
+        ...(videoUrl && hasCanonicalReferences
+          ? { qaIndex: qaIndex++, videoUrl }
+          : videoUrl
+            ? { videoUrl }
+            : {}),
+      };
+      return [descriptor];
+    });
     const referenceAssetIds = {
       character: references
         .filter((reference) => reference.role === 'character')
@@ -244,39 +231,10 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     }
   }
 
-  private buildClipDescriptors(
-    clipRows: Awaited<ReturnType<ClipResultsService['findByProject']>>,
-    orderedClipIds: string[],
-    hasCanonicalReferences: boolean,
-  ): ClipDescriptor[] {
-    const clipsById = new Map(clipRows.map((clip) => [clip.id, clip]));
-    let qaIndex = 0;
-    return orderedClipIds.flatMap((id) => {
-      const clip = clipsById.get(id);
-      if (!clip) {
-        return [];
-      }
-      const videoUrl =
-        this.readString(clip.captionedVideoUrl) ??
-        this.readString(clip.videoUrl);
-      const descriptor: ClipDescriptor = {
-        id,
-        status: String(clip.status),
-        ...(videoUrl && hasCanonicalReferences
-          ? { qaIndex: qaIndex++, videoUrl }
-          : videoUrl
-            ? { videoUrl }
-            : {}),
-      };
-      return [descriptor];
-    });
-  }
-
   private async begin(request: SystemWorkflowActionRequest): Promise<{
     projectId: string;
     status: 'running';
   }> {
-    assertClipWorkflowActor(request);
     const projectId = this.requiredString(request.input.projectId, 'projectId');
     const updated = await this.prisma.clipProject.updateMany({
       data: {
@@ -298,7 +256,6 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     projectId: string;
     status: 'failed';
   }> {
-    assertClipWorkflowActor(request);
     const projectId = this.requiredString(request.input.projectId, 'projectId');
     const updated = await this.prisma.clipProject.updateMany({
       data: { continuityQaStatus: 'failed' },
@@ -316,7 +273,6 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
   private async persistReport(
     request: SystemWorkflowActionRequest,
   ): Promise<VideoContinuityQaReport> {
-    assertClipWorkflowActor(request);
     const projectId = this.requiredString(request.input.projectId, 'projectId');
     const generationWorkflowExecutionId = this.requiredString(
       request.input.generationWorkflowExecutionId,
@@ -384,12 +340,12 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     organizationId: string,
     report: VideoContinuityQaReport,
   ): Promise<void> {
-    const [tasks, turboRunItems] = await Promise.all([
+    const [tasks, batchItems] = await Promise.all([
       this.prisma.task.findMany({
         select: { decomposition: true, id: true },
         where: scopedWhere(organizationId, { projectId }),
       }),
-      this.prisma.turboRunItem.findMany({
+      this.prisma.batchItem.findMany({
         select: { data: true, id: true },
         where: scopedWhere(organizationId, {
           OR: [
@@ -416,8 +372,8 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
           where: scopedWhere(organizationId, { id: task.id }),
         }),
       ),
-      ...turboRunItems.map((item) =>
-        this.prisma.turboRunItem.updateMany({
+      ...batchItems.map((item) =>
+        this.prisma.batchItem.updateMany({
           data: {
             data: toPrismaJson({
               ...this.readRecord(item.data),

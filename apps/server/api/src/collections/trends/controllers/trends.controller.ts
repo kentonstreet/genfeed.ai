@@ -85,6 +85,7 @@ export class TrendsController {
       );
     }
 
+    // Get trends with access control
     const result = await this.trendsService.getTrendsWithAccessControl(
       organizationId,
       brandId,
@@ -151,6 +152,7 @@ export class TrendsController {
       );
     }
 
+    // Get trends
     const trends = await this.trendsService.getTrends(
       organizationId,
       brandId,
@@ -178,6 +180,7 @@ export class TrendsController {
     );
     finalizeDeferredTextCredits(req, billedCredits);
 
+    // Format response
     const result = Array.from(ideasMap.entries()).map(([platform, ideas]) => {
       const platformTrends = trends.filter((t) => t.platform === platform);
       const avgVirality =
@@ -356,6 +359,7 @@ export class TrendsController {
     const readScope = resolveTenantReadScope(user);
     const organizationId = readScope.organizationId;
 
+    // Get the trend
     const trend = await this.trendsService.getTrendById(id, organizationId);
 
     if (!trend) {

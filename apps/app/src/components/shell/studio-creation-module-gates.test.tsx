@@ -1,17 +1,16 @@
+import BatchNewPage from '@app/(protected)/[orgSlug]/[brandSlug]/studio/batch/new/page';
 import ClipsNewPage from '@app/(protected)/[orgSlug]/[brandSlug]/studio/clips/new/page';
 import EditorNewPage from '@app/(protected)/[orgSlug]/[brandSlug]/studio/editor/new/page';
-import TurboNewPage from '@app/(protected)/[orgSlug]/[brandSlug]/studio/turbo/new/page';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   organizationId: 'org-1',
   settingsLoading: false,
-  settings: {
-    hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
-    moduleOverrides: {},
-  } as Record<string, unknown>,
+  settings: { hasOrganizationBilling: true, moduleOverrides: {} } as Record<
+    string,
+    unknown
+  >,
   refreshSettings: vi.fn(),
   create: vi.fn(),
 }));
@@ -25,7 +24,7 @@ vi.mock('next-intl', async () => {
   const { translateFromCatalog } = await import('@app-tests/next-intl.stub');
   return { useTranslations: translateFromCatalog };
 });
-vi.mock('@/features/workflows/pages/turbo/TurboNewProjectPage', () => ({
+vi.mock('@/features/workflows/pages/batch/BatchNewProjectPage', () => ({
   default: () => (
     <button type="button" onClick={state.create}>
       Create project
@@ -53,16 +52,12 @@ vi.mock(
   }),
 );
 beforeEach(() => {
-  state.settings = {
-    hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
-    moduleOverrides: {},
-  };
+  state.settings = { hasOrganizationBilling: true, moduleOverrides: {} };
   state.create.mockClear();
 });
 describe('Studio creation routes', () => {
   it.each([
-    ['turbo', TurboNewPage],
+    ['batch', BatchNewPage],
     ['clips', ClipsNewPage],
     ['editor', EditorNewPage],
   ] as const)(
@@ -77,7 +72,6 @@ describe('Studio creation routes', () => {
       ).toHaveAttribute('href', '/acme/~/settings/general');
       state.settings = {
         hasOrganizationBilling: true,
-        isReleasePreviewEnabled: true,
         moduleOverrides: { [moduleId]: true },
       };
       rerender(<Page />);

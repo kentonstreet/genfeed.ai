@@ -201,7 +201,6 @@ type ScheduledForEachResult =
 
 export async function scheduleForEach(input: {
   childContexts: ForEachChildContext[];
-  inheritedMetadata?: Record<string, unknown>;
   options: ForEachOptions;
   parentNodeId: string;
   queueSystemWorkflow: (
@@ -247,7 +246,6 @@ export async function scheduleForEach(input: {
             [input.options.itemInputKey]: item,
           },
           metadata: {
-            ...input.inheritedMetadata,
             parentExecutionId: input.request.provenance.executionId,
             parentNodeId: input.parentNodeId,
             parentWorkflowId: input.request.provenance.workflowId,

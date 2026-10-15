@@ -131,6 +131,7 @@ export class WebhooksController {
       throw this.unauthorized();
     }
 
+    // Log the webhook trigger
     this.logger.log(`Webhook triggered: ${webhookId}`, {
       payloadKeys: Object.keys(payload),
       webhookId,
@@ -162,9 +163,9 @@ export class WebhooksController {
           'code' in response &&
           typeof response.code === 'string' &&
           [
+            'ORGANIZATION_MODULE_DISABLED',
             'ORGANIZATION_MODULE_SUBSCRIPTION_REQUIRED',
             'ORGANIZATION_MODULE_UNAVAILABLE',
-            'ORGANIZATION_MODULE_UNRELEASED',
           ].includes(response.code)
         ) {
           throw error;

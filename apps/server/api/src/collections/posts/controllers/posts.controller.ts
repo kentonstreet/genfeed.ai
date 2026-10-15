@@ -1,4 +1,3 @@
-import { orderedPostIngredientLinks } from '@api/collections/posts/services/post-ingredient-links.util';
 import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 /**
  * PostsController - CRUD operations for posts
@@ -328,26 +327,8 @@ export class PostsController extends BaseCRUDController<
       user,
       request,
     );
-    // The editor needs the selected account and media metadata for preview
-    // and provider-specific duration checks.
+    // Build findAll query to fetch post with ingredients, credential, and evaluation
     const pipeline = {
-      include: {
-        credential: {
-          select: {
-            id: true,
-            platform: true,
-            externalHandle: true,
-            externalName: true,
-            externalAvatar: true,
-            label: true,
-            isConnected: true,
-          },
-        },
-        ingredientLinks: orderedPostIngredientLinks(
-          { include: { metadata: true } },
-          { organizationId: tenant.organizationId, isDeleted: false },
-        ),
-      },
       where: {
         id: postId,
         organizationId: tenant.organizationId,

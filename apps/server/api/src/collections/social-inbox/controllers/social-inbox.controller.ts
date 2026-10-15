@@ -279,7 +279,6 @@ export class SocialInboxController {
     return serializeCollection(request, SocialMessageSerializer, data);
   }
 
-  @OrganizationModule('messages', 'read')
   @Patch(':conversationId/read')
   @ApiOperation({
     summary: 'Mark a social conversation read for the current user',

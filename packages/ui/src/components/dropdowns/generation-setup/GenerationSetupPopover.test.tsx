@@ -534,73 +534,32 @@ describe('GenerationSetupPopover', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows only the output types in Auto', async () => {
+  it('offers quality/budget priorities without a model catalogue in Auto', async () => {
     const user = userEvent.setup();
-    const onEditChange = vi.fn();
+    const onSetField = vi.fn();
     renderPopover({
+      onSetField,
       advancedMode: { isEnabled: false, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: onEditChange,
-      },
     });
     await openPopover(user);
-    const types = within(screen.getByRole('group', { name: 'Type' }));
-    expect(types.getByRole('button', { name: 'Image' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
+    await user.click(
+      screen.getByRole('button', { name: 'Configure Quality / budget' }),
     );
-    for (const name of ['Model', 'Output', 'Look', 'Brand'])
-      expect(
-        screen.queryByRole('button', { name: `Configure ${name}` }),
-      ).toBeNull();
-    expect(screen.queryByRole('switch', { name: 'Edit image' })).toBeNull();
-    await user.click(types.getByRole('button', { name: 'Edit image' }));
-    expect(onEditChange).toHaveBeenCalledWith(true);
-  });
-
-  it('marks exactly one output type active in Auto', async () => {
-    const user = userEvent.setup();
-    const onTypeChange = vi.fn();
-    renderPopover({
-      advancedMode: { isEnabled: false, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: vi.fn(),
-      },
-      onTypeChange,
-      setup: createSetup({
-        values: { ...createSetup().values, type: 'video' },
-      }),
-      typeOptions: [...typeOptions, { label: 'Video', value: 'video' }],
+    expect(
+      screen.queryByPlaceholderText('Search models…'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Nano Banana')).not.toBeInTheDocument();
+    for (const name of ['Best Quality', 'Balanced', 'Fastest', 'Lowest Cost'])
+      expect(screen.getByRole('button', { name })).toBeVisible();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Lowest Cost' }), {
+      button: 0,
     });
-    await openPopover(user);
-    const types = within(screen.getByRole('group', { name: 'Type' }));
-    const pressed = types
-      .getAllByRole('button')
-      .filter((button) => button.getAttribute('aria-pressed') === 'true');
-    expect(pressed.map((button) => button.textContent)).toEqual(['Video']);
-    await user.click(types.getByRole('button', { name: 'Image' }));
-    expect(onTypeChange).toHaveBeenCalledWith('image');
-  });
-
-  it('hides the editing switch in Advanced for non-image types', async () => {
-    const user = userEvent.setup();
-    renderPopover({
-      advancedMode: { isEnabled: true, onChange: vi.fn() },
-      imageEditing: {
-        isEnabled: false,
-        label: 'Edit image',
-        onChange: vi.fn(),
-      },
-      setup: createSetup({
-        values: { ...createSetup().values, type: 'video' },
-      }),
-    });
-    await openPopover(user);
-    expect(screen.queryByRole('switch', { name: 'Edit image' })).toBeNull();
+    expect(onSetField).toHaveBeenNthCalledWith(1, 'modelKey', '');
+    expect(onSetField).toHaveBeenNthCalledWith(
+      2,
+      'prioritize',
+      RouterPriority.COST,
+    );
   });
 
   it('keeps model search and Auto priorities isolated from output, brand, and presets', async () => {

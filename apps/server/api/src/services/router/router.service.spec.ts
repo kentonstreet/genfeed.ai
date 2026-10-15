@@ -17,10 +17,8 @@ import { isCloudDeployment } from '@genfeedai/config';
 import { ModelCategory, ModelLifecycle } from '@genfeedai/contracts';
 import {
   DEFAULT_CONTEXT_EMBEDDING_MODEL,
-  hasEndFrame,
   LOWEST_COST_AGENT_CHAT_MODEL_KEY,
   MODEL_KEYS,
-  SELF_HOSTED_MODELS,
 } from '@genfeedai/contracts/constants';
 import { testId } from '@helpers/testing/test-id.helper';
 import { LoggerService } from '@libs/logger/logger.service';
@@ -167,37 +165,6 @@ describe('RouterService', () => {
         service.selectModel({ ...options, eligibleModelKeys: [] }),
       ).rejects.toThrow(ForbiddenException);
     });
-    it('routes an attached end frame only to models that accept one', async () => {
-      const videoKeys = Object.values(MODEL_KEYS) as string[];
-      const withEndFrame = videoKeys.find((key) => hasEndFrame(key));
-      const withoutEndFrame = MODEL_KEYS.REPLICATE_GOOGLE_VEO_2;
-      expect(withEndFrame).toBeDefined();
-      modelsService.findAllActive.mockResolvedValue([
-        createMockModel({
-          category: ModelCategory.VIDEO,
-          key: withoutEndFrame,
-          qualityTier: 'ultra',
-        }),
-        createMockModel({
-          category: ModelCategory.VIDEO,
-          key: withEndFrame,
-          qualityTier: 'basic',
-        }),
-      ]);
-      const options: ModelSelectionOptions = {
-        category: ModelCategory.VIDEO,
-        prioritize: 'quality',
-        prompt: 'A slow dolly shot',
-      };
-
-      expect((await service.selectModel(options)).selectedModel).toBe(
-        withoutEndFrame,
-      );
-      expect(
-        (await service.selectModel({ ...options, requiresEndFrame: true }))
-          .selectedModel,
-      ).toBe(withEndFrame);
-    });
     describe('admission quote filter', () => {
       it('skips an Auto candidate whose tariff admission would refuse', async () => {
         const unpriced = createMockModel({
@@ -310,209 +277,6 @@ describe('RouterService', () => {
             prompt: 'A logo',
           }),
         ).rejects.toBeInstanceOf(ServiceUnavailableException);
-      });
-
-      it('routes voice to HeyGen Voice only while its reviewed character rate prices it', async () => {
-        const heygenVoice = SELF_HOSTED_MODELS.find(
-          (model) => model.key === MODEL_KEYS.HEYGEN_VOICE,
-        );
-        if (!heygenVoice)
-          throw new Error('The catalog must carry HeyGen Voice');
-        modelsService.findAllActive.mockResolvedValue([
-          createMockModel({
-            ...heygenVoice,
-            category: ModelCategory.VOICE,
-            isDefault: true,
-          }),
-        ]);
-        modelsService.findBillablePricingProfile.mockResolvedValue(
-          billableProfile({
-            key: MODEL_KEYS.HEYGEN_VOICE,
-            provider: 'heygen',
-            requiresReviewedRates: true,
-            reviewedPricing: {
-              currency: 'USD',
-              isFree: false,
-              rates: [
-                {
-                  component: 'output',
-                  unit: 'character',
-                  unitPriceUsd: 0.00003,
-                  when: {},
-                },
-              ],
-              reviewStatus: 'approved',
-              sourceUrl: 'https://example.test/rates',
-              verifiedAt: '2026-10-10T07:18:30.000Z',
-              version: 'rate-v1',
-            },
-          }),
-        );
-
-        const priced = await service.selectModel({
-          category: ModelCategory.VOICE,
-          prioritize: 'balanced',
-          prompt: 'Read this script aloud',
-        });
-        expect(priced.selectedModel).toBe(MODEL_KEYS.HEYGEN_VOICE);
-
-        // Until the rates are seeded, Auto must not pick a voice admission refuses.
-        modelsService.findBillablePricingProfile.mockResolvedValue(null);
-        await expect(
-          service.selectModel({
-            category: ModelCategory.VOICE,
-            prioritize: 'balanced',
-            prompt: 'Read this script aloud',
-          }),
-        ).rejects.toBeInstanceOf(ServiceUnavailableException);
-      });
-
-      describe('avatar engines', () => {
-        const avatarRow = (key: string) => {
-          const row = SELF_HOSTED_MODELS.find((model) => model.key === key);
-          if (!row) throw new Error(`The catalog must carry ${key}`);
-          return createMockModel({ ...row, category: ModelCategory.AVATAR });
-        };
-        const avatarRates = billableProfile({
-          key: MODEL_KEYS.HEYGEN_AVATAR_IV,
-          provider: 'heygen',
-          requiresReviewedRates: true,
-          reviewedPricing: {
-            currency: 'USD',
-            isFree: false,
-            rates: [
-              {
-                component: 'output',
-                isPerOutput: true,
-                unit: 'second',
-                unitPriceUsd: 0.0385,
-                when: { avatar_type: 'photo_avatar' },
-              },
-            ],
-            reviewStatus: 'approved',
-            sourceUrl: 'https://example.test/rates',
-            verifiedAt: '2026-10-10T07:18:30.000Z',
-            version: 'rate-v1',
-          },
-        });
-
-        beforeEach(() => {
-          modelsService.findAllActive.mockResolvedValue([
-            avatarRow(MODEL_KEYS.HEYGEN_AVATAR_IV),
-            avatarRow(MODEL_KEYS.HEYGEN_AVATAR_V),
-          ]);
-          modelsService.findBillablePricingProfile.mockResolvedValue(
-            avatarRates,
-          );
-        });
-
-        it('routes a photo avatar only to Avatar IV, even on quality', async () => {
-          const result = await service.selectModel({
-            category: ModelCategory.AVATAR,
-            eligibleModelKeys: [MODEL_KEYS.HEYGEN_AVATAR_IV],
-            prioritize: 'quality',
-            prompt: 'Welcome to the launch',
-          });
-
-          expect(result.selectedModel).toBe(MODEL_KEYS.HEYGEN_AVATAR_IV);
-          expect(result.alternatives).toEqual([]);
-        });
-
-        it('lets quality priority pick Avatar V for an eligible digital twin', async () => {
-          const result = await service.selectModel({
-            category: ModelCategory.AVATAR,
-            eligibleModelKeys: [
-              MODEL_KEYS.HEYGEN_AVATAR_IV,
-              MODEL_KEYS.HEYGEN_AVATAR_V,
-            ],
-            prioritize: 'quality',
-            prompt: 'Welcome to the launch',
-          });
-
-          expect(result.selectedModel).toBe(MODEL_KEYS.HEYGEN_AVATAR_V);
-        });
-
-        it('keeps the Avatar IV default on balanced priority', async () => {
-          const result = await service.selectModel({
-            category: ModelCategory.AVATAR,
-            eligibleModelKeys: [
-              MODEL_KEYS.HEYGEN_AVATAR_IV,
-              MODEL_KEYS.HEYGEN_AVATAR_V,
-            ],
-            prioritize: 'balanced',
-            prompt: 'Welcome to the launch',
-          });
-
-          expect(result.selectedModel).toBe(MODEL_KEYS.HEYGEN_AVATAR_IV);
-        });
-
-        it('refuses avatar routing while the engines have no reviewed rate', async () => {
-          modelsService.findBillablePricingProfile.mockResolvedValue(null);
-
-          await expect(
-            service.selectModel({
-              category: ModelCategory.AVATAR,
-              eligibleModelKeys: [MODEL_KEYS.HEYGEN_AVATAR_IV],
-              prompt: 'Welcome to the launch',
-            }),
-          ).rejects.toBeInstanceOf(ServiceUnavailableException);
-        });
-      });
-
-      it('routes Auto among the speech models that can speak the chosen voice', async () => {
-        const speechKeys = [
-          MODEL_KEYS.ELEVENLABS_V4,
-          MODEL_KEYS.ELEVENLABS_MULTILINGUAL_V2,
-          MODEL_KEYS.ELEVENLABS_FLASH_V2_5,
-        ];
-        modelsService.findAllActive.mockResolvedValue(
-          [...speechKeys, MODEL_KEYS.HEYGEN_VOICE].map((key) => {
-            const row = SELF_HOSTED_MODELS.find((model) => model.key === key);
-            if (!row) throw new Error(`The catalog must carry ${key}`);
-            return createMockModel({ ...row, category: ModelCategory.VOICE });
-          }),
-        );
-        modelsService.findBillablePricingProfile.mockImplementation(
-          async (key: string) =>
-            billableProfile({
-              key,
-              provider: key.split('/')[0],
-              requiresReviewedRates: true,
-              reviewedPricing: {
-                currency: 'USD',
-                isFree: false,
-                rates: [
-                  {
-                    component: 'output',
-                    unit: 'character',
-                    unitPriceUsd: 0.00008,
-                    when: {},
-                  },
-                ],
-                reviewStatus: 'approved',
-                sourceUrl: 'https://example.test/rates',
-                verifiedAt: '2026-10-14T09:00:00.000Z',
-                version: 'rate-v1',
-              },
-            }),
-        );
-        const route = (prioritize: 'quality' | 'speed' | 'cost') =>
-          service.selectModel({
-            category: ModelCategory.VOICE,
-            eligibleModelKeys: speechKeys,
-            prioritize,
-            prompt: 'Read this script aloud',
-          });
-
-        await expect(route('quality')).resolves.toMatchObject({
-          selectedModel: MODEL_KEYS.ELEVENLABS_V4,
-        });
-        await expect(route('speed')).resolves.toMatchObject({
-          selectedModel: MODEL_KEYS.ELEVENLABS_FLASH_V2_5,
-        });
-        await expect(route('cost')).resolves.toMatchObject({
-          selectedModel: MODEL_KEYS.ELEVENLABS_FLASH_V2_5,
-        });
       });
 
       it('does not quote categories admitted outside the media quote', async () => {
@@ -1675,36 +1439,6 @@ describe('RouterService', () => {
 
       expect(result).toEqual({
         key: 'registry-default',
-        source: 'registry-default',
-      });
-    });
-
-    it('skips a deactivated Legacy music pin for the active registry default', async () => {
-      modelsService.findAllActive.mockResolvedValue([
-        createMockModel({
-          category: ModelCategory.MUSIC,
-          isDefault: true,
-          key: MODEL_KEYS.FAL_LYRIA3_PRO,
-        }),
-      ]);
-      modelsService.findOne.mockResolvedValue(
-        createMockModel({
-          category: ModelCategory.MUSIC,
-          isActive: false,
-          key: MODEL_KEYS.REPLICATE_META_MUSICGEN,
-          lifecycle: ModelLifecycle.LEGACY,
-          succeededBy: MODEL_KEYS.FAL_LYRIA3_PRO,
-        }),
-      );
-
-      const result = await service.resolveModelKey({
-        candidates: [MODEL_KEYS.REPLICATE_META_MUSICGEN],
-        category: ModelCategory.MUSIC,
-        organizationId: 'org-1',
-      });
-
-      expect(result).toEqual({
-        key: MODEL_KEYS.FAL_LYRIA3_PRO,
         source: 'registry-default',
       });
     });

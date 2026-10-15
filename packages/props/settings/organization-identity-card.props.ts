@@ -3,10 +3,6 @@ export type OrganizationIdentityCardProps = {
 };
 
 export type OrganizationIdentityEditorProps = {
-  isGeneratingLogo: boolean;
-  logoUrl: string | null;
-  onGenerateLogo: () => void;
-  onUploadLogo: () => void;
   organization: {
     id: string;
     isOwner?: boolean;

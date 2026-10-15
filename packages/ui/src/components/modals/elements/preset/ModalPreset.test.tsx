@@ -3,10 +3,7 @@ import { ModelCategory } from '@genfeedai/contracts';
 import type { IPreset } from '@genfeedai/contracts/interfaces';
 import { fireEvent, render, screen } from '@testing-library/react';
 import ModalPreset from '@ui/modals/elements/preset/ModalPreset';
-import { NextIntlClientProvider } from 'next-intl';
-import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import ui from '../../../../../../../apps/app/messages/en/ui.json';
 
 const fixture = vi.hoisted(() => ({
   transform: null as ((data: PresetElementSchema) => unknown) | null,
@@ -61,14 +58,6 @@ vi.mock('@genfeedai/hooks/ui/use-crud-modal/use-crud-modal', async () => {
   };
 });
 
-function renderPreset(element: ReactNode) {
-  return render(
-    <NextIntlClientProvider locale="en" messages={{ ui }}>
-      {element}
-    </NextIntlClientProvider>,
-  );
-}
-
 describe('ModalPreset', () => {
   beforeEach(() => {
     fixture.transform = null;
@@ -87,7 +76,7 @@ describe('ModalPreset', () => {
   ])(
     'preserves existing preset ownership in another brand context: %j',
     (scope) => {
-      renderPreset(
+      render(
         <ModalPreset
           item={{ ...input, ...scope, id: 'preset-1' } as IPreset}
           onConfirm={vi.fn()}
@@ -109,14 +98,14 @@ describe('ModalPreset', () => {
     },
   );
   it('scopes newly created presets to the current organization and brand', () => {
-    renderPreset(<ModalPreset onConfirm={vi.fn()} />);
+    render(<ModalPreset onConfirm={vi.fn()} />);
     expect(fixture.transform?.(input)).toMatchObject({
       organizationId: 'current-org',
       brandId: 'current-brand',
     });
   });
   it('edits the generation prompt, duration and activation using the shared controls', () => {
-    renderPreset(
+    render(
       <ModalPreset
         item={
           {
@@ -146,33 +135,5 @@ describe('ModalPreset', () => {
       target: { value: '' },
     });
     expect(fixture.values?.().duration).toBeUndefined();
-  });
-  it('clears a stored duration when an edit empties it', () => {
-    renderPreset(
-      <ModalPreset
-        item={{ ...input, id: 'preset-1', duration: 5 } as IPreset}
-        onConfirm={vi.fn()}
-      />,
-    );
-    expect(fixture.transform?.({ ...input, duration: undefined })).toEqual({
-      ...input,
-      duration: null,
-    });
-    expect(fixture.transform?.({ ...input, duration: 8 })).toEqual({
-      ...input,
-      duration: 8,
-    });
-  });
-  it('omits duration for an edit of a preset that never had one', () => {
-    renderPreset(
-      <ModalPreset
-        item={{ ...input, id: 'preset-1' } as IPreset}
-        onConfirm={vi.fn()}
-      />,
-    );
-    expect(fixture.transform?.({ ...input, duration: undefined })).toEqual({
-      ...input,
-      duration: undefined,
-    });
   });
 });

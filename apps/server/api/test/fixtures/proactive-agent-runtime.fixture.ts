@@ -42,15 +42,14 @@ import {
   WORKFLOW_ENGINE_ADAPTER,
   WORKFLOW_EXECUTOR,
 } from '@api/collections/workflows/workflows.tokens';
-import { OrganizationModuleAccessService } from '@api/common/organization-modules/organization-module-access.service';
 import { PostLifecycleService } from '@api/post-lifecycle/post-lifecycle.service';
 import { AutonomousPublishPolicyService } from '@api/services/autonomous-publishing/autonomous-publish-policy.service';
+import { BatchGenerationCreationService } from '@api/services/batch-generation/batch-generation-creation.service';
+import { BatchGenerationProcessingService } from '@api/services/batch-generation/batch-generation-processing.service';
+import { BatchGenerationReviewService } from '@api/services/batch-generation/batch-generation-review.service';
+import { BatchGenerationSummaryService } from '@api/services/batch-generation/batch-generation-summary.service';
+import { BatchReviewLockService } from '@api/services/batch-generation/batch-review-lock';
 import { CacheService } from '@api/services/cache/cache.service';
-import { TurboRunCreationService } from '@api/services/turbo-run/turbo-run-creation.service';
-import { TurboRunProcessingService } from '@api/services/turbo-run/turbo-run-processing.service';
-import { TurboRunReviewService } from '@api/services/turbo-run/turbo-run-review.service';
-import { TurboRunReviewLockService } from '@api/services/turbo-run/turbo-run-review-lock';
-import { TurboRunSummaryService } from '@api/services/turbo-run/turbo-run-summary.service';
 import {
   assertOwnedPinsUnchanged,
   assertOwnedRetentionUsers,
@@ -161,18 +160,13 @@ export class ProactiveAgentRuntimeFixture {
   readonly runner: SystemWorkflowRunnerService;
   readonly queueService: WorkflowExecutionQueueService;
   readonly publishQueue: ScheduledPostWorkflowQueueService;
-  readonly review: TurboRunReviewService;
-  readonly reviewLocks: TurboRunReviewLockService;
+  readonly review: BatchGenerationReviewService;
+  readonly reviewLocks: BatchReviewLockService;
   readonly policy: AutonomousPublishPolicyService;
-  readonly creation: TurboRunCreationService;
-  readonly processing: TurboRunProcessingService;
+  readonly creation: BatchGenerationCreationService;
+  readonly processing: BatchGenerationProcessingService;
   autopilot: AgentAutopilotWorkflowService;
   readonly credits = { getOrganizationCreditsBalance: async () => 1000 };
-  // The runner and the queue admit work through the same module-access service.
-  // This fixture seeds no organization settings, so admission is a recorded
-  // pass-through rather than a second settings reader.
-  readonly moduleAccess: Pick<OrganizationModuleAccessService, 'assertAccess'> =
-    { assertAccess: vi.fn().mockResolvedValue(undefined) };
   readonly schedules: PlatformWorkflowSchedulesService;
   readonly cache: CacheService;
   readonly databaseUrl: string;
@@ -244,7 +238,7 @@ export class ProactiveAgentRuntimeFixture {
       this.queues[3],
       this.queues[4],
       this.logger as never,
-      this.moduleAccess as never,
+      { assertAccess: vi.fn().mockResolvedValue(undefined) } as never,
     );
     this.publishQueue = new ScheduledPostWorkflowQueueService(
       this.queueService,
@@ -282,7 +276,6 @@ export class ProactiveAgentRuntimeFixture {
           };
         if (token === WorkflowExecutionsService) return this.executions;
         if (token === WorkflowExecutionQueueService) return this.queueService;
-        if (token === OrganizationModuleAccessService) return this.moduleAccess;
         throw new Error(
           `Unexpected runtime fixture dependency: ${String(token)}`,
         );
@@ -315,8 +308,11 @@ export class ProactiveAgentRuntimeFixture {
       approvals,
       this.publishQueue,
     );
-    const summary = new TurboRunSummaryService(this.prisma as never, approvals);
-    this.reviewLocks = new TurboRunReviewLockService(
+    const summary = new BatchGenerationSummaryService(
+      this.prisma as never,
+      approvals,
+    );
+    this.reviewLocks = new BatchReviewLockService(
       {
         get: (key: string) =>
           key === 'DATABASE_URL' ? this.databaseUrl : undefined,
@@ -327,7 +323,7 @@ export class ProactiveAgentRuntimeFixture {
       this.prisma as never,
       this.activity as never,
     );
-    this.review = new TurboRunReviewService(
+    this.review = new BatchGenerationReviewService(
       this.prisma as never,
       this.logger as never,
       artifacts,
@@ -338,7 +334,7 @@ export class ProactiveAgentRuntimeFixture {
       this.activity as never,
       this.reviewLocks,
     );
-    this.creation = new TurboRunCreationService(
+    this.creation = new BatchGenerationCreationService(
       this.prisma as never,
       this.logger as never,
       {
@@ -355,7 +351,7 @@ export class ProactiveAgentRuntimeFixture {
       this.cache,
       summary,
     );
-    this.processing = new TurboRunProcessingService(
+    this.processing = new BatchGenerationProcessingService(
       this.prisma as never,
       this.logger as never,
       posts,
@@ -409,7 +405,6 @@ export class ProactiveAgentRuntimeFixture {
       {} as never,
       {} as never,
       {} as never,
-      { canStartWork: vi.fn() } as never,
     );
 
     const delivery = {
@@ -545,7 +540,7 @@ export class ProactiveAgentRuntimeFixture {
         const topics = winners?.length
           ? [winners[0]]
           : (strategy.topics as string[]);
-        const turboRun = await this.creation.createTurboRun(
+        const batch = await this.creation.createBatch(
           {
             brandId: String(request.brandId),
             count: 1,
@@ -568,13 +563,13 @@ export class ProactiveAgentRuntimeFixture {
           undefined,
           String(request.strategyId),
         );
-        await this.processing.processTurboRun(
-          turboRun.id,
+        await this.processing.processBatch(
+          batch.id,
           action.context.organizationId,
         );
-        const items = await this.prisma.turboRunItem.findMany({
+        const items = await this.prisma.batchItem.findMany({
           where: {
-            turboRunId: turboRun.id,
+            batchId: batch.id,
             organizationId: action.context.organizationId,
             isDeleted: false,
           },
@@ -605,7 +600,7 @@ export class ProactiveAgentRuntimeFixture {
         });
         return {
           decision: 'final',
-          final: { turboRunId: turboRun.id },
+          final: { batchId: batch.id },
           state,
           toolItems: [],
         };
@@ -1121,8 +1116,8 @@ export class ProactiveAgentRuntimeFixture {
               data: { publishApprovalId: null, reviewVersionPinId: null },
             }),
           () => this.prisma.publishApproval.deleteMany({ where }),
-          () => this.prisma.turboRunItem.deleteMany({ where }),
-          () => this.prisma.turboRun.deleteMany({ where }),
+          () => this.prisma.batchItem.deleteMany({ where }),
+          () => this.prisma.batch.deleteMany({ where }),
           () => this.prisma.contentPerformance.deleteMany({ where }),
           () => this.prisma.postAnalytics.deleteMany({ where }),
           () => this.prisma.agentPublishAudit.deleteMany({ where }),

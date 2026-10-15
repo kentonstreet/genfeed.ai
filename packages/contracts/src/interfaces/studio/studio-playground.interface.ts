@@ -148,7 +148,7 @@ export interface StudioPlaygroundTypeConfig {
   elementsType: 'all' | 'image' | 'music' | 'video' | 'voice';
   ingredientCategory: IngredientCategory;
   label: string;
-  /** `null` for types that have no router-backed model catalog (avatar). */
+  /** `null` for types that have no router-backed model catalog (avatar, voice). */
   modelCategory: ModelCategory | null;
   /** Socket topic + REST collection segment, e.g. `images`. */
   resourceSegment: string;
@@ -250,13 +250,6 @@ export interface StudioPlaygroundJob {
   phase?: 'submitting' | 'queued' | 'generating' | 'saving' | 'cancelled';
   createdAt: number;
   error?: string;
-  /**
-   * Why a failed job stopped, when the client can act on it. `brand_enhancement`
-   * means the request stopped before any provider call or credit use because
-   * brand prompt enhancement failed; the card then offers an explicit
-   * "generate without brand" retry. Not persisted across a reload.
-   */
-  failure?: 'brand_enhancement';
   height?: number;
   id: string;
   /**
@@ -372,11 +365,7 @@ export type StudioGenerateDraftSaveStatus =
  * admission charges; `unavailableReason` is that quote's code when it declined.
  */
 export interface StudioGenerationCostEstimate {
-  /** Avatar quotes only: a BYOK render holds no platform credits. */
-  billingMode?: 'byok' | 'platform';
   credits: number | null;
-  /** Avatar quotes only: the clip length a per-second hold is estimated at. */
-  estimatedSeconds?: number;
   status: 'auto' | 'loading' | 'unavailable' | 'estimated';
   unavailableReason?: AgentGenerationQuoteUnavailableReason;
 }

@@ -30,7 +30,6 @@ const mocks = vi.hoisted(() => ({
   search: '',
   settings: {
     hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
     moduleOverrides: { motion: true, editor: true },
   } as Record<string, unknown>,
   projectData: undefined as Record<string, unknown> | undefined,
@@ -146,7 +145,6 @@ beforeEach(() => {
   mocks.search = '';
   mocks.settings = {
     hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
     moduleOverrides: { motion: true, editor: true },
   };
   mocks.projectData = undefined;
@@ -156,11 +154,7 @@ beforeEach(() => {
 });
 describe('Motion quote review', () => {
   it('hides creation and quote controls under disabled cloud defaults', () => {
-    mocks.settings = {
-      hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
-      moduleOverrides: {},
-    };
+    mocks.settings = { hasOrganizationBilling: true, moduleOverrides: {} };
     render(<MotionContent />);
     expect(screen.queryByLabelText('prompt')).not.toBeInTheDocument();
     expect(
@@ -170,11 +164,7 @@ describe('Motion quote review', () => {
     expect(mocks.submit).not.toHaveBeenCalled();
   });
   it('preserves saved outputs and source reads while new Motion work is disabled', async () => {
-    mocks.settings = {
-      hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
-      moduleOverrides: {},
-    };
+    mocks.settings = { hasOrganizationBilling: true, moduleOverrides: {} };
     mocks.search = 'project=saved';
     mocks.projectData = {
       id: 'saved',
@@ -235,13 +225,11 @@ describe('Motion quote review', () => {
     fireEvent.click(screen.getByLabelText('acknowledge'));
     mocks.settings = {
       hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
       moduleOverrides: { motion: false },
     };
     rerender(<MotionContent />);
     mocks.settings = {
       hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
       moduleOverrides: { motion: true },
     };
     rerender(<MotionContent />);
@@ -265,7 +253,6 @@ describe('Motion quote review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'getQuote' }));
     mocks.settings = {
       hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
       moduleOverrides: { motion: false },
     };
     rerender(<MotionContent />);
@@ -274,7 +261,6 @@ describe('Motion quote review', () => {
     });
     mocks.settings = {
       hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
       moduleOverrides: { motion: true },
     };
     rerender(<MotionContent />);

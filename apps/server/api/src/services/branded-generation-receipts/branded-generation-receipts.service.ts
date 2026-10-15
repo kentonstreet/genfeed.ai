@@ -15,7 +15,6 @@ import { BrandedGenerationReceiptAccessService } from '@api/services/branded-gen
 import type {
   BrandedGenerationActorV1,
   BrandedGenerationArtifactCompletionV1,
-  BrandedGenerationBlockReasonV1,
   BrandedGenerationDispatchInputV1,
   BrandedGenerationDispatchRecoveryV1,
   BrandedGenerationFailureInputV1,
@@ -33,13 +32,7 @@ import {
   parseBrandedGenerationCompilerRecipeV1,
 } from '@api/services/branded-generation-receipts/branded-generation-recompile-codec.util';
 import {
-  blockExpiredDispatches,
-  dispatchWindowCutoff,
-  findExpiredResolvedReceipts,
-  mutationSchema,
-  recordReceiptEvent,
-} from '@api/services/branded-generation-receipts/branded-generation-recovery.util';
-import {
+  BRANDED_GENERATION_DISPATCH_WINDOW_MS,
   type BrandedGenerationOperationKindV1,
   canTransitionBrandedGenerationStateV1,
 } from '@api/services/branded-generation-receipts/branded-generation-state.util';
@@ -67,6 +60,7 @@ import {
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { z } from 'zod';
 import {
   decodeBrandedGenerationReceiptCursorV1,
   encodeBrandedGenerationReceiptCursorV1,
@@ -78,16 +72,27 @@ import {
   projectBrandedGenerationArtifactBindingV1,
   projectBrandedGenerationBlockV1,
   projectBrandedGenerationCancellationV1,
-  projectBrandedGenerationCostsV1,
   projectBrandedGenerationDispatchV1,
   projectBrandedGenerationExpiredDispatchV1,
   projectBrandedGenerationFailureV1,
-  projectBrandedGenerationUnboundCompletionV1,
   projectBrandedGenerationValidationV1,
   validateBrandedGenerationArtifactV1,
   withDiagnostic,
 } from './branded-generation-projection.util';
 
+const mutationSchema = z.strictObject({
+  operationKey: z
+    .string()
+    .min(1)
+    .max(256)
+    .refine((value) =>
+      [...value].every((char) => {
+        const code = char.charCodeAt(0);
+        return code > 31 && (code < 127 || code > 159);
+      }),
+    ),
+  expectedRevision: z.number().int().nonnegative().max(2147483647),
+});
 @Injectable()
 export class BrandedGenerationReceiptsService {
   constructor(
@@ -121,15 +126,12 @@ export class BrandedGenerationReceiptsService {
   private async lockBrand(
     tx: Prisma.TransactionClient,
     actor: BrandedGenerationActorV1,
-    isSystem = false,
   ) {
     const rows = await tx.$queryRaw<
       Array<{ id: string }>
-    >`SELECT id FROM brands WHERE id=${actor.brandId} AND "organizationId"=${actor.organizationId} AND ("isDeleted"=false OR ${isSystem}) FOR KEY SHARE`;
+    >`SELECT id FROM brands WHERE id=${actor.brandId} AND "organizationId"=${actor.organizationId} AND "isDeleted"=false FOR KEY SHARE`;
     if (!rows.length) throw new ForbiddenException('receipt_access_denied');
-    return isSystem
-      ? { isOwnerOrAdmin: true }
-      : this.access.assertBrand(actor, tx);
+    return this.access.assertBrand(actor, tx);
   }
   private async current(
     tx: Prisma.TransactionClient,
@@ -281,15 +283,32 @@ export class BrandedGenerationReceiptsService {
         'original',
         prepared,
       );
-      await recordReceiptEvent(
-        tx,
-        actor,
-        receipt,
-        'create',
-        requestHash,
-        'create',
-      );
+      await this.event(tx, actor, receipt, 'create', requestHash, 'create');
       return { receipt, replayed: false };
+    });
+  }
+  private async event(
+    tx: Prisma.TransactionClient,
+    actor: BrandedGenerationActorV1,
+    receipt: BrandedGenerationReceiptV1,
+    operationKey: string,
+    operationHash: string,
+    type: string,
+  ) {
+    await tx.brandedGenerationReceiptEvent.create({
+      data: {
+        id: randomUUID(),
+        receiptId: receipt.id,
+        organizationId: actor.organizationId,
+        brandId: actor.brandId,
+        actorId: actor.actorId,
+        operationKey,
+        operationHash,
+        revision: receipt.revision,
+        type,
+        projection: toPrismaJson(receipt),
+        isDeleted: receipt.isDeleted,
+      },
     });
   }
   async get(
@@ -409,7 +428,6 @@ export class BrandedGenerationReceiptsService {
       tx: Prisma.TransactionClient,
       receipt: BrandedGenerationReceiptV1,
     ) => Promise<BrandedGenerationReceiptV1>,
-    isSystem = false,
   ): Promise<BrandedGenerationMutationResultV1> {
     this.counter(value.expectedRevision);
     const mutation = mutationSchema.parse(value);
@@ -417,7 +435,7 @@ export class BrandedGenerationReceiptsService {
       throw new BadRequestException('receipt_operation_reserved');
     const operationHash = hashBrandedGenerationOperationV1(kind, body);
     return this.transaction(async (tx) => {
-      const permission = await this.lockBrand(tx, actor, isSystem);
+      const permission = await this.lockBrand(tx, actor);
       await tx.$queryRaw`SELECT id FROM branded_generation_receipts WHERE id=${id} AND "organizationId"=${actor.organizationId} AND "brandId"=${actor.brandId} FOR UPDATE`;
       // Scoped tombstone lookup is required solely for authorized exact delete replay.
       const row = await tx.brandedGenerationReceipt.findFirst({
@@ -496,7 +514,7 @@ export class BrandedGenerationReceiptsService {
           updatedAt: new Date(receipt.updatedAt),
         },
       });
-      await recordReceiptEvent(
+      await this.event(
         tx,
         actor,
         receipt,
@@ -751,7 +769,7 @@ export class BrandedGenerationReceiptsService {
     actor: BrandedGenerationActorV1,
     id: string,
     mutation: BrandedGenerationMutationV1,
-    reasonCode: BrandedGenerationBlockReasonV1,
+    reasonCode: 'provider_attempt_ref_unavailable',
   ): Promise<BrandedGenerationMutationResultV1> {
     return this.mutate(
       actor,
@@ -768,7 +786,10 @@ export class BrandedGenerationReceiptsService {
     query: { limit: number; now?: Date },
   ): Promise<BrandedGenerationDispatchRecoveryV1> {
     this.limit(query.limit);
-    const cutoff = dispatchWindowCutoff(query.now);
+    const cutoff = new Date(
+      (query.now ?? new Date()).getTime() -
+        BRANDED_GENERATION_DISPATCH_WINDOW_MS,
+    );
     const rows = await this.transaction(async (tx) => {
       const permission = await this.access.assertBrand(actor, tx);
       return tx.brandedGenerationReceipt.findMany({
@@ -781,62 +802,40 @@ export class BrandedGenerationReceiptsService {
         take: query.limit,
       });
     });
-    return blockExpiredDispatches(rows, (row) =>
-      this.blockExpired(actor, row, cutoff, false),
-    );
-  }
-  /**
-   * Scheduled sweep: blocks every receipt that stayed `resolved` past the
-   * dispatch window, oldest first, without a member session. A receipt whose
-   * brand or actor was removed meanwhile is still recovered from its own
-   * scope. Never retries and never dispatches.
-   */
-  async recoverExpiredDispatchesSystem(query: {
-    /** Receipts a previous page already skipped, so they cannot starve the rest. */
-    excludeIds?: readonly string[];
-    limit: number;
-    now?: Date;
-  }): Promise<BrandedGenerationDispatchRecoveryV1> {
-    this.limit(query.limit);
-    const cutoff = dispatchWindowCutoff(query.now);
-    const rows = await findExpiredResolvedReceipts(
-      this.prisma,
-      cutoff,
-      query.limit,
-      query.excludeIds,
-    );
-    return blockExpiredDispatches(rows, (row) =>
-      this.blockExpired(
-        {
-          actorId: row.actorId,
-          brandId: row.brandId,
-          organizationId: row.organizationId,
-        },
-        row,
-        cutoff,
-        true,
-      ),
-    );
-  }
-  async blockExpired(
-    actor: BrandedGenerationActorV1,
-    row: { id: string; revision: number },
-    cutoff: Date,
-    isSystem: boolean,
-  ): Promise<void> {
-    await this.mutate(
-      actor,
-      row.id,
-      {
-        operationKey: `dispatch-window-expired:${row.id}:${row.revision}`,
-        expectedRevision: row.revision,
-      },
-      'block',
-      { reasonCode: 'dispatch_window_expired' },
-      async (_tx, current) =>
-        projectBrandedGenerationExpiredDispatchV1(current, cutoff),
-      isSystem,
-    );
+    const result: BrandedGenerationDispatchRecoveryV1 = {
+      blocked: [],
+      skipped: [],
+    };
+    for (const row of rows) {
+      try {
+        await this.mutate(
+          actor,
+          row.id,
+          {
+            operationKey: `dispatch-window-expired:${row.id}:${row.revision}`,
+            expectedRevision: row.revision,
+          },
+          'block',
+          { reasonCode: 'dispatch_window_expired' },
+          async (_tx, current) =>
+            projectBrandedGenerationExpiredDispatchV1(current, cutoff),
+        );
+        result.blocked.push(row.id);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          [
+            'receipt_version_conflict',
+            'receipt_state_conflict',
+            'request_payload_conflict',
+            'receipt_deleted',
+          ].includes(error.message)
+        )
+          result.skipped.push(row.id);
+        else throw error;
+      }
+    }
+    return result;
   }
   async bindArtifact(
     actor: BrandedGenerationActorV1,
@@ -906,38 +905,6 @@ export class BrandedGenerationReceiptsService {
       'fail',
       { reasonCode: input.reasonCode, completedAt: input.completedAt },
       async (_tx, current) => projectBrandedGenerationFailureV1(current, input),
-    );
-  }
-  async blockUnboundCompletion(
-    actor: BrandedGenerationActorV1,
-    id: string,
-    mutation: BrandedGenerationMutationV1,
-    input: BrandedGenerationFailureInputV1,
-  ): Promise<BrandedGenerationMutationResultV1> {
-    return this.mutate(
-      actor,
-      id,
-      mutation,
-      'block',
-      { reasonCode: input.reasonCode, completedAt: input.completedAt },
-      async (_tx, current) =>
-        projectBrandedGenerationUnboundCompletionV1(current, input),
-    );
-  }
-  async recordCosts(
-    actor: BrandedGenerationActorV1,
-    id: string,
-    mutation: BrandedGenerationMutationV1,
-    costs: BrandedGenerationReceiptV1['costs'],
-  ): Promise<BrandedGenerationMutationResultV1> {
-    return this.mutate(
-      actor,
-      id,
-      mutation,
-      'record_costs',
-      // JSON round-trip drops absent optional fields before canonical hashing.
-      { costs: JSON.parse(JSON.stringify(costs)) },
-      async (_tx, current) => projectBrandedGenerationCostsV1(current, costs),
     );
   }
   async recordValidation(

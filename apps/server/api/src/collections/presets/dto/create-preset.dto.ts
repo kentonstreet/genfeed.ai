@@ -61,12 +61,8 @@ export class CreatePresetDto extends ElementDto {
   @IsNumber({ allowInfinity: false, allowNaN: false })
   @Min(0.01)
   @Max(3600)
-  @ApiProperty({
-    description: 'Video duration in seconds; null clears it on update',
-    nullable: true,
-    required: false,
-  })
-  duration?: number | null;
+  @ApiProperty({ description: 'Video duration in seconds', required: false })
+  duration?: number;
 
   @IsOptional()
   @IsString()

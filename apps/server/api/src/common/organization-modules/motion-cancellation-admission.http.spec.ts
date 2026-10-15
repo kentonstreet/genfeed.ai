@@ -14,14 +14,6 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** Admin → Flags with nothing released: only Playground and Storyboard admit work. */
-const UNRELEASED_PLATFORM = {
-  getFeatureSettingsState: async () => ({
-    isResolved: true,
-    settings: { flags: {} },
-  }),
-};
-
 vi.mock('@genfeedai/config', async (original) => ({
   ...(await original<typeof import('@genfeedai/config')>()),
   hasOrganizationBilling: () => true,
@@ -55,7 +47,6 @@ describe('Motion existing-work cancellation admission', () => {
         organizationSetting: { findUnique: findSettings },
       } as never,
       { isSubscriptionGatedFresh: paidGrant } as never,
-      UNRELEASED_PLATFORM as never,
     );
     const fixtureAuth = {
       canActivate(context: ExecutionContext) {

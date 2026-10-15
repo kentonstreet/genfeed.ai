@@ -3,7 +3,11 @@ import { WorkflowMediaGenerationExecutorRegistrarService } from '@api/collection
 import { WorkflowMediaProviderPlanService } from '@api/collections/workflows/services/workflow-media-provider-plan.service';
 import * as imageGenerationBriefRegistry from '@api/services/generation-brief/image-generation-brief-registry';
 import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
-import { ByokProvider, IngredientStatus } from '@genfeedai/contracts';
+import {
+  ByokProvider,
+  IngredientCategory,
+  IngredientStatus,
+} from '@genfeedai/contracts';
 import { QWEN_IMAGE_MODEL_KEY } from '@genfeedai/contracts/api-types/contracts/generation-capability-profile.contract';
 import { MODEL_KEYS } from '@genfeedai/contracts/constants';
 import {
@@ -26,6 +30,9 @@ vi.mock(
   '@api/services/integrations/elevenlabs/services/elevenlabs.service',
   () => ({ ElevenLabsService: class {} }),
 );
+vi.mock('@api/services/integrations/heygen/services/heygen.service', () => ({
+  HeyGenService: class {},
+}));
 vi.mock(
   '@api/services/integrations/replicate/services/replicate.service',
   () => ({ ReplicateService: class {} }),
@@ -91,7 +98,9 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       { log: vi.fn() } as never,
       plan,
       undefined,
+      undefined,
       { runModel } as never,
+      undefined,
       { resolveApiKey } as never,
     ).register(engine);
     const executor = getActionExecutor(engine, 'videoGen');
@@ -176,7 +185,9 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         >[4],
       ),
       undefined,
+      undefined,
       replicateService as never,
+      filesClientService as never,
     ).register(engine);
 
     await getActionExecutor(engine, 'videoGen')?.(
@@ -208,7 +219,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
       MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDANCE_2_5,
       expect.objectContaining({
         aspect_ratio: 'adaptive',
-        duration: 8,
+        duration: -1,
         reference_videos: ['https://s3.example.com/source-video-1?sig=signed'],
       }),
       undefined,
@@ -271,6 +282,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         >[3],
         undefined,
       ),
+      undefined,
       undefined,
       replicateService as never,
     ).register(engine);
@@ -377,7 +389,9 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         undefined,
       ),
       undefined,
+      undefined,
       replicateService as never,
+      undefined,
       byokService as never,
     ).register(engine);
 
@@ -465,7 +479,9 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         undefined,
       ),
       undefined,
+      undefined,
       replicateService as never,
+      undefined,
       byokService as never,
     ).register(engine);
 
@@ -549,6 +565,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         undefined,
       ),
       undefined,
+      undefined,
       replicateService as never,
     ).register(engine);
 
@@ -624,6 +641,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         undefined,
         undefined,
       ),
+      undefined,
       undefined,
       replicateService as never,
     ).register(engine);
@@ -730,6 +748,7 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
           undefined,
           undefined,
         ),
+        undefined,
         undefined,
         replicateService as never,
       ).register(engine);
@@ -950,6 +969,197 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
     });
   });
 
+  it.each(['granted', 'denied'] as const)(
+    'delegates activated lip-sync media to the scoped issuer (%s)',
+    async (state) => {
+      const helper = {
+        requireMediaAsset: vi.fn(async (value: unknown) => ({
+          id: String(value),
+          brandId: 'brand-1',
+          category:
+            value === 'video-asset'
+              ? IngredientCategory.VIDEO
+              : IngredientCategory.AUDIO,
+          storageKey: 'untrusted-stale-suffix',
+          storageType: value === 'video-asset' ? 'videos' : 'audios',
+        })),
+        readConfigString: () => undefined,
+        createAndLinkProcessingOutput: vi.fn(
+          async (args: {
+            runProvider: (
+              id: string,
+              continuationId: string,
+            ) => Promise<unknown>;
+          }) => {
+            await args.runProvider('output-1', 'continuation-1');
+            return { ingredientId: 'output-1', metadataId: 'metadata-1' };
+          },
+        ),
+        buildVideoIngredientUrl: () => 'https://legacy.test/video/output',
+        wrapEngineExecutor,
+      } as unknown as WorkflowEngineExecutorHelperService;
+      const issuer = {
+        issueServerPublish: vi.fn(
+          async (_organizationId: string, ids: readonly string[]) => {
+            if (state === 'denied') throw new Error('Scoped media unavailable');
+            return new Map(
+              ids.map((id) => [
+                id,
+                `https://authorized.test/${id}?signature=grant`,
+              ]),
+            );
+          },
+        ),
+      };
+      const files = { getPresignedDownloadUrl: vi.fn() };
+      const replicate = { runModel: vi.fn().mockResolvedValue('prediction-1') };
+      const logger = { log: vi.fn(), warn: vi.fn() };
+      const engine = new WorkflowEngine();
+      new WorkflowMediaGenerationExecutorRegistrarService(
+        helper,
+        logger as never,
+        new WorkflowMediaProviderPlanService(
+          helper,
+          logger as never,
+          personasServiceStub(),
+          undefined,
+          files as never,
+        ),
+        undefined,
+        undefined,
+        replicate as never,
+        files as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { isAuthorizedMediaDeliveryEnabled: true } as never,
+        issuer as never,
+      ).register(engine);
+      const pending = getActionExecutor(engine, 'lipSync')?.(
+        {
+          config: { mode: 'video', model: 'sync/lipsync-2' },
+          id: 'lip-sync-1',
+          inputs: [],
+          label: 'Lip sync',
+          type: 'lipSync',
+        },
+        new Map([
+          ['video', 'video-asset'],
+          ['audio', 'audio-asset'],
+        ]),
+        {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          userId: 'user-1',
+          workflowId: 'workflow-1',
+          workflowVersionId: 'version-1',
+        },
+      );
+      if (state === 'denied') {
+        await expect(pending).rejects.toThrow('Scoped media unavailable');
+        expect(replicate.runModel).not.toHaveBeenCalled();
+      } else {
+        await pending;
+        expect(replicate.runModel).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({
+            video: 'https://authorized.test/video-asset?signature=grant',
+            audio: 'https://authorized.test/audio-asset?signature=grant',
+          }),
+          undefined,
+          'continuation-1',
+        );
+      }
+      expect(issuer.issueServerPublish).toHaveBeenCalledWith('org-1', [
+        'video-asset',
+      ]);
+      expect(issuer.issueServerPublish).toHaveBeenCalledWith('org-1', [
+        'audio-asset',
+      ]);
+      expect(files.getPresignedDownloadUrl).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects lip-sync when the source media and audio belong to different brands', async () => {
+    const requireMediaAsset = vi.fn(async (value: unknown) => {
+      if (value === 'video-asset') {
+        return {
+          brandId: 'brand-1',
+          category: 'video',
+          id: 'video-asset',
+          storageKey: 'video-key',
+          storageType: 'videos',
+        };
+      }
+      if (value === 'audio-asset') {
+        return {
+          brandId: 'brand-2',
+          category: 'audio',
+          id: 'audio-asset',
+          storageKey: 'audio-key',
+          storageType: 'audios',
+        };
+      }
+      throw new Error(`Unexpected media reference: ${String(value)}`);
+    });
+    const helper = {
+      readConfigString: () => undefined,
+      requireMediaAsset,
+      wrapEngineExecutor,
+    } as unknown as WorkflowEngineExecutorHelperService;
+    const replicateService = { runModel: vi.fn() };
+    const filesClientService = { getPresignedDownloadUrl: vi.fn() };
+    const engine = new WorkflowEngine();
+
+    new WorkflowMediaGenerationExecutorRegistrarService(
+      helper,
+      { log: vi.fn() } as never,
+      new WorkflowMediaProviderPlanService(
+        helper,
+        { log: vi.fn() } as unknown as ConstructorParameters<
+          typeof WorkflowMediaProviderPlanService
+        >[1],
+        personasServiceStub(),
+        undefined,
+        filesClientService as unknown as ConstructorParameters<
+          typeof WorkflowMediaProviderPlanService
+        >[4],
+      ),
+      undefined,
+      undefined,
+      replicateService as never,
+      filesClientService as never,
+    ).register(engine);
+
+    await expect(
+      getActionExecutor(engine, 'lipSync')?.(
+        {
+          config: {},
+          id: 'lip-sync-1',
+          inputs: [],
+          label: 'Lip sync',
+          type: 'lipSync',
+        },
+        new Map([
+          ['video', 'video-asset'],
+          ['audio', 'audio-asset'],
+        ]),
+        {
+          organizationId: 'org-1',
+          runId: 'run-1',
+          userId: 'user-1',
+          workflowId: 'workflow-1',
+          workflowVersionId: 'version-1',
+        },
+      ),
+    ).rejects.toThrow(
+      'Lip-sync source media and audio must belong to the same brand',
+    );
+
+    expect(filesClientService.getPresignedDownloadUrl).not.toHaveBeenCalled();
+  });
+
   it('marks the pending text-to-speech ingredient failed when BYOK key resolution rejects', async () => {
     const patchIngredient = vi.fn();
     const createWorkflowOutputIngredient = vi.fn().mockResolvedValue({
@@ -981,7 +1191,9 @@ describe('WorkflowMediaGenerationExecutorRegistrarService', () => {
         undefined,
         undefined,
       ),
+      undefined,
       elevenLabsService as never,
+      undefined,
       undefined,
       byokService as never,
     ).register(engine);

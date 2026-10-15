@@ -1,20 +1,12 @@
 import { createHash } from 'node:crypto';
 import { CredentialsService } from '@api/collections/credentials/services/credentials.service';
-import { captureAndDetectNativeSourceExposureObservation } from '@api/collections/outliers/services/breakout-collected-signal.util';
-import { prepareNativeCollectedExposure } from '@api/collections/outliers/services/native-source-exposure-observation.util';
 import { OutliersService } from '@api/collections/outliers/services/outliers.service';
-import {
-  orderedPostIngredientLinks,
-  replacePostIngredientLinks,
-} from '@api/collections/posts/services/post-ingredient-links.util';
 import type { SourcePostDocument } from '@api/collections/source-posts/schemas/source-post.schema';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { scopedWhere } from '@api/index';
-import type { SourceCollectResult } from '@api/services/source-collector/source-collector.types';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   CredentialPlatform,
-  isPlatform,
   PostVisibility,
   SocialSourcePlatform,
   SocialSourceType,
@@ -114,7 +106,7 @@ type PrismaWithSourcePosts = Omit<
   }>;
   post: PrismaDelegate<{
     id: string;
-    ingredientLinks: Array<{ ingredient: { id: string } }>;
+    ingredients?: Array<{ id: string }>;
     label?: string | null;
     status?: string | null;
   }>;
@@ -235,7 +227,6 @@ export class SourcePostsService {
   async upsertCollectedPosts(
     source: SourceRecord,
     posts: SourcePostCreateInput[],
-    collection?: SourceCollectResult,
   ): Promise<SourcePostUpsertResult> {
     const accountSource = await this.prisma.socialSource.findFirst({
       where: {
@@ -244,7 +235,7 @@ export class SourcePostsService {
         brandId: source.brandId,
         isDeleted: false,
       },
-      select: { sourceType: true, credentialId: true },
+      select: { sourceType: true },
     });
     if (!accountSource)
       throw new NotFoundException({ message: 'Source not found' });
@@ -291,45 +282,6 @@ export class SourcePostsService {
           },
         },
       });
-      if (
-        accountSource.sourceType === SocialSourceType.OWN_ACCOUNT &&
-        accountSource.credentialId &&
-        collection?.breakoutAttempt &&
-        isPlatform(source.platform)
-      ) {
-        const platform = source.platform;
-        const credentialId = accountSource.credentialId;
-        const attempt = collection.breakoutAttempt;
-        const evidence = collection.posts.find(
-          (item) => item.id === externalId,
-        );
-        if (evidence && attempt.provider === collection.provider) {
-          await this.prisma.$transaction(
-            async (tx) => {
-              const prepared = await prepareNativeCollectedExposure(
-                tx,
-                {
-                  organizationId: source.organizationId,
-                  brandId: source.brandId,
-                  credentialId,
-                  platform,
-                  postId: null,
-                  nativeSourcePostId: saved.id,
-                  externalId,
-                },
-                attempt,
-                evidence,
-              );
-              if (prepared)
-                await captureAndDetectNativeSourceExposureObservation(
-                  tx,
-                  prepared,
-                );
-            },
-            { maxWait: 10000, timeout: 60000 },
-          );
-        }
-      }
       collected.push(saved);
     }
 
@@ -609,9 +561,7 @@ export class SourcePostsService {
   ) {
     const [post, ingredient] = await Promise.all([
       this.db.post.findFirst({
-        include: {
-          ingredientLinks: orderedPostIngredientLinks({ select: { id: true } }),
-        },
+        include: { ingredients: { select: { id: true } } },
         where: scopedWhere(context.organizationId, {
           brandId: context.brandId,
           id: postId,
@@ -638,18 +588,16 @@ export class SourcePostsService {
       });
     }
 
-    // The new image joins the end of the slides already attached.
     const ingredientIds = new Set([
-      ...post.ingredientLinks.map((link) => link.ingredient.id),
+      ...(post.ingredients ?? []).map((ingredient) => ingredient.id),
       ingredientId,
     ]);
     const updated = await this.db.post.update({
       data: {
         category: 'IMAGE',
-        ingredientLinks: replacePostIngredientLinks(
-          context.organizationId,
-          Array.from(ingredientIds),
-        ),
+        ingredients: {
+          set: Array.from(ingredientIds).map((id) => ({ id })),
+        },
       },
       where: scopedWhere(context.organizationId, {
         brandId: context.brandId,

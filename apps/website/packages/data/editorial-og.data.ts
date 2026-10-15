@@ -22,10 +22,7 @@ export const EDITORIAL_OG_ARTWORKS = {
     headline: ['We run', 'your content'],
     route: '/done-for-you',
   },
-  'custom-models': {
-    headline: ['Your own', 'custom models'],
-    route: '/custom-models',
-  },
+  fleet: { headline: ['Your agent', 'workforce'], route: '/fleet' },
   'founder-content': {
     headline: ['Your voice', 'More reach'],
     route: '/founder-content',

@@ -29,15 +29,15 @@ vi.mock('next-intl', async () => {
   return { useTranslations: translateFromCatalog };
 });
 
-function renderFirstCard({ showActions = true } = {}) {
+function renderFirstCard() {
   const onSelect = vi.fn();
   const image = {
     id: 'first-image',
     category: IngredientCategory.IMAGE,
     status: IngredientStatus.GENERATED,
   } as IImage;
-  const { container } = render(
-    <div className="group" role="presentation" onClick={onSelect}>
+  render(
+    <div role="presentation" onClick={onSelect}>
       <MasonryImageActionsBar
         image={image}
         actionStates={{} as MasonryActionStates}
@@ -49,30 +49,11 @@ function renderFirstCard({ showActions = true } = {}) {
         handleQuickActionsMouseLeave={vi.fn()}
         isActionsEnabled
         isSelected={false}
-        showActions={showActions}
+        showActions
       />
     </div>,
   );
-  const bar = container.firstElementChild?.firstElementChild as HTMLElement;
-  return { bar, onSelect };
-}
-
-// jsdom applies stylesheet declarations to getComputedStyle (which
-// user-event's pointer-events check reads) but cannot match `:hover`. These
-// rules emulate a tile whose CSS hover has revealed the bar before React has
-// seen a mouseenter: `.group` stands in for `.group:hover`.
-const HOVER_REVEAL_CSS = `
-  .\\[\\@media\\(hover\\:hover\\)\\]\\:opacity-0 { opacity: 0; }
-  .\\[\\@media\\(hover\\:hover\\)\\]\\:pointer-events-none { pointer-events: none; }
-  .group .\\[\\@media\\(hover\\:hover\\)\\]\\:group-hover\\:opacity-100 { opacity: 1; }
-  .group .\\[\\@media\\(hover\\:hover\\)\\]\\:group-hover\\:pointer-events-auto { pointer-events: auto; }
-`;
-
-function emulateCssHoverReveal(): () => void {
-  const style = document.createElement('style');
-  style.textContent = HOVER_REVEAL_CSS;
-  document.head.append(style);
-  return () => style.remove();
+  return { onSelect };
 }
 
 // Keep the actual action builder, IngredientQuickActions, Radix menu and its
@@ -114,21 +95,5 @@ describe('first masonry card overflow integration', () => {
     );
     expect(onSelect).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-  });
-
-  it('opens More as soon as CSS hover reveals it, before React hover state, without selecting the card', async () => {
-    const removeCss = emulateCssHoverReveal();
-    try {
-      const user = userEvent.setup();
-      const { bar, onSelect } = renderFirstCard({ showActions: false });
-      const trigger = screen.getByRole('button', { name: 'More' });
-      expect(getComputedStyle(bar).opacity).toBe('1');
-      expect(getComputedStyle(bar).pointerEvents).toBe('auto');
-      await user.click(trigger);
-      expect(await screen.findByRole('menu')).toBeVisible();
-      expect(onSelect).not.toHaveBeenCalled();
-    } finally {
-      removeCss();
-    }
   });
 });

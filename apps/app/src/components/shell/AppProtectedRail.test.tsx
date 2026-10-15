@@ -9,22 +9,10 @@ const messagesUnread = vi.hoisted(() => ({
   count: 0,
   spy: vi.fn(),
 }));
-vi.mock('@/components/shell/pinned-rail-apps.provider', () => ({
-  usePinnedRailAppsContext: () => ({
-    pinnedAppIds: ['playground'],
+vi.mock('@/components/shell/use-pinned-rail-apps', () => ({
+  usePinnedRailApps: () => ({
+    pinnedAppIds: ['studio'],
     togglePin: vi.fn(),
-  }),
-}));
-const installedApps = vi.hoisted(() => ({
-  installedAppIds: ['playground', 'turbo'] as string[],
-  status: 'ready' as 'loading' | 'ready' | 'error',
-}));
-vi.mock('@/components/shell/installed-apps.provider', () => ({
-  useInstalledApps: () => ({
-    ...installedApps,
-    install: vi.fn(),
-    pendingAppIds: [],
-    uninstall: vi.fn(),
   }),
 }));
 vi.mock('@/components/shell/use-messages-unread-count', () => ({
@@ -61,20 +49,6 @@ const mockOrgUrl = vi.hoisted(() => ({
   orgSlug: 'acme' as string | undefined,
 }));
 
-// Admin → Flags as the release migration leaves it.
-vi.mock('@genfeedai/hooks/feature-flags/provider', () => ({
-  useFeatureFlagContext: () => ({
-    flags: {
-      release_analytics: true,
-      release_discovery: true,
-      release_publishing: true,
-      release_turbo: true,
-    },
-    isConfigured: true,
-    isReady: true,
-  }),
-}));
-
 vi.mock('@genfeedai/contracts', () => ({
   SettingsSurface: {
     BRAND: 'brand',
@@ -96,6 +70,7 @@ vi.mock('@genfeedai/contracts/constants', async () => ({
     library: 'Library',
     messages: 'Messages',
     publishing: 'Publishing',
+    studio: 'Studio',
     workspace: 'Workspace',
   },
   APP_ROUTE_PREFIXES: {
@@ -119,7 +94,6 @@ vi.mock('@genfeedai/contracts/constants', async () => ({
       PUBLISHING: '/settings/publishing',
     },
     SIGN_UP: '/signup',
-    STORE: { ROOT: '/store' },
     WORKSPACE: {
       ACTIVITY: '/workspace/activity',
       OVERVIEW: '/workspace/overview',
@@ -232,14 +206,13 @@ describe('AppProtectedRail', () => {
           workspace: { count: 4, kind: 'dot', label: 'workspaceBadge' },
           messages: { count: 0, label: '0 unread conversations' },
         },
-        pinnedAppIds: ['playground'],
+        pinnedAppIds: ['studio'],
         surface: 'desktop',
       }),
     );
-    // Pins are changed from Store cards; the rail only reads them. The Apps
-    // link to the Store lives in the topbar.
-    expect(appRailSpy.mock.lastCall?.[0]).not.toHaveProperty('storeHref');
-    expect(appRailSpy.mock.lastCall?.[0]).not.toHaveProperty('onTogglePin');
+    expect(appRailSpy.mock.lastCall?.[0].onTogglePin).toEqual(
+      expect.any(Function),
+    );
   });
 
   it('puts Help and the account avatar in the rail footer', () => {
@@ -286,7 +259,7 @@ describe('AppProtectedRail', () => {
     expect(appRailSpy).toHaveBeenLastCalledWith(
       expect.objectContaining({
         surface: 'drawer',
-        pinnedAppIds: ['playground'],
+        pinnedAppIds: ['studio'],
         modulePreferences: expect.objectContaining({
           playground: true,
           storyboard: true,
@@ -305,57 +278,7 @@ describe('AppProtectedRail', () => {
     brandContextState.settingsLoading = true;
     render(<AppProtectedRail orgSlug="acme" />);
     expect(appRailSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ moduleAccess: null, modulePreferences: null }),
-    );
-  });
-
-  it('feeds the rail confirmed installs and module access (#5502)', () => {
-    render(<AppProtectedRail orgSlug="acme" />);
-    expect(appRailSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        installedAppIds: ['playground', 'turbo'],
-        moduleAccess: expect.objectContaining({
-          playground: { isAllowed: true, reason: null },
-          clips: { isAllowed: false, reason: 'unreleased' },
-        }),
-      }),
-    );
-  });
-
-  it('shows no launcher apps until installs are confirmed', () => {
-    installedApps.status = 'loading';
-    render(<AppProtectedRail orgSlug="acme" />);
-    expect(appRailSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({ installedAppIds: [] }),
-    );
-    installedApps.status = 'ready';
-  });
-
-  it('opens unreleased apps to an organization on release preview', () => {
-    brandContextState.settings = {
-      hasOrganizationBilling: true,
-      isReleasePreviewEnabled: true,
-      moduleOverrides: { clips: true },
-    };
-    render(<AppProtectedRail orgSlug="acme" />);
-    expect(appRailSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        moduleAccess: expect.objectContaining({
-          clips: { isAllowed: true, reason: null },
-        }),
-      }),
-    );
-  });
-
-  it('keeps unreleased apps closed to a super admin without release preview', () => {
-    mockAccessState.isSuperAdmin = true;
-    render(<AppProtectedRail orgSlug="acme" />);
-    expect(appRailSpy).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        moduleAccess: expect.objectContaining({
-          clips: { isAllowed: false, reason: 'unreleased' },
-        }),
-      }),
+      expect.objectContaining({ modulePreferences: null }),
     );
   });
 

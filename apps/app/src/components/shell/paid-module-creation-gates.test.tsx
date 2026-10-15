@@ -7,11 +7,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   organizationId: 'org-1',
   settingsLoading: false,
-  settings: {
-    hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
-    moduleOverrides: {},
-  } as Record<string, unknown> | null,
+  settings: { hasOrganizationBilling: true, moduleOverrides: {} } as Record<
+    string,
+    unknown
+  > | null,
   refreshSettings: vi.fn(),
   mounted: vi.fn(),
   create: vi.fn(),
@@ -62,11 +61,7 @@ const routes = [
 beforeEach(() => {
   state.organizationId = 'org-1';
   state.settingsLoading = false;
-  state.settings = {
-    hasOrganizationBilling: true,
-    isReleasePreviewEnabled: true,
-    moduleOverrides: {},
-  };
+  state.settings = { hasOrganizationBilling: true, moduleOverrides: {} };
   state.mounted.mockClear();
   state.create.mockClear();
 });
@@ -87,7 +82,6 @@ describe.each(routes)(
     it('requires a verified paid subscription even when the preference is on', () => {
       state.settings = {
         hasOrganizationBilling: true,
-        isReleasePreviewEnabled: true,
         hasPaidModuleSubscription: false,
         moduleOverrides: { [moduleId]: true },
       };
@@ -102,7 +96,6 @@ describe.each(routes)(
       (paid) => {
         state.settings = {
           hasOrganizationBilling: true,
-          isReleasePreviewEnabled: true,
           hasPaidModuleSubscription: paid,
           moduleOverrides: { [moduleId]: true },
           isSubscriptionGated: false,
@@ -119,7 +112,6 @@ describe.each(routes)(
     it('mounts paid enabled work and removes it on grant revocation', () => {
       state.settings = {
         hasOrganizationBilling: true,
-        isReleasePreviewEnabled: true,
         hasPaidModuleSubscription: true,
         moduleOverrides: { [moduleId]: true },
       };

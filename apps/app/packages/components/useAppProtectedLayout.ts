@@ -15,10 +15,7 @@ import {
   buildSettingsMenuItems,
   type SettingsScope,
 } from '@app-config/settings-menu-items.config';
-import {
-  getStudioAppForPath,
-  STUDIO_APP_MENU_ITEMS,
-} from '@app-config/studio-menu-items.config';
+import { STUDIO_MENU_ITEMS } from '@app-config/studio-menu-items.config';
 import { useBrand } from '@contexts/user/brand-context/brand-context';
 import {
   AgentApiService,
@@ -30,8 +27,7 @@ import { hasOrganizationBillingHint } from '@genfeedai/config/license';
 import {
   APP_ROUTE_PREFIXES,
   APP_ROUTES,
-  isReleaseItemId,
-  isReleaseItemVisible,
+  ORGANIZATION_MODULES,
   resolveOrganizationModulePreferences,
 } from '@genfeedai/contracts/constants';
 import type { AppContext } from '@genfeedai/contracts/interfaces';
@@ -43,10 +39,6 @@ import { useFeatureFlag } from '@hooks/feature-flags/use-feature-flag';
 import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import { useMenuItems } from '@hooks/ui/use-menu-items';
 import type { ProtectedBootstrapData } from '@props/layout/protected-bootstrap.props';
-import {
-  ADMIN_RAIL_CATEGORIES,
-  getActiveAppId,
-} from '@ui/shell/app-rail/app-rail.registry';
 import {
   useParams,
   usePathname,
@@ -68,7 +60,6 @@ import {
   isPersonalSettingsPage as computeIsPersonalSettingsPage,
   resolveSettingsScope,
 } from './app-protected-layout.settings-scope';
-import { usePageHelp } from './use-page-help';
 import { useOpenTaskComposer } from './useOpenTaskComposer';
 
 const AUTOMATION_WORKFLOW_RESERVED = new Set([
@@ -159,10 +150,8 @@ export function useAppProtectedLayout(
   const isUniversalWorkspaceShell =
     Boolean(workspaceShellRoute) && !isAdminRoute;
 
-  // Studio tools are separate apps: `/studio/<tool>` belongs to that tool.
-  const studioApp = isStudioRoute ? getStudioAppForPath(pathname) : undefined;
-  const currentApp: AppContext = studioApp
-    ? studioApp
+  const currentApp: AppContext = isStudioRoute
+    ? 'studio'
     : isLibraryRoute
       ? 'library'
       : isDiscoveryRoute
@@ -185,20 +174,13 @@ export function useAppProtectedLayout(
   const { push, refresh } = useRouter();
   const openTaskComposer = useOpenTaskComposer();
   const { getToken, isLoaded: isAuthLoaded, isSignedIn } = useOptionalAuth();
-  // Refresh server components only on a real sign-in: a loaded signed-out
-  // session that becomes signed in. The server already rendered this route with
-  // the session cookie, so auth resolving on a cold load must not refetch it.
-  const prevIsSignedInRef = useRef<boolean | null>(null);
+  const prevIsSignedInRef = useRef(false);
   useEffect(() => {
-    if (!isAuthLoaded) {
-      return;
-    }
-    const signedIn = isSignedIn ?? false;
-    if (signedIn && prevIsSignedInRef.current === false) {
+    if (isSignedIn && !prevIsSignedInRef.current) {
       refresh();
     }
-    prevIsSignedInRef.current = signedIn;
-  }, [isAuthLoaded, isSignedIn, refresh]);
+    prevIsSignedInRef.current = isSignedIn ?? false;
+  }, [isSignedIn, refresh]);
 
   const taskContextSearchParams = useMemo(
     () =>
@@ -278,9 +260,8 @@ export function useAppProtectedLayout(
   const bootstrapRole = initialBootstrap?.accessState?.memberRole;
   const role = bootstrapRole !== undefined ? bootstrapRole : contextRole;
 
-  // Sync route context (and route help copy) into the agent store
-  const pageHelp = usePageHelp(rawPathname);
-  useAgentPageContext(role ?? undefined, pageHelp);
+  // Sync route context into the agent store
+  useAgentPageContext(role ?? undefined);
 
   const handleNavigate = useCallback(
     (path: string) => {
@@ -313,51 +294,35 @@ export function useAppProtectedLayout(
     () =>
       resolveOrganizationModulePreferences(
         settingsLoading ? null : organizationSettings,
-        platformFlags,
       ),
-    [organizationSettings, platformFlags, settingsLoading],
-  );
-  // Unreleased destinations stay hidden until the organization is known.
-  const isReleased = useCallback(
-    (item: MenuItemConfig) =>
-      !item.releaseItemId ||
-      isReleaseItemVisible(
-        item.releaseItemId,
-        settingsLoading ? null : organizationSettings,
-        platformFlags,
-      ),
-    [organizationSettings, platformFlags, settingsLoading],
+    [organizationSettings, settingsLoading],
   );
   const studioMenuItems = useMemo(
     () =>
-      (studioApp ? STUDIO_APP_MENU_ITEMS[studioApp] : [])
-        .filter(
-          (item) =>
-            isStudioSurfaceEnabled(item.href, platformFlags) &&
-            (!item.organizationModule ||
-              // While preferences load, keep the always-released apps
-              // (Playground, Storyboard) so their nav does not flicker.
-              (modulePreferences?.[item.organizationModule] ??
-                !isReleaseItemId(item.organizationModule))),
-        )
-        .map(
-          (item): MenuItemConfig => ({
-            ...item,
-            href: withTaskContextHref(item.href, taskContextSearchParams),
-          }),
-        ),
-    [platformFlags, taskContextSearchParams, modulePreferences, studioApp],
-  );
-
-  const publishingMenuItems = useMemo(
-    () =>
-      PUBLISHING_MENU_ITEMS.filter(isReleased).map(
+      STUDIO_MENU_ITEMS.filter(
+        (item) =>
+          isStudioSurfaceEnabled(item.href, platformFlags) &&
+          (!item.organizationModule ||
+            modulePreferences?.[item.organizationModule] === true ||
+            !ORGANIZATION_MODULES[item.organizationModule].isToggleable),
+      ).map(
         (item): MenuItemConfig => ({
           ...item,
           href: withTaskContextHref(item.href, taskContextSearchParams),
         }),
       ),
-    [isReleased, taskContextSearchParams],
+    [platformFlags, taskContextSearchParams, modulePreferences],
+  );
+
+  const publishingMenuItems = useMemo(
+    () =>
+      PUBLISHING_MENU_ITEMS.map(
+        (item): MenuItemConfig => ({
+          ...item,
+          href: withTaskContextHref(item.href, taskContextSearchParams),
+        }),
+      ),
+    [taskContextSearchParams],
   );
 
   const libraryMenuItems = useMemo(
@@ -395,15 +360,13 @@ export function useAppProtectedLayout(
 
   const analyticsMenuItems = useMemo(
     () =>
-      getAnalyticsMenuItemsForScope(brandSlug)
-        .filter(isReleased)
-        .map(
-          (item): MenuItemConfig => ({
-            ...item,
-            href: withTaskContextHref(item.href, taskContextSearchParams),
-          }),
-        ),
-    [brandSlug, isReleased, taskContextSearchParams],
+      getAnalyticsMenuItemsForScope(brandSlug).map(
+        (item): MenuItemConfig => ({
+          ...item,
+          href: withTaskContextHref(item.href, taskContextSearchParams),
+        }),
+      ),
+    [brandSlug, taskContextSearchParams],
   );
 
   const discoveryMenuItems = useMemo(
@@ -452,23 +415,16 @@ export function useAppProtectedLayout(
     [settingsScope, taskContextSearchParams],
   );
 
-  // The rail picks the admin category; the sidebar lists only its pages.
-  const adminMenuGroup = ADMIN_RAIL_CATEGORIES.find(
-    (category) =>
-      category.id === getActiveAppId(ADMIN_RAIL_CATEGORIES, pathname),
-  )?.adminMenuGroup;
   const adminMenuItems = useMemo(
     () =>
-      ADMIN_MENU_ITEMS.filter(
-        (item) => !adminMenuGroup || item.group === adminMenuGroup,
-      ).map(
+      ADMIN_MENU_ITEMS.map(
         (item): MenuItemConfig => ({
           ...item,
           hrefScope: 'global',
           href: withTaskContextHref(item.href, taskContextSearchParams),
         }),
       ),
-    [adminMenuGroup, taskContextSearchParams],
+    [taskContextSearchParams],
   );
 
   const isWorkspaceRoute = isProtectedWorkspaceRoute(pathname);

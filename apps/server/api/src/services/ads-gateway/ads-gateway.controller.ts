@@ -57,6 +57,8 @@ export class AdsGatewayController {
     private readonly logger: LoggerService,
   ) {}
 
+  // ─── Read Endpoints ──────────────────────────────────────────────────────
+
   @TenantReadPolicy('owner')
   @Get('compare')
   @RolesDecorator(...ADS_READ_ROLES)

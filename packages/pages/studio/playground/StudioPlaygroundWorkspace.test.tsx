@@ -3,12 +3,7 @@ import {
   ContextSidebarProvider,
   useContextSidebar,
 } from '@contexts/ui/context-sidebar-context';
-import {
-  IngredientCategory,
-  IngredientStatus,
-  ModelCategory,
-  RouterPriority,
-} from '@genfeedai/contracts';
+import { IngredientCategory, IngredientStatus } from '@genfeedai/contracts';
 import {
   IMAGE_EDIT_CONTRACT_VERSION,
   LIBRARY_ASSETS_REFRESH_EVENT,
@@ -168,7 +163,6 @@ const mocks = vi.hoisted(() => ({
   isHydrated: { value: true },
   setType: vi.fn(),
   updateSettings: vi.fn(),
-  modelsHook: vi.fn(),
 }));
 
 const characterMentionMocks = vi.hoisted(() => ({
@@ -367,10 +361,7 @@ vi.mock(
 );
 
 vi.mock('@pages/studio/playground/hooks/useStudioPlaygroundModels', () => ({
-  useStudioPlaygroundModels: (...args: unknown[]) => {
-    mocks.modelsHook(...args);
-    return mocks.models.value;
-  },
+  useStudioPlaygroundModels: () => mocks.models.value,
 }));
 
 vi.mock('@pages/studio/playground/hooks/useStudioPlaygroundHandoff', () => ({
@@ -517,26 +508,14 @@ vi.mock(
       onRemix,
       onVary,
       onOpenPreview,
-      onPreviewRecovered,
     }: {
       job: { id: string; prompt: string };
       onRemix: (job: { id: string }) => void;
       onVary: (job: { id: string }) => void;
       onOpenPreview?: () => void;
-      onPreviewRecovered?: (job: { id: string }, url?: string) => void;
     }) => (
       <div data-testid="studio-inspector">
         <span>{job.prompt}</span>
-        {onPreviewRecovered ? (
-          <button
-            type="button"
-            onClick={() =>
-              onPreviewRecovered(job, 'https://cdn.example/fresh.png')
-            }
-          >
-            Report recovered preview
-          </button>
-        ) : null}
         {onOpenPreview ? (
           <button
             type="button"
@@ -628,14 +607,6 @@ function controlsFor(endpoint = 'kling/v2-5-turbo-pro'): CrunInputControls {
           }),
     },
   };
-}
-
-/** The saved draft has been read, so a continuation is no longer deferred. */
-async function renderLoaded(options?: Parameters<typeof render>[1]) {
-  const view = render(<StudioPlaygroundWorkspace />, options);
-  await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
-  await act(async () => {});
-  return view;
 }
 
 describe('StudioPlaygroundWorkspace', () => {
@@ -1214,8 +1185,8 @@ describe('StudioPlaygroundWorkspace', () => {
     },
   );
 
-  it('turns a gallery remix into a composer reference', async () => {
-    await renderLoaded();
+  it('turns a gallery remix into a composer reference', () => {
+    render(<StudioPlaygroundWorkspace />);
 
     const hookParams = mocks.assetActionsHook.mock.calls.at(-1)?.[0] as {
       onAttachReference: (
@@ -1253,8 +1224,8 @@ describe('StudioPlaygroundWorkspace', () => {
 
   it.each(['image', 'video'] as const)(
     'prepares %s from the chosen source only after confirming draft replacement',
-    async (targetType) => {
-      await renderLoaded();
+    (targetType) => {
+      render(<StudioPlaygroundWorkspace />);
       act(() =>
         mocks.composer.mock.calls
           .at(-1)?.[0]
@@ -1339,8 +1310,8 @@ describe('StudioPlaygroundWorkspace', () => {
 
   it.each(['draft', 'session'] as const)(
     'does not apply a continuation after the %s changes during confirmation',
-    async (change) => {
-      const { rerender } = await renderLoaded();
+    (change) => {
+      const { rerender } = render(<StudioPlaygroundWorkspace />);
       act(() =>
         mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('Original draft'),
       );
@@ -1424,7 +1395,7 @@ describe('StudioPlaygroundWorkspace', () => {
     );
   });
 
-  it('prefills the composer from a card recipe on vary', async () => {
+  it('prefills the composer from a card recipe on vary', () => {
     const recipeJob = {
       createdAt: 1,
       id: 'job-1',
@@ -1452,7 +1423,7 @@ describe('StudioPlaygroundWorkspace', () => {
       storedJobs: [recipeJob],
     });
 
-    await renderLoaded({ wrapper: ContextSidebarHost });
+    render(<StudioPlaygroundWorkspace />, { wrapper: ContextSidebarHost });
 
     const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
       onReprompt: (job: typeof recipeJob) => void;
@@ -1580,7 +1551,7 @@ describe('StudioPlaygroundWorkspace', () => {
     },
   );
 
-  it('remixes a selected image as an image reference', async () => {
+  it('remixes a selected image as an image reference', () => {
     const job = {
       createdAt: 1,
       id: 'image-9',
@@ -1602,7 +1573,7 @@ describe('StudioPlaygroundWorkspace', () => {
       storedJobs: [job],
     });
 
-    await renderLoaded({ wrapper: ContextSidebarHost });
+    render(<StudioPlaygroundWorkspace />, { wrapper: ContextSidebarHost });
     const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
       onSelect: (selected: typeof job) => void;
     };
@@ -1620,40 +1591,7 @@ describe('StudioPlaygroundWorkspace', () => {
     );
   });
 
-  it('defers a continuation until the saved draft has loaded', async () => {
-    const pendingDraft = Promise.withResolvers<null>();
-    mocks.getDraft.mockReturnValue(pendingDraft.promise);
-    render(<StudioPlaygroundWorkspace />);
-    await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
-    const hookParams = mocks.assetActionsHook.mock.calls.at(-1)?.[0] as {
-      onAttachReference: (
-        ingredient: IIngredient,
-        type: 'image' | 'video',
-      ) => void;
-    };
-
-    act(() =>
-      hookParams.onAttachReference(
-        {
-          brandId: 'brand-1',
-          category: IngredientCategory.IMAGE,
-          status: IngredientStatus.GENERATED,
-          id: 'generated-1',
-          thumbnailUrl: 'https://cdn.example/generated.png',
-        } as IIngredient,
-        'video',
-      ),
-    );
-
-    expect(mocks.notify).toHaveBeenCalledWith('continuation.draftLoading');
-    expect(mocks.openConfirm).not.toHaveBeenCalled();
-    expect(
-      mocks.settings.mock.results.at(-1)?.value.setType,
-    ).not.toHaveBeenCalledWith('video');
-    await act(async () => pendingDraft.resolve(null));
-  });
-
-  it('keeps a draft untouched until Replace draft and ignores a confirmation from another brand', async () => {
+  it('keeps a draft untouched until Replace draft and ignores a confirmation from another brand', () => {
     const job: StudioPlaygroundJob = {
       id: 'legacy',
       createdAt: 1,
@@ -1661,7 +1599,7 @@ describe('StudioPlaygroundWorkspace', () => {
       status: IngredientStatus.GENERATED,
       prompt: 'Effective brand instructions',
     };
-    const { rerender } = await renderLoaded();
+    const { rerender } = render(<StudioPlaygroundWorkspace />);
     act(() =>
       mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('Keep my draft'),
     );
@@ -1685,7 +1623,7 @@ describe('StudioPlaygroundWorkspace', () => {
     );
   });
 
-  it('leaves a legacy continuation prompt blank instead of replaying provider instructions', async () => {
+  it('leaves a legacy continuation prompt blank instead of replaying provider instructions', () => {
     const job: StudioPlaygroundJob = {
       id: 'legacy',
       createdAt: 1,
@@ -1698,50 +1636,13 @@ describe('StudioPlaygroundWorkspace', () => {
       refresh: vi.fn(),
       storedJobs: [job],
     });
-    await renderLoaded();
+    render(<StudioPlaygroundWorkspace />);
     act(() => mocks.results.mock.calls.at(-1)?.[0].onReprompt(job));
     expect(mocks.composer.mock.calls.at(-1)?.[0].prompt).toBe('');
     expect(mocks.submit).not.toHaveBeenCalled();
     expect(mocks.notify).toHaveBeenCalledWith(
       'continuation.originalUnavailable',
     );
-  });
-
-  it('hands a successful Inspector preview retry back to the gallery card', () => {
-    const job = {
-      createdAt: 1,
-      id: 'job-7',
-      ingredientId: 'ing-7',
-      prompt: 'Selected asset prompt',
-      status: 'GENERATED',
-      type: 'image',
-      url: 'https://cdn.example/expired.png',
-    };
-    mocks.gallery.mockReturnValue({
-      isLoadingGallery: false,
-      refresh: vi.fn(),
-      storedJobs: [job],
-    });
-    render(<StudioPlaygroundWorkspace />, { wrapper: ContextSidebarHost });
-    const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
-      onSelect: (selected: typeof job) => void;
-    };
-    act(() => resultsProps.onSelect(job));
-    expect(mocks.results.mock.calls.at(-1)?.[0].previewRevisions).toEqual({});
-
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Report recovered preview' }),
-    );
-
-    const recovered = mocks.results.mock.calls.at(-1)?.[0];
-    expect(recovered.previewRevisions).toEqual({ 'job-7': 1 });
-    expect(recovered.jobs).toEqual([
-      expect.objectContaining({
-        id: 'job-7',
-        url: 'https://cdn.example/fresh.png',
-      }),
-    ]);
-    expect(mocks.submit).not.toHaveBeenCalled();
   });
 
   it('opens the selected asset in the context sidebar and deselects on close', () => {
@@ -2180,93 +2081,34 @@ describe('StudioPlaygroundWorkspace', () => {
 
     expect(mocks.updateSettings).toHaveBeenCalledWith({
       modelKey: AUTO_MODEL_OPTION_VALUE,
-      prioritize: RouterPriority.QUALITY,
     });
   });
 
-  it('routes Auto for top quality in simple mode', async () => {
-    mocks.advancedMode.value = {
-      isAdvancedMode: false,
-      isLoaded: true,
-      setAdvancedMode: vi.fn(),
-    };
-    mocks.settings.mockReturnValue({
-      resetSettings: vi.fn(),
-      settings: {
+  it.each(['avatar', 'voice'] as const)(
+    'preserves the saved model for %s without model selection in simple mode',
+    async (type) => {
+      mocks.type.value = type;
+      mocks.advancedMode.value = {
+        isAdvancedMode: false,
+        isLoaded: true,
+        setAdvancedMode: vi.fn(),
+      };
+      mocks.settings.mockReturnValue({
+        resetSettings: vi.fn(),
+        settings: { modelKey: 'saved-identity-model' },
+        setType: mocks.setType,
+        type,
+        updateSettings: vi.fn(),
+      });
+
+      render(<StudioPlaygroundWorkspace />);
+      await act(async () => {});
+
+      expect(mocks.updateSettings).not.toHaveBeenCalledWith({
         modelKey: AUTO_MODEL_OPTION_VALUE,
-        prioritize: RouterPriority.COST,
-      },
-      setType: mocks.setType,
-      type: 'image',
-      updateSettings: vi.fn(),
-    });
-
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      modelKey: AUTO_MODEL_OPTION_VALUE,
-      prioritize: RouterPriority.QUALITY,
-    });
-  });
-
-  it('returns a saved avatar engine to Auto in simple mode, now that avatar has a model catalog', async () => {
-    mocks.type.value = 'avatar';
-    mocks.advancedMode.value = {
-      isAdvancedMode: false,
-      isLoaded: true,
-      setAdvancedMode: vi.fn(),
-    };
-    mocks.settings.mockReturnValue({
-      resetSettings: vi.fn(),
-      settings: { modelKey: 'heygen/avatar-v' },
-      setType: mocks.setType,
-      type: 'avatar',
-      updateSettings: vi.fn(),
-    });
-
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ modelKey: AUTO_MODEL_OPTION_VALUE }),
-    );
-  });
-
-  it('returns a hidden saved speech model to Auto for voice in simple mode', async () => {
-    mocks.type.value = 'voice';
-    mocks.advancedMode.value = {
-      isAdvancedMode: false,
-      isLoaded: true,
-      setAdvancedMode: vi.fn(),
-    };
-    mocks.settings.mockReturnValue({
-      resetSettings: vi.fn(),
-      settings: { modelKey: MODEL_KEYS.HEYGEN_VOICE },
-      setType: mocks.setType,
-      type: 'voice',
-      updateSettings: vi.fn(),
-    });
-
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      modelKey: AUTO_MODEL_OPTION_VALUE,
-      prioritize: RouterPriority.QUALITY,
-    });
-  });
-
-  it('loads the speech model catalogue for voice', async () => {
-    mocks.type.value = 'voice';
-    render(<StudioPlaygroundWorkspace />);
-    await act(async () => {});
-
-    expect(mocks.modelsHook).toHaveBeenLastCalledWith(
-      ModelCategory.VOICE,
-      expect.anything(),
-    );
-  });
+      });
+    },
+  );
 
   it('keeps an Agent handoff model in simple mode', async () => {
     mocks.advancedMode.value = {
@@ -2298,9 +2140,9 @@ describe('StudioPlaygroundWorkspace', () => {
     render(<StudioPlaygroundWorkspace />);
     await act(async () => {});
 
-    expect(mocks.updateSettings).not.toHaveBeenCalledWith(
-      expect.objectContaining({ modelKey: AUTO_MODEL_OPTION_VALUE }),
-    );
+    expect(mocks.updateSettings).not.toHaveBeenCalledWith({
+      modelKey: AUTO_MODEL_OPTION_VALUE,
+    });
   });
 
   it('does not request references after unmount while acquiring the service', async () => {
@@ -2564,202 +2406,6 @@ describe('StudioPlaygroundWorkspace', () => {
       expect(mocks.notify).not.toHaveBeenCalledWith(
         'Unsupported frame or video references were cleared for the selected model.',
       );
-    });
-
-    it('keeps a restored end frame in Auto, where the router picks a model that accepts it', async () => {
-      mocks.type.value = 'video';
-      mocks.settings.mockReturnValue({
-        resetSettings: vi.fn(),
-        settings: { modelKey: AUTO_MODEL_OPTION_VALUE },
-        setType: mocks.setType,
-        type: 'video',
-        updateSettings: vi.fn(),
-      });
-      // Real hook timing: restored uploads land one render after the
-      // Library references.
-      mocks.attachments.mockImplementation(
-        (options: { initialAttachments?: unknown[] }) => {
-          const [items, setItems] = useState<unknown[]>([]);
-          useEffect(() => {
-            setItems(options.initialAttachments ?? []);
-          }, [options.initialAttachments]);
-          return {
-            addFiles: vi.fn(),
-            attachments: items,
-            clearAll: mocks.clearAttachments,
-            dragHandlers: {},
-            dragState: { isActive: false },
-            getCompletedAttachments: () => [],
-            isUploading: false,
-            removeAttachment: vi.fn(),
-          };
-        },
-      );
-      mocks.getDraft.mockResolvedValueOnce({
-        ...savedDraft,
-        attachments: [{ id: 'upload-start', role: 'startFrame' }],
-        droppedReferenceIds: [],
-        references: [{ id: 'library-end', role: 'endFrame' }],
-        type: 'video',
-      });
-      mocks.findByIds.mockResolvedValueOnce([
-        {
-          category: 'image',
-          cdnUrl: 'https://cdn.example/end.png',
-          id: 'library-end',
-        },
-        {
-          category: 'image',
-          cdnUrl: 'https://cdn.example/start.png',
-          id: 'upload-start',
-        },
-      ]);
-
-      render(<StudioPlaygroundWorkspace />);
-
-      await waitFor(() =>
-        expect(lastComposerProps().attachedAssets).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ id: 'upload-start', role: 'startFrame' }),
-            expect.objectContaining({ id: 'library-end', role: 'endFrame' }),
-          ]),
-        ),
-      );
-      await act(async () => {
-        await Promise.resolve();
-      });
-      expect(lastComposerProps().attachedAssets).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ id: 'library-end', role: 'endFrame' }),
-        ]),
-      );
-      expect(mocks.notify).not.toHaveBeenCalledWith(
-        'Unsupported frame or video references were cleared for the selected model.',
-      );
-    });
-
-    describe('attaching frames to a video prompt', () => {
-      function installStatefulAttachments() {
-        mocks.attachments.mockImplementation(() => {
-          const [items, setItems] = useState<
-            {
-              file: File;
-              id: string;
-              ingredientId: string;
-              kind: 'image';
-              name: string;
-              previewUrl: string;
-            }[]
-          >([]);
-          return {
-            addFiles: (files: File[]) =>
-              setItems((current) => [
-                ...current,
-                ...files.map((file) => ({
-                  file,
-                  id: `up-${file.name}`,
-                  ingredientId: `ing-${file.name}`,
-                  kind: 'image' as const,
-                  name: file.name,
-                  previewUrl: `blob:${file.name}`,
-                })),
-              ]),
-            attachments: items,
-            clearAll: mocks.clearAttachments,
-            dragHandlers: {},
-            dragState: { isActive: false },
-            getCompletedAttachments: () =>
-              items.map((item) => ({
-                ingredientId: item.ingredientId,
-                kind: item.kind,
-              })),
-            isUploading: false,
-            removeAttachment: (id: string) =>
-              setItems((current) => current.filter((item) => item.id !== id)),
-          };
-        });
-      }
-
-      function composerActions() {
-        return mocks.composer.mock.calls.at(-1)?.[0] as {
-          attachedAssets: { id: string; role: string }[];
-          onAddFiles: (files: File[], role: string) => void;
-          onSubmit: () => void;
-        };
-      }
-
-      function frameFile(name: string): File {
-        return new File(['x'], name, { type: 'image/png' });
-      }
-
-      it('keeps an end frame attached in Auto after cleanup and sends it', async () => {
-        mocks.type.value = 'video';
-        mocks.settings.mockReturnValue({
-          resetSettings: vi.fn(),
-          settings: { modelKey: AUTO_MODEL_OPTION_VALUE },
-          setType: mocks.setType,
-          type: 'video',
-          updateSettings: vi.fn(),
-        });
-        installStatefulAttachments();
-        render(<StudioPlaygroundWorkspace />);
-
-        act(() =>
-          composerActions().onAddFiles([frameFile('start.png')], 'startFrame'),
-        );
-        act(() =>
-          composerActions().onAddFiles([frameFile('end.png')], 'endFrame'),
-        );
-        await act(async () => {
-          await Promise.resolve();
-        });
-
-        expect(composerActions().attachedAssets).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ role: 'startFrame' }),
-            expect.objectContaining({ id: 'up-end.png', role: 'endFrame' }),
-          ]),
-        );
-        expect(mocks.notify).not.toHaveBeenCalledWith(
-          expect.stringContaining('cleared'),
-        );
-        act(() => composerActions().onSubmit());
-        expect(mocks.submit).toHaveBeenLastCalledWith(
-          expect.any(String),
-          expect.objectContaining({
-            endFrameId: 'ing-end.png',
-            imageReferenceIds: expect.arrayContaining(['ing-start.png']),
-          }),
-          expect.anything(),
-        );
-      });
-
-      it('still drops an end frame for a concrete model that rejects it', async () => {
-        mocks.type.value = 'video';
-        mocks.settings.mockReturnValue({
-          resetSettings: vi.fn(),
-          settings: { modelKey: MODEL_KEYS.REPLICATE_OPENAI_SORA_2 },
-          setType: mocks.setType,
-          type: 'video',
-          updateSettings: vi.fn(),
-        });
-        installStatefulAttachments();
-        render(<StudioPlaygroundWorkspace />);
-
-        act(() =>
-          composerActions().onAddFiles([frameFile('end.png')], 'endFrame'),
-        );
-        await waitFor(() =>
-          expect(composerActions().attachedAssets).not.toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({ role: 'endFrame' }),
-            ]),
-          ),
-        );
-        expect(mocks.notify).toHaveBeenCalledWith(
-          'Unsupported frame or video references were cleared for the selected model.',
-        );
-      });
     });
 
     it('reads the draft of the brand open in this tab', async () => {
@@ -3261,7 +2907,7 @@ describe('StudioPlaygroundWorkspace', () => {
       const stored = readStudioPlaygroundSessionJobs('brand-1')[0];
       if (!stored) throw new Error('Expected stored recipe');
       mocks.findByIds.mockResolvedValue([frame(endId), frame(startId)]);
-      await renderLoaded();
+      render(<StudioPlaygroundWorkspace />);
       vary(stored);
       expect(composer().isCrunRestoreBlocked).toBe(true);
       expect(mocks.crunQuote.mock.calls.at(-1)?.[0].request).toBeNull();
@@ -3311,7 +2957,7 @@ describe('StudioPlaygroundWorkspace', () => {
           ...(bad ? [bad] : []),
           frame(endId),
         ]);
-        await renderLoaded();
+        render(<StudioPlaygroundWorkspace />);
         act(() => composer().onPromptChange('Keep prior composer'));
         vary();
         await waitFor(() =>
@@ -3329,11 +2975,11 @@ describe('StudioPlaygroundWorkspace', () => {
         expect(composer().isCrunRestoreBlocked).toBe(false);
       },
     );
-    it('rejects a stale contract version without looking up frames', async () => {
+    it('rejects a stale contract version without looking up frames', () => {
       const job = recipeJob();
       if (!job.recipe?.crunControls) throw new Error('Expected controls');
       job.recipe.crunControls.contractVersion = 'old';
-      await renderLoaded();
+      render(<StudioPlaygroundWorkspace />);
       vary(job);
       expect(mocks.notify).toHaveBeenCalledWith('crun.videoQuoteStale');
       expect(mocks.findByIds).not.toHaveBeenCalled();
@@ -3353,7 +2999,7 @@ describe('StudioPlaygroundWorkspace', () => {
       async (change) => {
         const pending = Promise.withResolvers<ReturnType<typeof frame>[]>();
         mocks.findByIds.mockReturnValueOnce(pending.promise);
-        const view = await renderLoaded();
+        const view = render(<StudioPlaygroundWorkspace />);
         vary();
         await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledOnce());
         if (change === 'prompt')
@@ -3415,7 +3061,7 @@ describe('StudioPlaygroundWorkspace', () => {
           outputs: 1,
         },
       };
-      await renderLoaded();
+      render(<StudioPlaygroundWorkspace />);
       vary(editingJob);
       await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledOnce());
       vary();
@@ -3434,18 +3080,16 @@ describe('StudioPlaygroundWorkspace', () => {
     });
     it('keeps a newer Crun recipe when an earlier Library source lookup completes', async () => {
       const editId = '33333333-3333-4333-8333-333333333333';
-      const pending = Promise.withResolvers<ReturnType<typeof frame>[]>();
+      const pending = Promise.withResolvers<ReturnType<typeof frame>>();
       mocks.searchParams.value = `editImage=${editId}`;
-      mocks.findByIds.mockReturnValueOnce(pending.promise);
+      mocks.findOne.mockReturnValueOnce(pending.promise);
       mocks.findByIds.mockResolvedValueOnce([frame(startId), frame(endId)]);
-      await renderLoaded();
-      await waitFor(() =>
-        expect(mocks.findByIds).toHaveBeenCalledWith([editId]),
-      );
+      render(<StudioPlaygroundWorkspace />);
+      await waitFor(() => expect(mocks.findOne).toHaveBeenCalledOnce());
       vary();
       await waitFor(() => expect(composer().prompt).toBe('Submitted motion'));
       mocks.applyTypeSettings.mockClear();
-      await act(async () => pending.resolve([frame(editId)]));
+      await act(async () => pending.resolve(frame(editId)));
       expect(mocks.applyTypeSettings).not.toHaveBeenCalled();
       expect(composer()).toMatchObject({
         prompt: 'Submitted motion',
@@ -3459,10 +3103,10 @@ describe('StudioPlaygroundWorkspace', () => {
       const editId = '33333333-3333-4333-8333-333333333333';
       const pending = Promise.withResolvers<ReturnType<typeof frame>[]>();
       mocks.findByIds.mockReturnValueOnce(pending.promise);
-      const view = await renderLoaded();
+      const view = render(<StudioPlaygroundWorkspace />);
       vary();
       await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledOnce());
-      mocks.findByIds.mockResolvedValueOnce([frame(editId)]);
+      mocks.findOne.mockResolvedValueOnce(frame(editId));
       mocks.searchParams.value = `editImage=${editId}`;
       view.rerender(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
@@ -3481,7 +3125,7 @@ describe('StudioPlaygroundWorkspace', () => {
       );
       expect(mocks.submit).not.toHaveBeenCalled();
     });
-    it('loads a legacy recipe with cleared residuals and obtains a fresh current quote', async () => {
+    it('loads a legacy recipe with cleared residuals and obtains a fresh current quote', () => {
       const job = recipeJob();
       if (!job.recipe) throw new Error('Expected recipe');
       job.recipe = {
@@ -3490,7 +3134,7 @@ describe('StudioPlaygroundWorkspace', () => {
         references: [],
         endFrameId: undefined,
       };
-      await renderLoaded();
+      render(<StudioPlaygroundWorkspace />);
       vary(job);
       expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
         'video',
@@ -3545,16 +3189,14 @@ describe('StudioPlaygroundWorkspace', () => {
   describe('Library image editing entry', () => {
     it('opens a source-only draft and reacts to changing the source query on the same route', async () => {
       mocks.searchParams.value = 'editImage=source-1';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/source.png',
-          promptText: 'Old generation prompt',
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/source.png',
+        promptText: 'Old generation prompt',
+      }));
       const { rerender } = render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith('image-edit', {
@@ -3570,13 +3212,7 @@ describe('StudioPlaygroundWorkspace', () => {
         expect.objectContaining({ id: 'source-1', role: 'editSource' }),
       );
       mocks.searchParams.value = 'editImage=source-2';
-      mocks.openConfirm.mockClear();
       rerender(<StudioPlaygroundWorkspace />);
-      // The first source now owns the draft, so the second asks first.
-      await waitFor(() => expect(mocks.openConfirm).toHaveBeenCalledOnce());
-      act(() => {
-        mocks.openConfirm.mock.calls.at(-1)?.[0].onConfirm();
-      });
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
           'image-edit',
@@ -3587,72 +3223,19 @@ describe('StudioPlaygroundWorkspace', () => {
         mocks.composer.mock.calls.at(-1)?.[0].attachedAssets,
       ).not.toContainEqual(expect.objectContaining({ id: 'source-1' }));
     });
-    it('restores the saved draft and keeps it until Replace draft is confirmed', async () => {
-      mocks.searchParams.value = 'editImage=source-1';
-      window.history.replaceState(null, '', '/?editImage=source-1');
-      mocks.getDraft.mockResolvedValueOnce({
-        attachments: [],
-        brandId: 'brand-1',
-        droppedReferenceIds: [],
-        id: 'draft-1',
-        knowledgeSelection: { sourceIds: [] },
-        organizationId: 'org-1',
-        prompt: 'Keep my saved draft',
-        references: [],
-        settingsByType: {},
-        type: 'image',
-        userId: 'user-1',
-      });
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/source.png',
-        })),
-      );
-      render(<StudioPlaygroundWorkspace />);
-
-      await waitFor(() => expect(mocks.openConfirm).toHaveBeenCalledOnce());
-      expect(mocks.findByIds).toHaveBeenCalledWith(['source-1']);
-      expect(mocks.composer.mock.calls.at(-1)?.[0].prompt).toBe(
-        'Keep my saved draft',
-      );
-      expect(mocks.applyTypeSettings).not.toHaveBeenCalled();
-      expect(window.location.search).toBe('');
-
-      act(() => {
-        mocks.openConfirm.mock.calls.at(-1)?.[0].onConfirm();
-      });
-      await waitFor(() =>
-        expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
-          'image-edit',
-          expect.objectContaining({ editPrimaryId: 'source-1' }),
-        ),
-      );
-      expect(mocks.composer.mock.calls.at(-1)?.[0].prompt).toBe('');
-      expect(
-        mocks.composer.mock.calls.at(-1)?.[0].attachedAssets,
-      ).toContainEqual(
-        expect.objectContaining({ id: 'source-1', role: 'editSource' }),
-      );
-    });
     it('carries 16:9 into the editor and does not keep a generation model', async () => {
       mocks.searchParams.value = 'editImage=source-wide';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/wide.png',
-          promptText: 'Wide shot',
-          metadataModel: MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3,
-          width: 1920,
-          height: 1080,
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/wide.png',
+        promptText: 'Wide shot',
+        metadataModel: MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3,
+        width: 1920,
+        height: 1080,
+      }));
       render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith('image-edit', {
@@ -3670,19 +3253,16 @@ describe('StudioPlaygroundWorkspace', () => {
     });
     it('keeps an editor model and matches the source when the ratio is unsupported', async () => {
       mocks.searchParams.value = 'editImage=source-cinema';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/cinema.png',
-          promptText: 'Cinematic',
-          metadataModel:
-            MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_3_IMAGE_EDIT,
-          imageEdit: { aspectRatio: '2.39:1' },
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/cinema.png',
+        promptText: 'Cinematic',
+        metadataModel: MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_3_IMAGE_EDIT,
+        imageEdit: { aspectRatio: '2.39:1' },
+      }));
       render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith('image-edit', {
@@ -3699,18 +3279,16 @@ describe('StudioPlaygroundWorkspace', () => {
     });
     it('matches the source pixels when they are not a selectable ratio', async () => {
       mocks.searchParams.value = 'editImage=source-anamorphic';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/anamorphic.png',
-          promptText: 'Anamorphic',
-          width: 1920,
-          height: 800,
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/anamorphic.png',
+        promptText: 'Anamorphic',
+        width: 1920,
+        height: 800,
+      }));
       render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
@@ -3731,20 +3309,18 @@ describe('StudioPlaygroundWorkspace', () => {
     });
     it('keeps a recorded 16:9 and the ledger model without using portrait placeholders', async () => {
       mocks.searchParams.value = 'editImage=source-recorded';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/recorded.png',
-          promptText: 'Wide shot',
-          aspectRatio: '16:9',
-          metadataWidth: 1080,
-          metadataHeight: 1920,
-          modelUsed: MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3,
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/recorded.png',
+        promptText: 'Wide shot',
+        aspectRatio: '16:9',
+        metadataWidth: 1080,
+        metadataHeight: 1920,
+        modelUsed: MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3,
+      }));
       render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith('image-edit', {
@@ -3767,20 +3343,18 @@ describe('StudioPlaygroundWorkspace', () => {
     });
     it('keeps an edit model stored only on the image-edit recipe', async () => {
       mocks.searchParams.value = 'editImage=source-edited';
-      mocks.findByIds.mockImplementation(async (ids: string[]) =>
-        ids.map((id) => ({
-          id,
-          brandId: 'brand-1',
-          category: 'IMAGE',
-          status: 'GENERATED',
-          cdnUrl: 'https://example.com/edited.png',
-          promptText: 'Edited',
-          imageEdit: {
-            aspectRatio: '16:9',
-            model: MODEL_KEYS.REPLICATE_IDEOGRAM_AI_IDEOGRAM_4_5,
-          },
-        })),
-      );
+      mocks.findOne.mockImplementation(async (id: string) => ({
+        id,
+        brandId: 'brand-1',
+        category: 'IMAGE',
+        status: 'GENERATED',
+        cdnUrl: 'https://example.com/edited.png',
+        promptText: 'Edited',
+        imageEdit: {
+          aspectRatio: '16:9',
+          model: MODEL_KEYS.REPLICATE_IDEOGRAM_AI_IDEOGRAM_4_5,
+        },
+      }));
       render(<StudioPlaygroundWorkspace />);
       await waitFor(() =>
         expect(mocks.applyTypeSettings).toHaveBeenCalledWith(

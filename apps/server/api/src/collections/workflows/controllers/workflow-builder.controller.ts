@@ -262,6 +262,7 @@ export class WorkflowBuilderController {
     const errors: string[] = [];
     const requiredInputs = new Set<string>();
 
+    // Extract required workflow input nodes
     for (const node of workflow.nodes || []) {
       if (isWorkflowInputNodeType(node.type)) {
         const nodeConfig = (node.data as { config?: { inputName?: string } })
@@ -271,6 +272,7 @@ export class WorkflowBuilderController {
       }
     }
 
+    // Validate provided inputs match requirements
     for (const required of requiredInputs) {
       if (!(required in (body.inputs || {}))) {
         errors.push(`Missing required input: ${required}`);

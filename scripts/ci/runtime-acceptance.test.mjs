@@ -34,7 +34,6 @@ import {
   createFinalCrunDatabaseAllocator,
   createFinalOwnedDatabase,
   createState,
-  DATASET_TYPECHECK_HEAP_MB,
   DEDICATED_BUDGETS,
   DELEGATED_API_FILES,
   databaseUrl,
@@ -104,7 +103,6 @@ import {
   verifyFrozenSources,
   verifyVisualRuntimeProbe,
   verifyVisualScenarioSources,
-  visualProtocolFiles,
   visualSelection,
   workBudget,
 } from './runtime-acceptance.mjs';
@@ -951,8 +949,7 @@ test('timeout terminates owned descendants before cleanup and retains the timeou
         const status = await readFile(`/proc/${pid}/stat`, 'utf8');
         assert.match(status, /\) Z /);
       } catch (error) {
-        // Linux can report ESRCH when the descendant exits during /proc reading.
-        if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error;
+        if (error.code !== 'ENOENT') throw error;
       }
     },
   });
@@ -2001,35 +1998,6 @@ test('actual TAP totals require complete unique nonzero unskipped original succe
       parseProtocolTotals(tapSummary(), { ...child, ...failure }),
     );
 });
-test('visual protocol stage runs every file it lists to completion with no skip', async () => {
-  const repoRoot = await realpath(new URL('../..', import.meta.url));
-  const directory = path.join(repoRoot, 'scripts/visual-code');
-  const entries = await readdir(directory);
-  const files = visualProtocolFiles(entries);
-  // Host-browser suites skip by design here; the runsc image covers their cases.
-  assert.ok(entries.includes('render-evidence.browser.test.mjs'));
-  assert.ok(files.includes('scripts/visual-code/render-evidence.test.mjs'));
-  assert.ok(files.includes('scripts/visual-code/protocol.test.mjs'));
-  assert.deepEqual(
-    files.filter((file) => file.endsWith('.browser.test.mjs')),
-    [],
-  );
-  const environment = { ...process.env };
-  delete environment.NODE_TEST_CONTEXT;
-  delete environment.VISUAL_CODE_EVIDENCE_BROWSER;
-  const run = spawnSync(
-    process.execPath,
-    ['--test', '--test-reporter=tap', ...files],
-    { cwd: repoRoot, encoding: 'utf8', env: environment },
-  );
-  assert.equal(run.status, 0, run.stderr);
-  const totals = parseProtocolTotals(run.stdout, {
-    exitCode: run.status,
-    signal: run.signal,
-    timedOut: false,
-  });
-  assert.ok(totals.pass > 0);
-});
 test('renderer deletion names require exact private manifest hash ownership', () => {
   const id = randomBytes(20).toString('hex');
   const name = `visual-code-${createHash('sha256').update(id).digest('hex').slice(0, 40)}`;
@@ -2980,11 +2948,11 @@ test('prepared owner revisions retain only the exact approved source hashes', ()
   );
   assert.equal(
     AGENT_PRODUCTION_FILES[0].sha256,
-    'bceb9cdecfce6190617220c57dfecd3d350ed593d40958f6f2f769b258376f79',
+    '12571f679240c51920554aa0cb8ee50c4f503784de1560b99eafeb6ce4e85fbd',
   );
   assert.equal(
     AGENT_PRODUCTION_FILES[1].sha256,
-    '7c32393cccacfafc994e4a6682ea20d8b97f9475b410502f100ba377bcaa897c',
+    'b55d9a7d1c21bf2cde8543d6ba19de9353f4356e3ff2b43adde5884b9bd1ac73',
   );
   assert.equal(
     BRAND_SOURCE_CONTRACT.unitFiles.find(
@@ -3016,7 +2984,7 @@ test('prepared owner revisions retain only the exact approved source hashes', ()
   );
   assert.equal(
     BRAND_SOURCE_CONTRACT.brand.sha256,
-    '2cc0588bae012b905ff4e04a61c6844cd5c5371128535a974d6396f5fb03522e',
+    '86ddc267fa96f5df2fef82b03e46a806929d75ea35265125d7b7e43ff78d22e4',
   );
 });
 test('migration diagnostics helper is an exact frozen dependency for learning and brand', () => {
@@ -4753,7 +4721,7 @@ test('actual spawn guard is synchronous and immediately precedes spawn, while ex
 const FROZEN_CRUN = {
   image: {
     path: 'apps/server/api/src/services/integrations/crun/crun-image-flow.integration.spec.ts',
-    sha256: '7e8df9451489fe6c72e01e85a6ab6757d8a925d9d0185f91504f1bf98e5a667c',
+    sha256: '19ebcf4d0e81a380900d2d1ce7f638e5694a924fcff2eb8aa88c366ff91a7cdd',
     count: 18,
     passedTitles: [
       'Crun image quote through durable owned output and accounting model 0 outputs 1 funding hosted scenario success: frozen quote, restart, owned storage and exact accounting',
@@ -4778,7 +4746,7 @@ const FROZEN_CRUN = {
   },
   video: {
     path: 'apps/server/api/src/services/integrations/crun/crun-video-flow.integration.spec.ts',
-    sha256: 'a2cd90360d534c1be20d5194ddb13f593f006f01f13d78599473cd228361b775',
+    sha256: 'a0d530c2cab376cd23f789e25ce29b722870af658255ba89f2699f6953c01882',
     count: 23,
     passedTitles: [
       'Crun video quote through durable owned output and accounting model 0 outputs 1 funding hosted scenario success variant default: frozen quote, restart, owned storage and exact accounting',
@@ -6597,32 +6565,6 @@ test('publisher requires both independent lock rows in addition to overlap and r
       );
     assert.throws(() => validateReport(negative, [contract], child));
   }
-});
-
-test('publisher contracts name specs that still exist with the exact collected titles', async () => {
-  for (const contract of PUBLISHER_CONTRACTS) {
-    const source = await readFile(
-      new URL(`../../apps/server/api/${contract.file}`, import.meta.url),
-      'utf8',
-    );
-    for (const title of contract.titles) {
-      const match = /^(.*?\)) (.+)$/.exec(title);
-      assert.ok(match, `${title} must be "<describe> <case>"`);
-      const [, suite, name] = match;
-      assert.ok(
-        source.includes(`describe('${suite}'`),
-        `${contract.file} no longer declares suite ${suite}`,
-      );
-      assert.ok(
-        source.includes(`'${name.split(': ')[0]}`),
-        `${contract.file} no longer declares case ${name}`,
-      );
-    }
-  }
-});
-
-test('dataset typecheck heap exceeds the whole-API program footprint', () => {
-  assert.ok(DATASET_TYPECHECK_HEAP_MB >= 8192);
 });
 
 for (const name of [

@@ -115,7 +115,7 @@ describe('WorkflowExecutionQueueService', () => {
   describe('trusted module queue admission', () => {
     it('captures the authenticated scope and ignores input metadata claiming another module', async () => {
       await runWithOrganizationModule(
-        { organizationId: 'org-1', moduleId: 'turbo' },
+        { organizationId: 'org-1', moduleId: 'batch' },
         () =>
           service.queueSystemWorkflow(
             {
@@ -136,14 +136,14 @@ describe('WorkflowExecutionQueueService', () => {
       );
       expect(mockModuleAccess.assertAccess).toHaveBeenCalledWith(
         'org-1',
-        'turbo',
+        'batch',
       );
       expect(mockQueue.add).toHaveBeenCalledWith(
         'system-run',
         expect.objectContaining({
           organizationModuleContext: {
             organizationId: 'org-1',
-            moduleId: 'turbo',
+            moduleId: 'batch',
           },
         }),
         expect.any(Object),
@@ -156,7 +156,7 @@ describe('WorkflowExecutionQueueService', () => {
       );
       await expect(
         runWithOrganizationModule(
-          { organizationId: 'org-1', moduleId: 'turbo' },
+          { organizationId: 'org-1', moduleId: 'batch' },
           () =>
             service.queueSystemWorkflow(
               {
@@ -177,7 +177,7 @@ describe('WorkflowExecutionQueueService', () => {
     it('rejects cross-organization fanout instead of borrowing the parent grant', async () => {
       await expect(
         runWithOrganizationModule(
-          { organizationId: 'other-org', moduleId: 'turbo' },
+          { organizationId: 'other-org', moduleId: 'batch' },
           () => service.queueTriggerEvent(createTriggerEvent()),
         ),
       ).rejects.toThrow('Invalid queued organization module execution context');

@@ -3,13 +3,13 @@ import { OrganizationModuleGuard } from '@api/common/organization-modules/organi
 import { Reflector } from '@nestjs/core';
 import { describe, expect, it, vi } from 'vitest';
 
-@OrganizationModule('turbo')
-class TurboController {
+@OrganizationModule('batch')
+class BatchController {
   write() {}
   list() {}
-  @OrganizationModule('turbo', 'export')
+  @OrganizationModule('batch', 'export')
   export() {}
-  @OrganizationModule('turbo', 'write')
+  @OrganizationModule('batch', 'write')
   mutatingGet() {}
 }
 class OpenController {
@@ -53,7 +53,7 @@ describe('OrganizationModuleGuard', () => {
     } as never);
     await expect(
       guard.canActivate(
-        createContext(TurboController, 'write', {
+        createContext(BatchController, 'write', {
           ...identity,
           user: { ...identity.user, ...flags },
           method: 'POST',
@@ -62,7 +62,7 @@ describe('OrganizationModuleGuard', () => {
         }) as never,
       ),
     ).rejects.toThrow('disabled');
-    expect(assertAccess).toHaveBeenCalledWith('org-1', 'turbo', 'write');
+    expect(assertAccess).toHaveBeenCalledWith('org-1', 'batch', 'write');
   });
   it.each([
     {},
@@ -77,7 +77,7 @@ describe('OrganizationModuleGuard', () => {
       } as never);
       await expect(
         guard.canActivate(
-          createContext(TurboController, 'write', {
+          createContext(BatchController, 'write', {
             ...request,
             method: 'POST',
             headers: { 'x-genfeed-organization-id': 'org-1' },
@@ -98,14 +98,14 @@ describe('OrganizationModuleGuard', () => {
       ['mutatingGet', 'GET', 'write'],
     ]) {
       await guard.canActivate(
-        createContext(TurboController, handler, {
+        createContext(BatchController, handler, {
           ...identity,
           method,
         }) as never,
       );
       expect(assertAccess).toHaveBeenLastCalledWith(
         'org-1',
-        'turbo',
+        'batch',
         operation,
       );
     }

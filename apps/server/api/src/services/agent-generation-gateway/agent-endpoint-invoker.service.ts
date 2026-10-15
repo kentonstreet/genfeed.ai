@@ -58,15 +58,6 @@ export class AgentEndpointInvoker {
     invocation: AgentEndpointInvocation,
   ): Promise<TResult> {
     this.assertCreditsSettlementIsWired(endpoint);
-    if (
-      invocation.approvedGenerationQuote &&
-      (!['/v1/images', '/v1/videos'].includes(endpoint.originalUrl) ||
-        endpoint.shouldDeferCreditsUntilModelResolution !== true)
-    ) {
-      throw new Error(
-        'Approved model quotes require a supported deferred generation endpoint.',
-      );
-    }
 
     const request = await this.buildRequest(endpoint, invocation);
     const user = request.user;
@@ -88,11 +79,7 @@ export class AgentEndpointInvoker {
     );
 
     if (endpoint.isSubscriptionCheckSkipped !== true) {
-      await this.subscriptionGuard.assertActive(
-        request,
-        endpoint.creditsConfig,
-        endpoint.organizationModule.moduleId,
-      );
+      this.subscriptionGuard.assertActive(request, endpoint.creditsConfig);
     }
 
     await this.creditsGuard.admit(
@@ -103,15 +90,6 @@ export class AgentEndpointInvoker {
       ),
       endpoint.shouldDeferCreditsUntilModelResolution === true,
     );
-    if (invocation.approvedGenerationQuote) {
-      if (!request.creditsConfig?.deferred) {
-        throw new Error('Approved model quote admission is unavailable.');
-      }
-      request.creditsConfig = {
-        ...request.creditsConfig,
-        approvedGenerationQuote: invocation.approvedGenerationQuote,
-      };
-    }
 
     await this.modelsGuard.validate(request, endpoint.modelValidation);
 

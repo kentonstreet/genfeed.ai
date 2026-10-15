@@ -158,7 +158,6 @@ describe('AgentToolExecutorService — #4672 agent-mode confirmation matrix', ()
       brandAccessService: brandAccessFixture(),
       workObjects: { assertReady: vi.fn().mockResolvedValue(undefined) },
       generationSettingsHandler: { handles: vi.fn().mockReturnValue(false) },
-      threadHandler: { handles: vi.fn().mockReturnValue(false) },
     });
     service.onModuleInit();
   });

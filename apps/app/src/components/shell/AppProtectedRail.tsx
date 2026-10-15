@@ -3,24 +3,18 @@
 import { useAccessState } from '@genfeedai/contexts/providers/access-state/access-state.provider';
 import { useBrand } from '@genfeedai/contexts/user/brand-context/brand-context';
 import { getBrandEntityId } from '@genfeedai/contexts/user/brand-context/brand-context.helpers';
-import {
-  ORGANIZATION_MODULE_IDS,
-  resolveOrganizationModulePreferences,
-  resolveOrganizationModulePresentationAccess,
-} from '@genfeedai/contracts/constants';
+import { resolveOrganizationModulePreferences } from '@genfeedai/contracts/constants';
 import { useWorkspaceInboxCount } from '@genfeedai/hooks/data/tasks/use-workspace-inbox-count';
-import { useFeatureFlagContext } from '@genfeedai/hooks/feature-flags/provider';
 import type { AppProtectedRailProps } from '@genfeedai/props/ui/app-rail.props';
 import { useOrgUrl } from '@hooks/navigation/use-org-url';
 import { AppRail } from '@ui/shell/app-rail/AppRail';
 import RailAccount from '@ui/shell/app-rail/RailAccount';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Suspense, useCallback, useMemo } from 'react';
-import { useInstalledApps } from '@/components/shell/installed-apps.provider';
-import { usePinnedRailAppsContext } from '@/components/shell/pinned-rail-apps.provider';
+import { Suspense, useCallback } from 'react';
 import { resolveShellScope } from '@/components/shell/shell-scope';
 import { useMessagesUnreadCount } from '@/components/shell/use-messages-unread-count';
+import { usePinnedRailApps } from '@/components/shell/use-pinned-rail-apps';
 import { captureAppRailNavigation } from '@/lib/analytics/app-rail-analytics';
 import {
   appendSearchParamsToHref,
@@ -38,28 +32,9 @@ function AppProtectedRailContent({
   const pathname = usePathname();
   const { brandId, brands, selectedBrand, settings, settingsLoading } =
     useBrand();
-  const { flags: platformFlags } = useFeatureFlagContext();
   const modulePreferences = resolveOrganizationModulePreferences(
     settingsLoading ? null : settings,
-    platformFlags,
   );
-  const moduleAccess = useMemo(
-    () =>
-      settingsLoading
-        ? null
-        : Object.fromEntries(
-            ORGANIZATION_MODULE_IDS.map((moduleId) => [
-              moduleId,
-              resolveOrganizationModulePresentationAccess(
-                settings,
-                moduleId,
-                platformFlags,
-              ),
-            ]),
-          ),
-    [platformFlags, settings, settingsLoading],
-  );
-  const installedApps = useInstalledApps();
   const { isAssetGateLocked, isSuperAdmin } = useAccessState();
   const { brandSlug: resolvedBrandSlug, orgSlug: resolvedOrgSlug } =
     useOrgUrl();
@@ -98,7 +73,7 @@ function AppProtectedRailContent({
     pathname,
     new URLSearchParams(searchParams.toString()),
   );
-  const { pinnedAppIds } = usePinnedRailAppsContext();
+  const { pinnedAppIds, togglePin } = usePinnedRailApps();
   const preservedTaskSearch = pickOperatorTaskContextSearchParams(
     new URLSearchParams(searchParams.toString()),
   ).toString();
@@ -110,12 +85,9 @@ function AppProtectedRailContent({
         threadId: searchParams.get('thread'),
       });
 
-      // A destination the shell registry does not know (an org-level app
-      // entry such as `~/studio/storyboard`, resolved by its own route) must
-      // keep its own link, not fall back to the current page.
       return {
         announcement: launch.announcement,
-        href: launch.registryKey === null ? destinationHref : launch.href,
+        href: launch.href,
       };
     },
     [currentHref, searchParams],
@@ -146,14 +118,10 @@ function AppProtectedRailContent({
       brandAwareSlug={brandAwareAppSlug}
       brandSlug={effectiveBrandSlug}
       currentPath={pathname}
-      isAdminChrome={isAdminChrome}
-      installedAppIds={
-        installedApps.status === 'ready' ? installedApps.installedAppIds : []
-      }
       isAssetGateLocked={isAssetGateLocked}
-      moduleAccess={moduleAccess}
       modulePreferences={modulePreferences}
       onNavigate={onNavigate}
+      onTogglePin={togglePin}
       orgSlug={effectiveOrgSlug}
       pinnedAppIds={pinnedAppIds}
       preservedSearch={preservedTaskSearch || undefined}

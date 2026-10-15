@@ -176,18 +176,18 @@ describe('PersonaContentPlanService', () => {
     expect(result.entries[0].format).toBe(PersonaContentFormat.PHOTO);
   });
 
-  it.each(['unreleased', 'unavailable'])(
+  it.each(['disabled', 'unavailable'])(
     'rejects %s Publishing access before creating a draft',
     async (reason) => {
       const denied = new HttpException(
         {
           code:
-            reason === 'unreleased'
-              ? 'ORGANIZATION_MODULE_UNRELEASED'
+            reason === 'disabled'
+              ? 'ORGANIZATION_MODULE_DISABLED'
               : 'ORGANIZATION_MODULE_UNAVAILABLE',
           moduleId: 'publishing',
         },
-        reason === 'unreleased'
+        reason === 'disabled'
           ? HttpStatus.FORBIDDEN
           : HttpStatus.SERVICE_UNAVAILABLE,
       );
