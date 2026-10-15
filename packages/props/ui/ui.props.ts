@@ -6,6 +6,7 @@ import type {
 import { CardVariant } from '@genfeedai/contracts';
 import type { NavigationTab } from '@genfeedai/contracts/interfaces/ui/navigation.interface';
 import type { IconComponent } from '@genfeedai/contracts/types/icon';
+import type { PageHelpContent } from '@genfeedai/props/ui/layout/page-help.props';
 import type { TabItem, TabsProps } from '@props/ui/navigation/tabs.props';
 import type { MouseEvent, ReactNode } from 'react';
 
@@ -42,7 +43,7 @@ export interface CardProps {
   iconClassName?: string;
   id?: string;
   label?: ReactNode;
-  labelAs?: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
+  labelAs?: 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
   isLabelWrapped?: boolean;
   description?: string;
   isDisabled?: boolean;
@@ -77,19 +78,9 @@ interface ContainerBaseProps {
   left?: ReactNode;
   /** Left-aligned module-bar tools such as search. Maps to SectionTopbar `leading`. */
   leading?: ReactNode;
-  /**
-   * Module-bar controls, then the primary action last. Ghost actions that are
-   * not Refresh belong in `iconActions`; Refresh belongs in `refresh`.
-   */
   right?: ReactNode;
-  /**
-   * Refresh control. SectionTopbar renders it right after Help and before the
-   * tabs, so it sits in the same place on every page.
-   */
-  refresh?: ReactNode;
-  /** Module toolbar ghost actions, placed after the tabs and before controls. */
+  /** Module toolbar ghost actions, placed beside Help and the inspector. */
   iconActions?: ReactNode;
-  iconActionsPlacement?: 'before-controls' | 'after-controls';
   /**
    * Keep the module bar pinned to the top of the scrolling canvas, and
    * publish its height as `--pinned-topbar-height` for sticky descendants.
@@ -97,6 +88,8 @@ interface ContainerBaseProps {
   isTopbarPinned?: boolean;
   /** Row rendered inside the pinned module bar, under the filters. */
   topbarFooter?: ReactNode;
+  /** Explicit help popover; `null` hides the route-level help for this page. */
+  help?: PageHelpContent | null;
 }
 
 /**

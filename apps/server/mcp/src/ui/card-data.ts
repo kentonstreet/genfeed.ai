@@ -45,6 +45,7 @@ const TOOL_KINDS: Readonly<Record<string, McpCardKind>> = {
   // Social copy renders as a post; an article result switches to the article
   // card in buildCardView via its articleId.
   generate_content: 'post',
+  get_account: 'usage',
   get_articles: 'article',
   get_job_status: 'media',
   get_posts: 'post',
@@ -143,24 +144,11 @@ function postMedia(row: Record<string, unknown>): Partial<McpCard> {
     const kind = mediaKind(item);
     return kind ? [kind] : [];
   });
-  const media = items.flatMap((item, index) => {
-    const kind = mediaKind(item);
-    return kind
-      ? [
-          {
-            id: text(item, 'assetId', 'id') || `media-${index}`,
-            kind,
-            url: safeCardUrl(text(item, 'url', 'cdnUrl')),
-            thumbnailUrl: safeCardUrl(text(item, 'thumbnailUrl')),
-          },
-        ]
-      : [];
-  });
   const playable = items.find(
     (item) => mediaKind(item) && safeCardUrl(text(item, 'url', 'cdnUrl')),
   );
   return {
-    ...(attachments.length ? { attachments, media } : {}),
+    ...(attachments.length ? { attachments } : {}),
     ...(playable
       ? {
           mediaKind: mediaKind(playable),
@@ -168,16 +156,6 @@ function postMedia(row: Record<string, unknown>): Partial<McpCard> {
         }
       : {}),
   };
-}
-
-function postAuthor(row: Record<string, unknown>): Partial<McpCard> {
-  const author = record(row.author);
-  const name = text(author, 'name');
-  const handle = text(author, 'handle');
-  const avatarUrl = safeCardUrl(text(author, 'avatarUrl'));
-  return name || handle || avatarUrl
-    ? { author: { name, handle, avatarUrl } }
-    : {};
 }
 
 function progress(row: Record<string, unknown>): number | undefined {
@@ -196,9 +174,7 @@ function card(row: Record<string, unknown>, kind: McpCardKind): McpCard {
     isMedia && !url && PENDING_STATUSES.has(status.toLowerCase());
   const stage = text(row, 'stage', 'generationStage');
   return {
-    ...(resolvedKind === 'post'
-      ? { ...postMedia(row), ...postAuthor(row) }
-      : {}),
+    ...(resolvedKind === 'post' ? postMedia(row) : {}),
     ...(isPending ? { isPending, progress: progress(row) } : {}),
     ...(isPending && stage ? { stage } : {}),
     date: text(row, 'scheduledDate', 'scheduledAt', 'publishedAt', 'createdAt'),
@@ -334,6 +310,23 @@ export function buildCardView(
         total: variations.length,
       };
     }
+  }
+  if (kind === 'usage') {
+    // `get_account` can omit the usage section; there is nothing to chart then.
+    if (!Object.keys(record(data.usage)).length) return undefined;
+    const metrics = record(data.usage);
+    const cards = Object.entries(metrics).flatMap(([label, value]) =>
+      typeof value === 'number' && Number.isFinite(value)
+        ? [
+            {
+              ...card({}, kind),
+              description: String(value),
+              title: label.replace(/([A-Z])/g, ' $1'),
+            },
+          ]
+        : [],
+    );
+    return { cards, layout: 'cards', title: 'Usage', total: cards.length };
   }
   const collection = Array.isArray(payload)
     ? payload

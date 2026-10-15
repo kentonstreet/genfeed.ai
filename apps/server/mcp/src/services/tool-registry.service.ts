@@ -1,27 +1,19 @@
 import {
-  describeCreditPricing,
-  estimateToolCreditCost,
   getToolByName,
   getToolsetNames,
   getToolsForSurface,
   getToolsForToolsets,
-  isMcpBrandRequiredTool,
   isToolAllowedInMcpAccessMode,
   type McpAccessMode,
-  type McpBrandOption,
   type McpToolOutput,
-  readMcpBrandId,
-  requiresMcpApproval,
   type ToolsetName,
   toMcpTools,
 } from '@genfeedai/actions';
-import { isMcpTextDraftCall } from '@genfeedai/actions/server';
 import { formatAgentError } from '@genfeedai/agent/server';
 import { APP_ROUTES } from '@genfeedai/contracts/constants';
 import type { AgentToolResult } from '@genfeedai/contracts/interfaces';
 import { serializeMediaArtifact } from '@genfeedai/helpers';
 import { SATOSHI_FONT_RESOURCE_PATH } from '@genfeedai/ui/static/font';
-import { isRecord } from '@genfeedai/utils/data/extract.util';
 import { LoggerService } from '@libs/logger/logger.service';
 import { ConfigService } from '@mcp/config/config.service';
 import { McpAuthGuard } from '@mcp/guards/mcp-auth.guard';
@@ -42,10 +34,6 @@ import {
 import { finalizeMcpToolResult } from '@mcp/services/mcp-tool-result.util';
 import type { McpApprovalResource } from '@mcp/shared/interfaces/approval.interface';
 import type { McpResource } from '@mcp/shared/interfaces/mcp-resource.interface';
-import {
-  accountToolText,
-  dataToolResult,
-} from '@mcp/shared/utils/tool-result-text.util';
 import { handleAccountManagementTool } from '@mcp/tools/account-management.tool';
 import { handleAdsGatewayTool } from '@mcp/tools/ads-gateway.tool';
 import { handleAgentChatTool } from '@mcp/tools/agent-chat.tool';
@@ -351,14 +339,7 @@ export class ToolRegistryService implements OnModuleInit {
   }
 
   async handleToolCall(params: ToolCallParams) {
-    const requestedArgs = params.arguments ?? {};
-    const brandCreation =
-      params.name === 'onboard_brand' &&
-      requestedArgs.action === 'create_from_url'
-        ? resolveOnboardBrandCall(requestedArgs)
-        : null;
-    const name = brandCreation?.agentToolName ?? params.name;
-    const args = brandCreation?.parameters ?? requestedArgs;
+    const { name, arguments: args } = params;
 
     this.logger.debug(`Handling tool call: ${name}`, args);
 
@@ -368,7 +349,7 @@ export class ToolRegistryService implements OnModuleInit {
           code: 'unavailable_in_connector',
           message:
             'This tool is unavailable through the Claude connector. Create images, video and audio in Genfeed Studio, then return here to manage your content.',
-          nextStepUrl: `${getPublicAppUrl()}${APP_ROUTES.STUDIO.PLAYGROUND}`,
+          nextStepUrl: `${getPublicAppUrl()}${APP_ROUTES.STUDIO.GENERATE}`,
         });
       }
       const canonicalTool = getToolByName(name);
@@ -388,18 +369,13 @@ export class ToolRegistryService implements OnModuleInit {
         return await this.handleResolveApproval(args ?? {});
       }
 
-      // Rejected before any approval or charge: a generation always names its brand.
-      if (isMcpBrandRequiredTool(name) && !readMcpBrandId(args)) {
-        return await this.brandRequiredResult();
-      }
-
-      // Declared approvals and credit spenders wait for confirmation.
-      if (ToolRegistryService.requiresApproval(name, args)) {
+      // Mutating tools persist a pending approval instead of executing.
+      if (ToolRegistryService.requiresApproval(name)) {
         const approval = await this.clientService.createApproval(
           name,
           args ?? {},
         );
-        return this.pendingApprovalResult(approval, args ?? {});
+        return this.pendingApprovalResult(approval);
       }
 
       return await this.executeTool(name, args ?? {});
@@ -427,33 +403,6 @@ export class ToolRegistryService implements OnModuleInit {
     }
   }
 
-  private async brandRequiredResult() {
-    const brands = await this.listCallerBrands();
-    return mcpToolErrorResult({
-      brands,
-      code: 'brand_required',
-      message: brands.length
-        ? `Choose a brand for this generation. Available brands: ${brands.map((brand) => (brand.label === brand.id ? 'Unnamed brand' : brand.label)).join(', ')}.`
-        : 'Create a brand in Genfeed before starting this generation.',
-    });
-  }
-
-  private async listCallerBrands(): Promise<McpBrandOption[]> {
-    const result = await this.clientService.executeAgentTool('get_brands', {});
-    const brands = isRecord(result.data) ? result.data.brands : undefined;
-    if (!result.success || !Array.isArray(brands)) return [];
-    return brands.flatMap((brand): McpBrandOption[] => {
-      if (!isRecord(brand) || typeof brand.id !== 'string') return [];
-      const label =
-        typeof brand.label === 'string' && brand.label.trim()
-          ? brand.label
-          : typeof brand.name === 'string' && brand.name.trim()
-            ? brand.name
-            : brand.id;
-      return [{ id: brand.id, label }];
-    });
-  }
-
   static classify(name: string): ExecutorKind {
     if (TOOL_DISCOVERY_TOOL_NAMES.has(name)) return 'tool-discovery';
     if (AGENT_CHAT_TOOL_NAMES.has(name)) return 'agent-chat';
@@ -478,30 +427,8 @@ export class ToolRegistryService implements OnModuleInit {
     return 'unknown';
   }
 
-  private static requiresApproval(
-    name: string,
-    args?: Record<string, unknown>,
-  ): boolean {
-    // These concrete calls cannot spend credits or dispatch publishing. The
-    // API still validates their arguments, actor, brand and key permissions.
-    if (name === 'create_post' && args && isMcpTextDraftCall(args))
-      return false;
-    if (name === 'repurpose_post' && args?.mode === 'deterministic')
-      return false;
-    const release = args?.release;
-    if (
-      name === 'create_scheduled_release' &&
-      isRecord(release) &&
-      (release.status === undefined || release.status === 'draft') &&
-      !release.scheduledDate &&
-      Array.isArray(release.targets) &&
-      release.targets.every(
-        (target) => isRecord(target) && !target.scheduledDate,
-      )
-    ) {
-      return false;
-    }
-    return requiresMcpApproval(getToolByName(name));
+  private static requiresApproval(name: string): boolean {
+    return getToolByName(name)?.mutationPolicy === 'approval-required';
   }
 
   private async executeTool(
@@ -539,7 +466,7 @@ export class ToolRegistryService implements OnModuleInit {
           args,
           approvedApprovalId ? { approvedApprovalId } : undefined,
         );
-        return this.toMcpResult(result, name);
+        return this.toMcpResult(result);
       }
       case 'onboarding': {
         const { agentToolName, parameters, timeoutMs } =
@@ -550,7 +477,7 @@ export class ToolRegistryService implements OnModuleInit {
           undefined,
           timeoutMs,
         );
-        return this.toMcpResult(result, name);
+        return this.toMcpResult(result);
       }
       case 'content':
         return handleContentTool(this.clientService, name, args);
@@ -616,7 +543,9 @@ export class ToolRegistryService implements OnModuleInit {
 
     if (decision === 'decline') {
       await this.clientService.resolveApproval(approvalId, 'decline');
-      return this.textResult('Approval declined. The action was not executed.');
+      return this.textResult(
+        `Approval ${approvalId} declined. The action was not executed.`,
+      );
     }
 
     // Atomically CLAIM the approval (PENDING -> APPROVED) BEFORE executing the
@@ -724,55 +653,8 @@ export class ToolRegistryService implements OnModuleInit {
     }
   }
 
-  private pendingApprovalResult(
-    approval: McpApprovalResource,
-    args: Record<string, unknown>,
-  ) {
-    const tool = getToolByName(approval.toolName);
-    const canResolveApproval = this.getTools().some(
-      (candidate) => candidate.name === 'resolve_approval',
-    );
-    if (approval.toolName === 'generate') {
-      const quote = approval.generationQuote;
-      const estimatedCredits =
-        quote?.isAvailable === true &&
-        typeof quote.credits === 'number' &&
-        Number.isFinite(quote.credits) &&
-        quote.credits >= 0 &&
-        typeof quote.modelKey === 'string' &&
-        quote.modelKey.trim()
-          ? quote.credits
-          : null;
-      return approvalPendingToolResult(
-        approval,
-        {
-          estimatedCredits,
-          pricingSummary:
-            estimatedCredits === null
-              ? 'A model-specific credit quote is unavailable. Request fresh consent with a supported model and complete settings.'
-              : undefined,
-        },
-        canResolveApproval,
-      );
-    }
-    if (!tool?.creditPricing)
-      return approvalPendingToolResult(approval, undefined, canResolveApproval);
-    const estimatedCredits = estimateToolCreditCost(
-      approval.toolName,
-      args,
-      tool.creditPricing,
-    );
-    return approvalPendingToolResult(
-      approval,
-      {
-        estimatedCredits,
-        pricingSummary:
-          estimatedCredits === null
-            ? describeCreditPricing(tool.creditPricing)
-            : undefined,
-      },
-      canResolveApproval,
-    );
+  private pendingApprovalResult(approval: McpApprovalResource) {
+    return approvalPendingToolResult(approval);
   }
 
   private textResult(text: string) {
@@ -785,7 +667,7 @@ export class ToolRegistryService implements OnModuleInit {
     ];
   }
 
-  private toMcpResult(result: AgentToolResult, name: string) {
+  private toMcpResult(result: AgentToolResult) {
     if (!result.success) {
       const gated = toMcpToolErrorResult(
         result.error ?? 'Tool execution failed',
@@ -807,33 +689,17 @@ export class ToolRegistryService implements OnModuleInit {
 
     const payload = result.data ?? {};
     if (serializeMediaArtifact(payload)) {
-      return toNativeMcpMediaResult(
-        payload,
-        this.mediaOrigins(),
-        this.logger,
-      ).then((media) => this.stampCreditsDebited(media, result.creditsUsed));
+      return toNativeMcpMediaResult(payload, this.mediaOrigins(), this.logger);
     }
-    const response = dataToolResult(
-      payload,
-      name === 'get_account' ? undefined : getToolByName(name)?.title,
-    );
-    if (name === 'get_account')
-      response.content[0].text = accountToolText(payload);
-    return this.stampCreditsDebited(response, result.creditsUsed);
-  }
-
-  private stampCreditsDebited<T extends { structuredContent?: object }>(
-    response: T,
-    creditsUsed: number,
-  ): T {
-    if (!response.structuredContent) return response;
     return {
-      ...response,
-      structuredContent: {
-        ...response.structuredContent,
-        creditsDebited: creditsUsed,
-      },
-    } as T;
+      content: [
+        {
+          text: JSON.stringify(payload, null, 2),
+          type: 'text',
+        },
+      ],
+      structuredContent: { data: payload },
+    };
   }
 
   async handleResourceRead(params: ResourceReadParams) {
@@ -862,7 +728,7 @@ export class ToolRegistryService implements OnModuleInit {
           return this.requestAccessMode === 'claude'
             ? markdownResource(
                 uri,
-                `# Genfeed for Claude\nManage brands, drafts, scheduling and analytics with existing assets. Create images, video and audio in [Genfeed Studio](${getPublicAppUrl()}${APP_ROUTES.STUDIO.PLAYGROUND}). This connector cannot run generation, workflows, batches, remix or approval redemption.`,
+                `# Genfeed for Claude\nManage brands, drafts, scheduling and analytics with existing assets. Create images, video and audio in [Genfeed Studio](${getPublicAppUrl()}${APP_ROUTES.STUDIO.GENERATE}). This connector cannot run generation, workflows, batches, remix or approval redemption.`,
               )
             : agentGuideResource(uri);
 

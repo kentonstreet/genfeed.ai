@@ -10,10 +10,6 @@
     "declaration": false,
     "types": ["node", "react", "react-dom"],
     "paths": {
-      "@genfeedai/ui/*": ["../../../packages/ui/src/*"],
-      "@genfeedai/contracts": ["../../../packages/contracts/src/index.ts"],
-      "@genfeedai/contracts/*": ["../../../packages/contracts/src/*"],
-      "@genfeedai/config/*": ["../../../packages/config/src/*"],
       "@ui/*": [
         "../../../packages/ui/src/*",
         "../../../packages/ui/src/components/*"
@@ -23,8 +19,7 @@
       "@genfeedai/services/*": ["../../../packages/services/*"],
       "@genfeedai/utils/*": ["../../../packages/utils/*"],
       "@props/*": ["../../../packages/props/*"],
-      "@mcp/*": ["./src/*"],
-      "@preview-messages/ui": ["../../app/messages/en/ui.json"]
+      "@mcp/*": ["./src/*"]
     },
     "target": "ES2022"
   },
