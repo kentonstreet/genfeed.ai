@@ -35,12 +35,8 @@ const ALLOWED_FILES = new Set([
   'onboarding-preview.service.ts',
   'oss-credits-utils.service.ts',
   'posting-cadence-copy.service.ts',
-  // Account and thread generation runs: a quoted publishing route, not an agent tool; its spec verifies the single hold, per-dispatch settlement and release.
-  'post-account-generation-billing.service.ts',
   'referrals.service.ts',
   'reply-generation.service.ts',
-  // Settles a caller-owned hold at the measured clip length. The caller quoted the work; this file is not an agent tool.
-  'reservation-duration-settlement.ts',
   // Storyboard sketch stills: a quoted Studio route, not an agent tool; its spec verifies settle-on-render and release-on-failure.
   'storyboard-stills.service.ts',
   'voice-credits.service.ts',

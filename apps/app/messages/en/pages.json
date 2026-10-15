@@ -1669,7 +1669,6 @@
     "cancelEnhancingPrompt": "Cancel enhancing prompt",
     "enhancePrompt": "Enhance prompt",
     "estimatedCredits": "Estimated {credits} credits",
-    "estimatedCreditsForSeconds": "Estimated {credits} credits for a ~{seconds} s clip",
     "summary": {
       "setup": "Generation setup summary",
       "modelLoading": "Loading model…",
@@ -1681,9 +1680,6 @@
       "estimateAfterSelection": "Estimate available after model selection",
       "estimateLoading": "Loading estimate…",
       "estimateUnavailable": "Estimate unavailable",
-      "estimatedSeconds": "~{seconds} s",
-      "byokEstimate": "Your API key · 0 credits",
-      "avatarEstimateNeedsInput": "Write a script and choose an avatar and a voice to see a price.",
       "estimateReasons": {
         "ERROR": "The price check failed. Try again.",
         "INSUFFICIENT_INPUT": "Add a prompt or choose a model to see a price.",
@@ -1807,11 +1803,6 @@
     "viewGrid": "Grid",
     "viewList": "List",
     "makeClips": "Make clips",
-    "brandEnhancement": {
-      "failed": "Brand enhancement failed. Nothing was generated and no credits were used.",
-      "generateWithoutBrand": "Generate without brand",
-      "generateWithoutBrandAria": "Generate this {type} without brand, using the prompt exactly as typed"
-    },
     "crun": {
       "outputFormat": "Output format",
       "quoteLoading": "Checking image price…",
@@ -3160,37 +3151,7 @@
       "scopeChanged": "The Library scope changed. Review the current failures and try again.",
       "reviewUnavailable": "Saved inputs could not be opened in Studio. Inspect this asset for details."
     },
-    "scrollTable": "Scroll table horizontally",
-    "accountVoices": {
-      "availability": {
-        "restricted": "Restricted",
-        "unavailable": "Unavailable"
-      },
-      "description": "Pick voices and clones from your connected ElevenLabs account. Importing saves a reference in your Library; nothing changes in ElevenLabs.",
-      "disconnected": {
-        "body": "Add your ElevenLabs API key in Integrations to browse your own voices and clones.",
-        "title": "Connect your ElevenLabs account"
-      },
-      "empty": "No voices in this ElevenLabs account match.",
-      "import": "Import",
-      "importError": "This voice could not be imported.",
-      "importSuccess": "{name} added to your Library",
-      "importVoice": "Import {name}",
-      "imported": "Imported",
-      "invalid": {
-        "body": "ElevenLabs rejected the saved API key. Update it in Integrations, then try again.",
-        "title": "Reconnect your ElevenLabs account"
-      },
-      "listLabel": "ElevenLabs account voices",
-      "loadError": "Your ElevenLabs voices could not be loaded.",
-      "loadMore": "Load more voices",
-      "loading": "Loading your ElevenLabs voices…",
-      "open": "Import from ElevenLabs",
-      "openIntegrations": "Open Integrations",
-      "retry": "Retry",
-      "searchLabel": "Search your ElevenLabs voices",
-      "title": "Import from your ElevenLabs account"
-    }
+    "scrollTable": "Scroll table horizontally"
   },
   "onboarding": {
     "brand": {
@@ -3360,10 +3321,6 @@
       "remainingCredits": "{count} journey credits still available",
       "review": "Review",
       "title": "Activation Journey"
-    },
-    "providers": {
-      "keyValidationNotice": "Use real keys only. Organization → API Keys checks each key with the provider before saving, so placeholder values are rejected; keys in your .env file are read when the container starts.",
-      "openRouterDescription": "Required for text generation and the agent. Set OPENROUTER_API_KEY in your .env."
     }
   },
   "credentialPostingTimes": {
@@ -3959,7 +3916,7 @@
     "deleteConfirmation": "Are you sure you want to delete \"{label}\"? This action cannot be undone.",
     "searchModels": "Search models",
     "moreOptions": "More options for {label}",
-    "editModel": "Edit model",
+    "pricingDetails": "Pricing details",
     "noModelsFound": "No models found",
     "emptySearchHint": "No models match your search. Clear it to see the catalog.",
     "emptyFilterHint": "No models are available for this filter. Change the filters or refresh the list.",

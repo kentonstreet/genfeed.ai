@@ -465,37 +465,6 @@ export const SELF_HOSTED_MODELS = [
     providerCostUsd: 0.05,
   },
   /**
-   * HeyGen photo animation: `POST /v3/videos` with `type: image`, which
-   * Avatar IV renders from an arbitrary image. HeyGen's API price table has no
-   * separate image row, so it bills at the Avatar IV photo-avatar rate of
-   * $2.31 per minute, $0.0385 per output second, with no resolution band
-   * (help.heygen.com/en/articles/10060327-heygen-api-pricing-explained,
-   * updated 2026-09-16, read 2026-10-14). The reviewed rate sheet carries the
-   * same single rate with no selector, so the configured `providerCostUsd`
-   * and the reviewed rate price a render identically: held at the estimated
-   * clip length, settled at the duration HeyGen returns. Available, not the
-   * avatar default — Avatar IV stays the recommended engine.
-   */
-  {
-    category: ModelCategory.AVATAR,
-    cost: 65,
-    costPerUnit: 13,
-    costTier: CostTier.LOW,
-    qualityTier: QualityTier.HIGH,
-    speedTier: SpeedTier.MEDIUM,
-    description:
-      'HeyGen Photo Avatar — animates a single photo into a talking video with Avatar IV. 13 credits per second, 65 for a 5 s clip.',
-    isDefault: false,
-    isHighlighted: false,
-    key: MODEL_KEYS.HEYGEN_AVATAR,
-    label: 'HeyGen Photo Avatar',
-    lifecycle: ModelLifecycle.AVAILABLE,
-    pricingType: PricingType.PER_SECOND,
-    provider: ModelProvider.HEYGEN,
-    providerConfig: { name: 'avatar', owner: 'heygen' },
-    providerCostUsd: 0.0385,
-  },
-  /**
    * HeyGen Avatar IV, the default avatar engine. HeyGen bills per output
    * second by avatar type: $0.0385 for a photo avatar, $0.0805 for a digital
    * twin or studio avatar (pricing page, 2026-10-10). This row carries the

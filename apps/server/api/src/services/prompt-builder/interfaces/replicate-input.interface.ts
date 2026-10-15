@@ -12,6 +12,10 @@
  * - Media: per-model input shapes for music/upscale operations
  */
 
+// ---------------------------------------------------------------------------
+// Base / Common
+// ---------------------------------------------------------------------------
+
 /** Fields shared by most image generation models */
 interface BaseImageInput extends Record<string, unknown> {
   prompt: string;
@@ -22,6 +26,10 @@ interface BaseImageInput extends Record<string, unknown> {
 interface BaseVideoInput extends Record<string, unknown> {
   prompt: string;
 }
+
+// ---------------------------------------------------------------------------
+// IMAGE model inputs
+// ---------------------------------------------------------------------------
 
 /** Google Imagen 3/3 Fast/4/4 Fast/4 Ultra */
 export interface ImagenInput extends BaseImageInput {
@@ -240,6 +248,10 @@ export type ReplicateImageInput =
   | LumaReframeImageInput
   | LumaReframeVideoInput
   | GenericImageInput;
+
+// ---------------------------------------------------------------------------
+// VIDEO model inputs
+// ---------------------------------------------------------------------------
 
 /** OpenAI Sora 2 */
 export interface Sora2Input extends BaseVideoInput {
@@ -543,6 +555,10 @@ export type ReplicateVideoInput =
   | Wan27T2VInput
   | Veo31LiteInput;
 
+// ---------------------------------------------------------------------------
+// TEXT / LLM model inputs
+// ---------------------------------------------------------------------------
+
 /** DeepSeek R1 */
 export interface DeepSeekR1Input extends Record<string, unknown> {
   frequency_penalty: number;
@@ -628,6 +644,10 @@ export type ReplicateTextInput =
   | Llama31405BInput
   | OpenRouterChatInput;
 
+// ---------------------------------------------------------------------------
+// MEDIA model inputs
+// ---------------------------------------------------------------------------
+
 /** Meta MusicGen */
 export interface MusicGenInput extends Record<string, unknown> {
   classifier_free_guidance: number;
@@ -679,6 +699,10 @@ export type ReplicateMediaInput =
   | TopazVideoUpscaleInput
   | BytedanceVideoUpscalerInput;
 
+// ---------------------------------------------------------------------------
+// Trained / Custom model input
+// ---------------------------------------------------------------------------
+
 /** Trained (custom/finetuned) model input */
 export interface TrainedModelInput extends Record<string, unknown> {
   aspect_ratio: string;
@@ -690,6 +714,10 @@ export interface TrainedModelInput extends Record<string, unknown> {
   seed: number;
   image?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Top-level union
+// ---------------------------------------------------------------------------
 
 /**
  * Union of all possible Replicate model input types.
@@ -706,6 +734,10 @@ export type ReplicateInput =
   | ReplicateTextInput
   | ReplicateMediaInput
   | TrainedModelInput;
+
+// ---------------------------------------------------------------------------
+// Template variables (for PromptBuilderService)
+// ---------------------------------------------------------------------------
 
 /** Variables passed to Handlebars templates for prompt rendering */
 export interface PromptTemplateVariables extends Record<string, unknown> {
@@ -733,6 +765,10 @@ export interface PromptTemplateVariables extends Record<string, unknown> {
   brandTaglines?: string;
   brandHashtags?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Service-level return type
+// ---------------------------------------------------------------------------
 
 /** Return shape of PromptBuilderService.buildPrompt() */
 export interface PromptBuilderResult {
