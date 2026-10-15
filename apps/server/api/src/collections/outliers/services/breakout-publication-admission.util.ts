@@ -1,23 +1,11 @@
 import { scoreTextPublishGate } from '@api/collections/agent-strategies/services/agent-strategy-autopilot.helpers';
 import { readBreakoutGrowth } from '@api/collections/outliers/services/breakout-growth.util';
 import { readBreakoutLiveCapacity } from '@api/collections/outliers/services/breakout-live-capacity.util';
-import {
-  isBreakoutMediaFormat,
-  resolveBreakoutMediaFormat,
-} from '@api/collections/outliers/services/breakout-media-format.util';
 import { readBreakoutOutputRecovery } from '@api/collections/outliers/services/breakout-output-recovery.util';
 import { loadBreakoutPublication } from '@api/collections/outliers/services/breakout-publication-source.util';
-import {
-  breakoutLayoutText,
-  breakoutQualityMaterialHash,
-} from '@api/collections/outliers/services/breakout-quality-material.util';
-import {
-  breakoutVisualEvidenceMeetsPolicy,
-  readBreakoutVisualEvidence,
-} from '@api/collections/outliers/services/breakout-visual-quality.util';
 import { BusinessLogicException } from '@api/exceptions/business-logic.exception';
+import { hashBrandedGenerationTextV1 } from '@api/services/branded-generation-receipts/branded-generation-hash.util';
 import {
-  type BrandedPostMaterialLayout,
   brandedPostMaterialSelect,
   describeBrandedPostMaterialLayout,
 } from '@api/services/branded-generation-receipts/branded-generation-post-material.util';
@@ -32,7 +20,6 @@ export type BreakoutPublicationAdmission = Readonly<{
   scope: Readonly<BreakoutOutputRecoveryInput>;
   strategyId: string;
   postId: string;
-  /** The hidden execution that generated the output, never the delivery execution stamped on the post. */
   workflowExecutionId: string;
   phase: 'schedule' | 'dispatch';
   /** Must verify original/current actor, exact material approval and actual operation/dispatch claim. */
@@ -45,7 +32,6 @@ const policySchema = z.object({
   publishPolicy: z
     .object({
       minPostScore: z.number().finite().min(0).max(100).optional(),
-      minImageScore: z.number().finite().min(0).max(100).optional(),
     })
     .optional(),
 });
@@ -73,11 +59,7 @@ export async function admitBreakoutPublication(
   const key = `agent-strategy-config:${admission.strategyId}`;
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
   await admission.reauthorize(tx);
-  const { quoteTweetId, format } = await assertCurrentSourceGrowth(
-    tx,
-    admission,
-    nowMs,
-  );
+  await assertCurrentSourceGrowth(tx, admission, nowMs);
   const { scope } = admission;
   const recovery = await readBreakoutOutputRecovery(tx, scope);
   await admission.reauthorize(tx);
@@ -102,14 +84,12 @@ export async function admitBreakoutPublication(
       parentId: null,
       breakoutOutputId: scope.outputId,
       agentStrategyId: admission.strategyId,
-      // Not `workflowExecutionId`: delivery restamps it on every retry and accept. The
-      // generating execution is pinned on the output row and in the quality binding.
+      workflowExecutionId: admission.workflowExecutionId,
       isDeleted: false,
     },
     select: {
       ...brandedPostMaterialSelect,
       groupId: true,
-      quoteTweetId: true,
       targetExecutionState: true,
     },
   });
@@ -124,36 +104,23 @@ export async function admitBreakoutPublication(
       ))
   )
     hold('publication_state_changed');
-  // The X quote is published through this post, so its link must still be the response's own.
-  if ((post.quoteTweetId ?? null) !== quoteTweetId)
-    hold('quote_binding_changed');
   const layout = describeBrandedPostMaterialLayout(scope, post);
-  const media = isBreakoutMediaFormat(format)
-    ? resolveBreakoutMediaFormat(scope.platform, format)
-    : null;
-  // The channel catalog is re-read: a visual format the platform no longer publishes is held.
-  if (media?.status === 'held') hold(media.reason);
-  const mediaEntries = layout.entries.filter((entry) => entry.kind === 'media');
-  const plan = media?.status === 'supported' ? media.plan : null;
   if (
-    layout.format !== format ||
-    (plan
-      ? mediaEntries.length !== plan.parts ||
-        layout.entries.length !== mediaEntries.length ||
-        mediaEntries.some((entry) => entry.role !== plan.mediaKind)
-      : (layout.format !== 'text' && layout.format !== 'thread') ||
-        mediaEntries.length > 0)
+    (layout.format !== 'text' && layout.format !== 'thread') ||
+    layout.entries.some((entry) => entry.kind !== 'text')
   )
     hold('format_capability_unavailable');
-  const content = breakoutLayoutText(layout);
+  const content = [
+    layout.textBytes,
+    ...layout.entries.map((entry) =>
+      entry.kind === 'text' ? entry.bytes : null,
+    ),
+  ]
+    .filter((bytes): bytes is Uint8Array => bytes !== null)
+    .map((bytes) => Buffer.from(bytes).toString('utf8'))
+    .join('\n\n');
   if (!content.trim()) hold('material_unavailable');
-  const scoreId = await assertCurrentQuality(
-    tx,
-    admission,
-    content,
-    layout,
-    plan?.parts ?? 0,
-  );
+  const scoreId = await assertCurrentQuality(tx, admission, content);
   const capacity = await readBreakoutLiveCapacity(
     tx,
     {
@@ -176,7 +143,7 @@ async function assertCurrentSourceGrowth(
   tx: Prisma.TransactionClient,
   admission: BreakoutPublicationAdmission,
   nowMs: number,
-): Promise<{ quoteTweetId: string | null; format: string }> {
+): Promise<void> {
   const { scope } = admission;
   const response = await tx.breakoutResponse.findFirst({
     where: {
@@ -253,19 +220,12 @@ async function assertCurrentSourceGrowth(
   });
   await admission.reauthorize(tx);
   if (growth.status === 'held') hold(growth.reason);
-  // Only a quote output links to the source post; every other output links to none.
-  if (output.kind !== 'quote')
-    return { quoteTweetId: null, format: output.format };
-  if (!response.externalId) hold('quote_binding_changed');
-  return { quoteTweetId: response.externalId, format: output.format };
 }
 
 async function assertCurrentQuality(
   tx: Prisma.TransactionClient,
   admission: BreakoutPublicationAdmission,
   content: string,
-  layout: Readonly<BrandedPostMaterialLayout>,
-  visualParts: number,
 ): Promise<string> {
   const { scope } = admission;
   const strategy = await tx.agentStrategy.findFirst({
@@ -292,7 +252,7 @@ async function assertCurrentQuality(
     postId: admission.postId,
     strategyId: admission.strategyId,
     workflowExecutionId: admission.workflowExecutionId,
-    materialHash: breakoutQualityMaterialHash(layout, content),
+    materialHash: hashBrandedGenerationTextV1(content),
   };
   const score = await tx.contentScore.findFirst({
     where: {
@@ -311,23 +271,5 @@ async function assertCurrentQuality(
     'approved'
   )
     hold('platform_quality_blocked');
-  // Every attached visual carries its own retained evaluation on exactly this material.
-  if (visualParts > 0) {
-    const evidence = await readBreakoutVisualEvidence(
-      tx,
-      scope.organizationId,
-      binding,
-      visualParts,
-    );
-    await admission.reauthorize(tx);
-    if (!evidence.isComplete) hold('quality_evidence_unavailable');
-    if (
-      !breakoutVisualEvidenceMeetsPolicy(
-        evidence,
-        policy.data.publishPolicy?.minImageScore,
-      )
-    )
-      hold('platform_quality_blocked');
-  }
   return score.id;
 }

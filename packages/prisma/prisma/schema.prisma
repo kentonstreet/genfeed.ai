@@ -204,7 +204,6 @@ enum PostCategory {
 enum PostEntityModel {
   INGREDIENT
   ARTICLE
-  NEWSLETTER
 }
 
 enum CredentialPlatform {
@@ -501,7 +500,7 @@ enum LeadStatus {
   LOST
 }
 
-enum TurboRunStatus {
+enum BatchStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -510,7 +509,7 @@ enum TurboRunStatus {
   CANCELLED
 }
 
-enum TurboRunItemStatus {
+enum BatchItemStatus {
   PENDING
   PROCESSING
   COMPLETED
@@ -518,12 +517,12 @@ enum TurboRunItemStatus {
   SKIPPED
 }
 
-enum TurboProjectKind {
+enum BatchProjectKind {
   IDEAS
   WORKFLOW
 }
 
-enum TurboProjectStatus {
+enum BatchProjectStatus {
   DRAFT
   GENERATING
   REVIEWING
@@ -533,7 +532,7 @@ enum TurboProjectStatus {
   CANCELLED
 }
 
-enum TurboProjectItemStatus {
+enum BatchProjectItemStatus {
   PENDING
   GENERATING
   READY
@@ -734,8 +733,8 @@ contentLearningOperations ContentLearningOperation[]
   contentPlans              ContentPlan[]
   evaluations               Evaluation[]
   editorProjects            EditorProject[]
-  turboRuns                   TurboRun[]
-  assignedTurboRunItems        TurboRunItem[]               @relation("turbo_run_item_assignee")
+  batches                   Batch[]
+  assignedBatchItems        BatchItem[]               @relation("batch_item_assignee")
   assets                    Asset[]
   subscriptions             Subscription[]
   userSubscription          UserSubscription?
@@ -835,8 +834,6 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   posts                         Post[]
   postPublishFinalizations      PostPublishFinalization[]
   postProviderPublishReceipts   PostProviderPublishReceipt[]
-  postIngredientLinks           PostIngredient[]
-  personaReferences             PersonaReference[]
   postGroups                    PostGroup[]
   postingCadences               PostingCadence[]
   slotReservations              SlotReservation[]
@@ -948,8 +945,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   billingAccountLinks           BillingAccountOrganization[]
   creditReservations            CreditReservation[]
   liveSessions                  LiveSession[]
-  turboProjects                 TurboProject[]
-  turboProjectItems             TurboProjectItem[]
+  batchProjects                 BatchProject[]
+  batchProjectItems             BatchProjectItem[]
   referralCodesRewardTarget     ReferralCode[]                 @relation("referral_code_reward_organization")
   referralsAsReferrer           Referral[]                     @relation("referral_referrer_organization")
   referralsAsReferred           Referral[]                     @relation("referral_referred_organization")
@@ -976,8 +973,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   skillReceipts                 SkillReceipt[]
   templates                     Template[]
   templateUsages                TemplateUsage[]
-  turboRuns                       TurboRun[]
-  turboRunItems                    TurboRunItem[]
+  batches                       Batch[]
+  batchItems                    BatchItem[]
   profiles                      Profile[]
   activities                    Activity[]
   apiKeys                       ApiKey[]
@@ -1017,8 +1014,6 @@ model McpApproval {
   user               User              @relation(fields: [userId], references: [id])
   toolName           String
   arguments          Json              @default("{}")
-  /// Server-prepared generation quote bound to this consent identity.
-  pricingQuote       Json?
   status             McpApprovalStatus @default(PENDING)
   result             Json?
   resolvedAt         DateTime?
@@ -1062,6 +1057,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   watermarkLogoId          String?
   watermarkOpacity         Float        @default(0.35)
   watermarkPosition        String       @default("bottom-right")
+  /// Deprecated (#5485): no longer read or written; dropped next release (#5495).
+  isSocialHistoryImportEnabled Boolean  @default(true)
   knowledgeSources KnowledgeSource[]
   knowledgeSpaces KnowledgeSpace[]
   id                       String       @id @default(cuid())
@@ -1166,8 +1163,8 @@ contentLearningBrandPreferences ContentLearningBrandPreference[]
   trackedLinks               TrackedLink[]
   proactiveLeads             Lead[]                     @relation("lead_proactive_brand")
   contentPlans               ContentPlan[]
-  turboRuns                    TurboRun[]
-  turboRunItems                 TurboRunItem[]
+  batches                    Batch[]
+  batchItems                 BatchItem[]
   activities                 Activity[]
   contextBases               ContextBase[]              @relation("context_base_source_brand")
   schedules                  Schedule[]
@@ -1486,10 +1483,6 @@ model Member {
   // MembersService), and BrandRelocationService reassigns affected members'
   // currentBrandId to a same-org brand before a brand's org changes.
   currentBrand             Brand        @relation("member_current_brand", fields: [currentBrandId], references: [id])
-  // #5502 native secondary apps this member installed into their own setup in
-  // this organization, in install order. A presentation preference only:
-  // organization, subscription and release access are checked separately.
-  installedAppIds          String[]     @default([])
   isActive                 Boolean      @default(true)
   isDeleted                Boolean      @default(false)
   createdAt                DateTime     @default(now())
@@ -1713,8 +1706,8 @@ model Setting {
   // #5510 per-user favorite workflows; ids are validated against the
   // caller's organization on write and pruned of deleted workflows on read.
   favoriteWorkflowIds              String[]                   @default([])
-  // #5502 native secondary apps pinned onto the rail, in pin order. User-wide;
-  // a pin shows only where the app is installed and available.
+  // Apps promoted out of the rail More menu, in pin order. Only the
+  // pinnable app ids (studio, automation, messages, discovery) are valid.
   pinnedAppIds                     String[]                   @default([])
   isAgentAssetsPanelOpen          Boolean                    @default(false)
   generationPriority               GenerationPriority         @default(QUALITY)
@@ -1789,17 +1782,6 @@ model OrganizationSetting {
   defaultImageToVideoModel       String?
   defaultMusicModel              String?
   agentPolicy                    Json              @default("{}")
-  moduleOverrides                Json              @default("{}")
-  // #5502 founder release preview. Only platform admins set it; on cloud,
-  // founder-only modules admit new work only in organizations with it on.
-  isReleasePreviewEnabled        Boolean           @default(false)
-  // #6526 / #6727. Owner/admin opt-ins, off until an organization chooses them.
-  // Breakout responses spend credits on a detected own-account breakout; auto-publish
-  // lets a response that passed every check schedule itself; vision checks pay a
-  // provider to read branded visuals. Platform switches stay the master kill switches.
-  isBreakoutResponsesEnabled     Boolean           @default(false)
-  isBreakoutAutoPublishEnabled   Boolean           @default(false)
-  isBrandVisionChecksEnabled     Boolean           @default(false)
   fleetEvaluationPolicy          Json              @default("{}")
   byokKeys                       Json              @default("{}")
   createdAt                      DateTime          @default(now())
@@ -1887,17 +1869,11 @@ model PlatformSetting {
   untrustedContentMinConfidence    Float     @default(0.95)
   isAgentContextCompressionEnabled Boolean   @default(true)
   isAgentTokenStreamingEnabled     Boolean   @default(false)
-  isBrandVisualAnalysisEnabled     Boolean   @default(false)
-  // Catalog models (`models.key`) that read text from and detect logo or product
-  // regions in branded visuals (#6727). Null leaves the analysis unavailable.
-  brandVisionOcrModelKey           String?   @default("lucataco/florence-2-large")
-  brandVisionDetectModelKey        String?   @default("adirik/owlvit-base-patch32")
   // Signup and billing system-event recording starts here; null = disabled.
   systemEventsEnabledAt            DateTime?
   isEmailVerificationRequired      Boolean   @default(false)
   // Module and feature flags (#5468), e.g. {"studio":false}. Only an explicit
-  // false turns one off; missing keys are on. Release flags
-  // ({"release_motion":true}) are the exception: missing means preview-only.
+  // false turns one off; missing keys are on.
   flags                            Json      @default("{}")
   // Workflows pinned to every organization's templates Featured row (#5511),
   // in display order. Written only by the superadmin pin endpoints; only the
@@ -2361,10 +2337,7 @@ model Ingredient {
   qualityFeedback       String[]                 @default([])
   qualityStatus         QualityStatus            @default(UNRATED)
 
-  // Voice discriminator fields (only populated when category = VOICE).
-  // Imported account voices (voiceSource 'imported') are unique on
-  // (organizationId, voiceProvider, externalVoiceId) via the partial index
-  // `ingredients_org_imported_voice_uidx`.
+  // Voice discriminator fields (only populated when category = VOICE)
   voiceSource         String?
   voiceProvider       VoiceProvider?
   externalVoiceId     String?
@@ -2397,13 +2370,12 @@ model Ingredient {
   brandVoices               Brand[]                    @relation("brand_voice")
   brandMusics               Brand[]                    @relation("brand_music")
   postEntities              Post[]                     @relation("post_entity_ingredient")
-  postLinks                 PostIngredient[]           @relation("ingredient_post_links")
+  postIngredients           Post[]                     @relation("post_ingredients")
   postAnalyticsIngredients  PostAnalytics[]            @relation("post_analytics_ingredients")
   bookmarkExtracted         Bookmark[]                 @relation("bookmark_extracted")
   bookmarkGenerated         Bookmark[]                 @relation("bookmark_generated")
   trainingSources           Training[]                 @relation("training_sources")
   personaAvatars            Persona[]                  @relation("persona_avatar")
-  personaReferences         PersonaReference[]         @relation("ingredient_persona_references")
   personaVoices             Persona[]                  @relation("persona_voice")
   captions                  Caption[]
   editorProjectVideos       EditorProject[]            @relation("editor_project_video")
@@ -2432,10 +2404,6 @@ model Ingredient {
   @@index([organizationId, updatedAt, id], map: "ingredients_org_updated_at_id_idx")
   @@index([organizationId, origin, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_origin_created_at_idx")
   @@index([organizationId, personaId, isDeleted, createdAt(sort: Desc)], map: "ingredients_org_persona_created_at_idx")
-  // Brand Library list (offset and keyset pages) + its count. `id` desc matches
-  // the (createdAt, id) keyset order; trailing status/category keep the count
-  // index-only (no heap visit per row).
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc), id(sort: Desc), status, category], map: "ingredients_org_brand_library_idx")
   @@map("ingredients")
 }
 
@@ -2799,8 +2767,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   entityIngredient    Ingredient?        @relation("post_entity_ingredient", fields: [entityIngredientId], references: [id])
   entityArticleId     String?
   entityArticle       Article?           @relation("post_entity_article", fields: [entityArticleId], references: [id])
-  entityNewsletterId  String?
-  entityNewsletter    Newsletter?        @relation("post_entity_newsletter", fields: [entityNewsletterId], references: [id])
   entityModel         PostEntityModel?
   credentialId        String?
   credential          Credential?        @relation(fields: [credentialId], references: [id])
@@ -2898,12 +2864,7 @@ learningCheckpoints ContentLearningCheckpoint[]
   promptUsed                     String?
   // Knowledge source versions whose passages shaped this post's generation.
   knowledgeReceipts              Json               @default("[]")
-  // Branded generation receipt that produced this post's text and the state it
-  // reached when the dispatch finished (#5786). Plain ids: the receipt itself
-  // stays the authority and is never a foreign key of the post.
-  brandedReceiptId               String?
-  brandedReceiptState            String?
-  reviewTurboRunId                  String?
+  reviewBatchId                  String?
   reviewItemId                   String?
   reviewDecision                 ReviewDecision?
   reviewVersionPinId             String?
@@ -2931,7 +2892,7 @@ learningCheckpoints ContentLearningCheckpoint[]
   updatedAt                      DateTime           @updatedAt
 
   // Many-to-many
-  ingredientLinks     PostIngredient[]     @relation("post_ingredient_links")
+  ingredients         Ingredient[]         @relation("post_ingredients")
   tags                Tag[]                @relation("post_tags")
   socialConversations SocialConversation[]
   socialMessages      SocialMessage[]
@@ -2948,8 +2909,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   @@index([externalId])
   @@index([originalPostId])
   @@index([groupId])
-  @@index([organizationId, entityArticleId], map: "posts_org_entity_article_idx")
-  @@index([organizationId, entityNewsletterId], map: "posts_org_entity_newsletter_idx")
   @@index([contentRunId])
   @@index([variantId])
   @@index([generationId])
@@ -2974,29 +2933,6 @@ learningCheckpoints ContentLearningCheckpoint[]
   @@index([organizationId, isDeleted, targetExecutionState, platform, analyticsNextCollectAt, id], map: "posts_analytics_due_idx")
   @@index([organizationId, campaignId, isDeleted, createdAt(sort: Desc)], map: "posts_org_campaign_created_idx")
   @@map("posts")
-}
-
-/// Ordered link between a Post and one of its media ingredients. `position` is
-/// the slide order the user arranged (0-based, contiguous per post); delivery
-/// and every read order by it. Replaces the implicit `_post_ingredients`
-/// many-to-many, which had no order of its own (#6740).
-model PostIngredient {
-  id             String       @id @default(cuid())
-  postId         String
-  post           Post         @relation("post_ingredient_links", fields: [postId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ingredientId   String
-  ingredient     Ingredient   @relation("ingredient_post_links", fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  /// The post's organization; follows the post when its brand changes tenant.
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  position       Int
-  createdAt      DateTime     @default(now())
-
-  @@unique([postId, ingredientId], map: "post_ingredients_post_ingredient_key")
-  @@index([postId, position], map: "post_ingredients_post_position_idx")
-  @@index([ingredientId], map: "post_ingredients_ingredient_idx")
-  @@index([organizationId], map: "post_ingredients_organization_idx")
-  @@map("post_ingredients")
 }
 
 /// Durable, retryable side effects owed after a provider confirms that a post
@@ -4119,8 +4055,6 @@ model Article {
   coverImageUrl  String?
   status         ArticleStatus @default(DRAFT)
   publishedAt    DateTime?
-  // Live URL recorded when the article was published outside Genfeed (#6753).
-  externalUrl    String?
   isDeleted      Boolean       @default(false)
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
@@ -4198,14 +4132,11 @@ model Newsletter {
   approvedAt           DateTime?
   publishedAt          DateTime?
   scheduledFor         DateTime?
-  // Live URL recorded when the issue was sent outside Genfeed (#6753).
-  externalUrl          String?
   isDeleted            Boolean            @default(false)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
 
   articles           Article[]    @relation("newsletter_articles")
-  postEntities       Post[]       @relation("post_entity_newsletter")
   contextNewsletters Newsletter[] @relation("newsletter_context")
   contextOf          Newsletter[] @relation("newsletter_context")
 
@@ -4436,7 +4367,6 @@ model Persona {
 
   availabilityAudits PersonaAvailabilityAudit[]
   grants             PersonaGrant[]
-  references         PersonaReference[]
   tags            Tag[]        @relation("persona_tags")
   credentials     Credential[] @relation("persona_credentials")
   assignedMembers User[]       @relation("persona_assigned_members")
@@ -4456,30 +4386,6 @@ model Persona {
   // Partial unique (organizationId, brandId, handle) WHERE handle IS NOT NULL
   // AND isDeleted = false lives in 20260824120000_persona_handle_brand_unique.
   @@map("personas")
-}
-
-/// Ordered reference images of a character. Position 0 is the primary
-/// reference and is mirrored to `Persona.avatarIngredientId` for readers that
-/// need a single image (remix identity, avatar video, thumbnails). @mentions
-/// send the references in position order, capped by the model's reference
-/// limit. Rows are hard-deleted on removal (like `PostIngredient`); a
-/// soft-deleted ingredient is skipped by every reader and returns on restore.
-model PersonaReference {
-  id             String       @id @default(cuid())
-  personaId      String
-  persona        Persona      @relation(fields: [personaId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ingredientId   String
-  ingredient     Ingredient   @relation("ingredient_persona_references", fields: [ingredientId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  position       Int
-  createdAt      DateTime     @default(now())
-
-  @@unique([personaId, ingredientId], map: "persona_references_persona_ingredient_key")
-  @@index([personaId, position], map: "persona_references_persona_position_idx")
-  @@index([ingredientId], map: "persona_references_ingredient_idx")
-  @@index([organizationId], map: "persona_references_organization_idx")
-  @@map("persona_references")
 }
 
 /// Use-only grant of a character to another organization (#6037). Only one
@@ -4917,16 +4823,10 @@ model AgentStrategy {
   reports       AgentStrategyReport[]
   campaigns     AgentCampaign[]            @relation("campaign_agents")
   campaignLeads AgentCampaign[]            @relation("campaign_lead")
-  turboRuns       TurboRun[]
+  batches       Batch[]
 
   agentType String?
   platforms String[] @default([])
-
-  // Server-written authenticated actor (WorkflowInitiatingActor JSON) that this strategy's
-  // autonomous turns bind to the schedules they save. Persisted only when an authenticated user
-  // or API key saves or enables the strategy; cleared when it is disabled. Never read from input
-  // and never copied between strategies.
-  scheduleInitiatingActor Json?
 
   @@index([organizationId, isDeleted, createdAt(sort: Desc)])
   @@index([organizationId, preferredWorkflowId])
@@ -5202,13 +5102,6 @@ model Workflow {
   @@map("workflows")
   /// Server-written configuring principal; never accepted from workflow DTO metadata.
   scheduleInitiatingActor Json?
-  /// Server-only platform-authority marker: the canonical seeded template id this row was seeded
-  /// from, written only by WorkflowTemplateSeederService. A marked row whose current version still
-  /// matches that template runs its schedule without a bound actor in Cloud. Never accepted from
-  /// request input, never copied by clone or install, and cleared when a tenant edits the
-  /// definition. At most one live row per (organizationId, platformSeedKey) via the partial unique
-  /// index workflows_platform_seed_key_org_uidx (migration 20261011120000; Prisma cannot express it).
-  platformSeedKey String?
 }
 
 /// Immutable executable workflow definition. A version is append-only: edits
@@ -6215,8 +6108,6 @@ model Evaluation {
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, isDeleted, updatedAt(sort: Desc)])
-  // Latest evaluation per content row, attached to every content list page.
-  @@index([organizationId, contentType, contentId, isDeleted, updatedAt(sort: Desc)], map: "evaluations_org_content_target_idx")
   @@map("evaluations")
 }
 
@@ -7502,7 +7393,7 @@ model Profile {
   @@map("profiles")
 }
 
-model TurboRun {
+model Batch {
   id                     String         @id @default(cuid())
   organizationId         String
   organization           Organization   @relation(fields: [organizationId], references: [id])
@@ -7513,7 +7404,7 @@ model TurboRun {
   agentStrategyId        String?
   agentStrategy          AgentStrategy? @relation(fields: [agentStrategyId], references: [id])
   items                  Json           @default("[]")
-  status                 TurboRunStatus    @default(PENDING)
+  status                 BatchStatus    @default(PENDING)
   config                 Json           @default("{}")
   settlementShortfall    Float?
   settlementShortfallSeq Int?
@@ -7521,85 +7412,85 @@ model TurboRun {
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
 
-  turboRunItems TurboRunItem[]
+  batchItems BatchItem[]
 
-  @@index([organizationId, isDeleted, createdAt(sort: Desc)], map: "turbo_runs_org_deleted_created_at_idx")
-  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)], map: "turbo_runs_org_brand_deleted_created_at_idx")
-  @@index([organizationId, isDeleted, status, createdAt(sort: Desc)], map: "turbo_runs_org_deleted_status_created_at_idx")
-  @@index([isDeleted, settlementShortfall], map: "turbo_runs_deleted_settlement_shortfall_idx")
-  @@map("turbo_runs")
+  @@index([organizationId, isDeleted, createdAt(sort: Desc)], map: "batches_org_deleted_created_at_idx")
+  @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc)], map: "batches_org_brand_deleted_created_at_idx")
+  @@index([organizationId, isDeleted, status, createdAt(sort: Desc)], map: "batches_org_deleted_status_created_at_idx")
+  @@index([isDeleted, settlementShortfall], map: "batches_deleted_settlement_shortfall_idx")
+  @@map("batches")
 }
 
-model TurboRunItem {
+model BatchItem {
   id             String          @id
   organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id])
   brandId        String?
   brand          Brand?          @relation(fields: [brandId], references: [id])
-  turboRunId        String
-  turboRun          TurboRun           @relation(fields: [turboRunId], references: [id])
-  status         TurboRunItemStatus @default(PENDING)
+  batchId        String
+  batch          Batch           @relation(fields: [batchId], references: [id])
+  status         BatchItemStatus @default(PENDING)
   reviewDecision ReviewDecision?
   assigneeId     String?
-  assignee       User?           @relation("turbo_run_item_assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assignee       User?           @relation("batch_item_assignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   isDeleted      Boolean         @default(false)
   data           Json            @default("{}")
 
-  @@index([organizationId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "turbo_run_items_org_status_review_created_idx")
-  @@index([organizationId, brandId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "turbo_run_items_org_brand_status_review_created_idx")
-  @@index([turboRunId, isDeleted, createdAt], map: "turbo_run_items_turbo_run_created_idx")
-  @@index([organizationId, assigneeId, isDeleted], map: "turbo_run_items_org_assignee_deleted_idx")
-  @@map("turbo_run_items")
+  @@index([organizationId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "batch_items_org_status_review_created_idx")
+  @@index([organizationId, brandId, isDeleted, status, reviewDecision, createdAt(sort: Desc)], map: "batch_items_org_brand_status_review_created_idx")
+  @@index([batchId, isDeleted, createdAt], map: "batch_items_batch_created_idx")
+  @@index([organizationId, assigneeId, isDeleted], map: "batch_items_org_assignee_deleted_idx")
+  @@map("batch_items")
 }
 
-/// A saved Studio Turbo project (#5463): ideas or a workflow applied to many
+/// A saved Studio Batch run (#5463): ideas or a workflow applied to many
 /// inputs. Every step, input and per-item state persists here so a reload
 /// restores the run. Outputs reach publishing through the review inbox
-/// (`reviewTurboRunId` links the manual-review Turbo run the items are appended to).
-model TurboProject {
+/// (`reviewBatchId` links the manual-review Batch the items are appended to).
+model BatchProject {
   id             String                @id @default(cuid())
   organizationId String
   organization   Organization          @relation(fields: [organizationId], references: [id])
   brandId        String
   userId         String
-  kind           TurboProjectKind
+  kind           BatchProjectKind
   name           String
-  status         TurboProjectStatus    @default(DRAFT)
-  /// Wizard step, lowercase product vocabulary (`TurboProjectStep`).
+  status         BatchProjectStatus    @default(DRAFT)
+  /// Wizard step, lowercase product vocabulary (`BatchProjectStep`).
   step           String
   workflowId     String?
   /// Idea inputs (formats, count, angle) and schedule choices (targets,
-  /// posting set, timezone). Shape: `ITurboProjectSettings`.
+  /// posting set, timezone). Shape: `IBatchProjectSettings`.
   settings       Json                  @default("{}")
   /// Bumped by every change that affects cost (inputs, ideas, workflow); an
   /// accepted quote is bound to the revision it priced.
   revision       Int                   @default(0)
-  /// Latest credit quote for idea generation. Shape: `ITurboProjectQuote`.
+  /// Latest credit quote for idea generation. Shape: `IBatchProjectQuote`.
   quote          Json?
-  reviewTurboRunId  String?
+  reviewBatchId  String?
   isDeleted      Boolean               @default(false)
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
-  items          TurboProjectItem[]
+  items          BatchProjectItem[]
 
   @@index([organizationId, brandId, isDeleted, updatedAt(sort: Desc)])
   @@index([status, isDeleted, updatedAt])
-  @@map("turbo_projects")
+  @@map("batch_projects")
 }
 
-/// One input of a TurboProject: an idea brief or an input ingredient, with its
+/// One input of a BatchProject: an idea brief or an input ingredient, with its
 /// generation, review and scheduling state.
-model TurboProjectItem {
+model BatchProjectItem {
   id                  String                 @id @default(cuid())
   organizationId      String
   organization        Organization           @relation(fields: [organizationId], references: [id])
   projectId           String
-  project             TurboProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project             BatchProject           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   position            Int
-  status              TurboProjectItemStatus @default(PENDING)
-  /// Idea brief for idea Turbo projects. Shape: `TurboIdea`.
+  status              BatchProjectItemStatus @default(PENDING)
+  /// Idea brief for idea batches. Shape: `BatchIdea`.
   idea                Json?
   inputIngredientId   String?
   inputCategory       String?
@@ -7612,7 +7503,7 @@ model TurboProjectItem {
   error               String?
   dispatchedAt        DateTime?
   postId              String?
-  reviewTurboRunId       String?
+  reviewBatchId       String?
   reviewItemId        String?
   scheduledAt         DateTime?
   /// Destinations this item scheduled to: `[{ credentialId, postId, scheduledAt }]`.
@@ -7620,15 +7511,15 @@ model TurboProjectItem {
   /// Retry attempts; each attempt dispatches under its own idempotency key.
   retryCount          Int                    @default(0)
   /// Server-side idea generation: accepted quote line, credit reservation and
-  /// its settlement state. Shape: `ITurboProjectItemDispatch`.
+  /// its settlement state. Shape: `IBatchProjectItemDispatch`.
   dispatch            Json?
   isDeleted           Boolean                @default(false)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @updatedAt
 
-  @@index([organizationId, projectId, isDeleted, position], map: "turbo_project_items_org_project_position_idx")
+  @@index([organizationId, projectId, isDeleted, position], map: "batch_project_items_org_project_position_idx")
   @@index([organizationId, reviewItemId, isDeleted])
-  @@map("turbo_project_items")
+  @@map("batch_project_items")
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8537,7 +8428,6 @@ model BreakoutResponseOutput {
   state String @default("reserved")
   heldReason String?
   workflowExecutionId String?
-  publicationActor Json?
   artifact Post?
   isDeleted Boolean @default(false)
   createdAt DateTime @default(now())
@@ -9397,7 +9287,6 @@ model BrandedGenerationReceipt {
   @@unique([id, organizationId, brandId])
   @@unique([organizationId, brandId, requestKey, candidateIndex], map: "branded_generation_receipts_request_key")
   @@index([organizationId, brandId, isDeleted, createdAt(sort: Desc), id(sort: Desc)], map: "branded_generation_receipts_scope_idx")
-  @@index([state, updatedAt], map: "branded_generation_receipts_state_updated_idx")
   @@map("branded_generation_receipts")
 }
 model BrandedGenerationReceiptEvent {

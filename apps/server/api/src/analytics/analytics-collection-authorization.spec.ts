@@ -7,18 +7,9 @@ import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 describe('native collector authorization closure', () => {
-  it('lets ordinary actor-less scheduler collection proceed unchanged', async () => {
-    await expect(admitAnalyticsCollection(undefined)).resolves.toBeUndefined();
-    await expect(
-      admitAnalyticsCollection(undefined, 'org-1'),
-    ).resolves.toBeUndefined();
-  });
-  it('holds a supplied authorization that cannot admit and never substitutes a creator', async () => {
+  it('holds missing authority and never substitutes a post/workflow creator', async () => {
     try {
-      await admitAnalyticsCollection({
-        initiatingActor:
-          analyticsCollectionAuthorizationFixture.initiatingActor,
-      } as unknown as Parameters<typeof admitAnalyticsCollection>[0]);
+      await admitAnalyticsCollection(undefined);
       throw new Error('missing rejection');
     } catch (error: unknown) {
       expect(error).toBeInstanceOf(ForbiddenException);

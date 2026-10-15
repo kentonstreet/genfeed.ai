@@ -9,13 +9,6 @@ import type {
   BrandedGenerationMutationResultV1,
 } from '@api/services/branded-generation-receipts/branded-generation-receipts.types';
 import type { BrandedGenerationCompilerRecipeV1 } from '@api/services/branded-generation-receipts/branded-generation-recompile.types';
-import { dispatchWindowCutoff } from '@api/services/branded-generation-receipts/branded-generation-recovery.util';
-import {
-  DISPATCH_WINDOW_EXPIRED_REASON,
-  isDispatchWindowBlock,
-  isDispatchWindowExpiry,
-  isDispatchWindowRace,
-} from '@api/services/branded-text-generation/branded-dispatch-window.util';
 import type {
   BrandedTextGenerationOutcomeV1,
   BrandedTextGenerationRequestV1,
@@ -109,9 +102,6 @@ export class BrandedTextGenerationService {
     await this.brandAccess.assert(request.initiatingActor, input.brandId);
     const parameters = this.assertPreconditions(input, format);
     const apiKey = await request.resolveApiKey(input.model);
-    // A missing key never succeeds on retry, so refuse before a receipt exists:
-    // a stopped receipt would answer a same-key retry with the old stop.
-    this.openRouter.assertApiKeyAvailable(apiKey);
     const actor: BrandedGenerationActorV1 = {
       organizationId: input.organizationId,
       brandId: input.brandId,
@@ -164,7 +154,7 @@ export class BrandedTextGenerationService {
     input: BrandedGenerationInputV1,
     format: 'text' | 'thread',
   ): GenerationParameters {
-    if (input.mode !== 'approved_brand' && input.mode !== 'provisional_brand')
+    if (input.mode !== 'approved_brand')
       throw new BadRequestException('brand_mode_unsupported');
     if (input.format !== format)
       throw new BadRequestException('brand_format_unsupported');
@@ -227,23 +217,18 @@ export class BrandedTextGenerationService {
         'provider_attempt_ref_unavailable',
         false,
       );
-    let dispatched: Mutation;
-    try {
-      dispatched = await this.receipts.recordDispatch(
-        actor,
-        resolved.id,
-        this.mutation(resolved, 'dispatch'),
-        {
-          provider: 'openrouter',
-          model: input.model,
-          providerAttemptRef: accepted.providerAttemptRef,
-          dispatchClaimedAt,
-          providerAcceptedAt: new Date().toISOString(),
-        },
-      );
-    } catch (error) {
-      return this.stopOnDispatchWindowRace(actor, resolved, error);
-    }
+    const dispatched = await this.receipts.recordDispatch(
+      actor,
+      resolved.id,
+      this.mutation(resolved, 'dispatch'),
+      {
+        provider: 'openrouter',
+        model: input.model,
+        providerAttemptRef: accepted.providerAttemptRef,
+        dispatchClaimedAt,
+        providerAcceptedAt: new Date().toISOString(),
+      },
+    );
     if (dispatched.replayed) return this.inProgress(dispatched.receipt);
     return this.completeOutput(
       actor,
@@ -251,35 +236,6 @@ export class BrandedTextGenerationService {
       accepted.text,
       request,
     );
-  }
-
-  /**
-   * The provider already answered when the dispatch window closed. The paid
-   * call is reported as a stopped dispatch with the receipt id, never lost to
-   * an unclassified error; any other recordDispatch failure is a real error.
-   */
-  private async stopOnDispatchWindowRace(
-    actor: BrandedGenerationActorV1,
-    resolved: BrandedGenerationReceiptV1,
-    error: unknown,
-  ): Promise<BrandedTextGenerationOutcomeV1> {
-    if (!isDispatchWindowRace(error)) throw error;
-    let latest = await this.receipts.get(actor, resolved.id);
-    if (latest.state === 'resolved' && isDispatchWindowExpiry(error)) {
-      try {
-        await this.receipts.blockExpired(
-          actor,
-          { id: latest.id, revision: latest.revision },
-          dispatchWindowCutoff(),
-          false,
-        );
-      } catch {
-        // The recovery sweep may have blocked it first; the re-read decides.
-      }
-      latest = await this.receipts.get(actor, resolved.id);
-    }
-    if (!isDispatchWindowBlock(latest)) throw error;
-    return this.stopped(latest, null, DISPATCH_WINDOW_EXPIRED_REASON, true);
   }
 
   private async completeOutput(
@@ -405,20 +361,12 @@ export class BrandedTextGenerationService {
     ];
     let snapshot: BrandIdentitySnapshotV1 | null = null;
     try {
-      snapshot =
-        input.mode === 'provisional_brand' && input.draftRevisionId
-          ? await this.snapshots.previewProvisional(
-              actor,
-              input.draftRevisionId,
-            )
-          : await this.snapshots.preview(actor);
+      snapshot = await this.snapshots.preview(actor);
     } catch (error) {
       if (!(error instanceof ConflictException)) throw error;
       const code = error.message;
       if (RECOVERABLE_SNAPSHOT_FAILURES.has(code)) return blocked(null, [code]);
       if (code !== 'brand_identity_unavailable') throw error;
-      if (input.mode === 'provisional_brand')
-        return blocked(null, ['no_draft_revision']);
       return this.harness.resolveSnapshotBriefWithRecipe(
         input,
         null,

@@ -111,20 +111,15 @@ const BREADCRUMB_ROOT_LABELS = Object.freeze({
   agent: APP_DISPLAY_LABELS.agent,
   analytics: APP_DISPLAY_LABELS.analytics,
   automation: APP_DISPLAY_LABELS.automation,
-  clips: APP_DISPLAY_LABELS.clips,
   edit: 'Edit',
-  editor: APP_DISPLAY_LABELS.editor,
   library: APP_DISPLAY_LABELS.library,
   messages: APP_DISPLAY_LABELS.messages,
-  motion: APP_DISPLAY_LABELS.motion,
   overview: APP_DISPLAY_LABELS.workspace,
   platforms: 'Platforms',
-  playground: APP_DISPLAY_LABELS.playground,
   publishing: APP_DISPLAY_LABELS.publishing,
   discovery: APP_DISPLAY_LABELS.discovery,
   settings: 'Settings',
-  storyboard: APP_DISPLAY_LABELS.storyboard,
-  turbo: APP_DISPLAY_LABELS.turbo,
+  studio: APP_DISPLAY_LABELS.studio,
   workspace: APP_DISPLAY_LABELS.workspace,
 } as const satisfies Readonly<Record<string, string>>);
 
@@ -153,9 +148,8 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/:brandSlug/edit/article/:id': 'Article',
   '/:orgSlug/:brandSlug/edit/newsletter/:id': 'Newsletter',
   '/:orgSlug/:brandSlug/library': 'Overview',
-  '/:orgSlug/:brandSlug/library/assets': 'Assets',
-  '/:orgSlug/:brandSlug/library/overview': 'Overview',
-  '/:orgSlug/:brandSlug/library/references': 'References',
+  '/:orgSlug/:brandSlug/library/assets': 'All assets',
+  '/:orgSlug/:brandSlug/library/elements/characters': 'Characters',
   '/:orgSlug/:brandSlug/settings/brand-kit': 'Brand Kit',
   '/:orgSlug/:brandSlug/settings/connected-accounts': 'Connected accounts',
   '/:orgSlug/:brandSlug/settings/agent': 'Agent settings',
@@ -164,7 +158,9 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/:brandSlug/library/gifs': 'Assets',
   '/:orgSlug/:brandSlug/library/images': 'Assets',
   '/:orgSlug/:brandSlug/library/music': 'Assets',
+  '/:orgSlug/:brandSlug/library/recent': 'Recent',
   '/:orgSlug/:brandSlug/library/shelf/:shelf': ':shelf',
+  '/:orgSlug/:brandSlug/library/starred': 'Starred',
   '/:orgSlug/:brandSlug/library/trash': 'Trash',
   '/:orgSlug/:brandSlug/library/videos': 'Assets',
   '/:orgSlug/:brandSlug/library/voices': 'Assets',
@@ -177,7 +173,6 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/~/analytics/accounts/:id': 'Account',
   '/:orgSlug/~/analytics/brands/:id': 'Brand Details',
   '/:orgSlug/~/automation': 'Overview',
-  '/:orgSlug/~/store': 'Apps',
   '/:orgSlug/:brandSlug/automation/agents': 'Agents',
   '/:orgSlug/:brandSlug/automation/agents/:agentId': 'Agent',
   '/:orgSlug/:brandSlug/automation/content-runs/:runId': 'Content Run',
@@ -205,10 +200,11 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/~/publishing/posts': 'Posts',
   '/:orgSlug/~/publishing/posts/:id': 'Content',
   '/:orgSlug/~/publishing/content': 'Content',
+  '/:orgSlug/~/publishing/review': 'Approval queue',
+  '/:orgSlug/:brandSlug/publishing/review': 'Approval queue',
   '/:orgSlug/:brandSlug/automation/campaigns': 'Programs',
   '/:orgSlug/:brandSlug/automation/campaigns/new': 'New Program',
   '/:orgSlug/:brandSlug/automation/campaigns/:id': 'Program',
-  '/:orgSlug/:brandSlug/messages/overview': 'Overview',
   '/:orgSlug/:brandSlug/messages/outreach': 'Outreach sequences',
   '/:orgSlug/:brandSlug/messages/outreach/new': 'New outreach sequence',
   '/:orgSlug/:brandSlug/messages/outreach/:id': 'Outreach sequence',
@@ -216,18 +212,14 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/:brandSlug/settings': 'General',
   '/:orgSlug/:brandSlug/settings/knowledge': 'Knowledge',
   '/:orgSlug/:brandSlug/settings/usage': 'Usage',
-  // Studio tools are apps (#5502): the app is the root, its home the leaf.
-  '/:orgSlug/:brandSlug/studio/playground': 'Canvas',
-  '/:orgSlug/:brandSlug/studio/storyboard': 'Runs',
-  '/:orgSlug/:brandSlug/studio/motion': 'Compositions',
-  '/:orgSlug/:brandSlug/studio/clips': 'Projects',
-  '/:orgSlug/:brandSlug/studio/turbo': 'Projects',
-  '/:orgSlug/:brandSlug/studio/turbo/new': 'New project',
+  '/:orgSlug/:brandSlug/studio/motion': 'Motion',
+  '/:orgSlug/:brandSlug/studio/batch': 'Batch',
+  '/:orgSlug/:brandSlug/studio/batch/new': 'Batch',
   '/:orgSlug/:brandSlug/studio/clips/new': 'New project',
   '/:orgSlug/:brandSlug/studio/storyboard/new': 'New storyboard',
   '/:orgSlug/:brandSlug/studio/storyboard/:runId': 'Run',
   '/:orgSlug/:brandSlug/studio/clips/:projectId': 'Project',
-  '/:orgSlug/:brandSlug/studio/editor': 'Projects',
+  '/:orgSlug/:brandSlug/studio/editor': 'Editor',
   '/:orgSlug/:brandSlug/studio/editor/:id': 'Project',
   '/:orgSlug/:brandSlug/workspace/tasks/:id': 'Task',
   '/:orgSlug/:brandSlug/automation/workflows/:id': 'Workflow',
@@ -253,7 +245,7 @@ const BREADCRUMB_LEAF_OVERRIDES = Object.freeze({
   '/:orgSlug/~/settings/api-keys': 'API Keys',
   '/:orgSlug/~/settings/integrations': 'Integrations',
   '/:orgSlug/~/settings/models/:type': ':type',
-  '/:orgSlug/~/studio/editor': 'Projects',
+  '/:orgSlug/~/studio/editor': 'Editor',
   '/:orgSlug/~/studio/editor/:id': 'Project',
 
   '/admin': 'Dashboard',
@@ -345,31 +337,7 @@ function humanizeBreadcrumbLabel(value: string): string {
     .join(' ');
 }
 
-/** Studio tools are apps. */
-const STUDIO_APP_SEGMENTS = Object.freeze({
-  clips: 'clips',
-  editor: 'editor',
-  motion: 'motion',
-  playground: 'playground',
-  storyboard: 'storyboard',
-  turbo: 'turbo',
-} as const satisfies Readonly<Record<string, string>>);
-
 function getCanonicalAppSegment(canonicalUrl: string): string {
-  const appSegment = getCanonicalRootSegment(canonicalUrl);
-  if (appSegment !== 'studio') {
-    return appSegment;
-  }
-
-  const segments = canonicalUrl.split('/').filter(Boolean);
-  const toolSegment = segments[segments.indexOf('studio') + 1] ?? '';
-  return (
-    STUDIO_APP_SEGMENTS[toolSegment as keyof typeof STUDIO_APP_SEGMENTS] ??
-    toolSegment
-  );
-}
-
-function getCanonicalRootSegment(canonicalUrl: string): string {
   if (canonicalUrl === '/') {
     return 'workspace';
   }
@@ -584,14 +552,6 @@ const ORGANIZATION_ROUTE_REGISTRATIONS = [
       telemetryClass: 'product',
     },
   ),
-  ...registerRoutes(['/:orgSlug/~/store'], {
-    fallback: '/:orgSlug/~/store',
-    mode: 'canvas',
-    productClass: 'control-plane',
-    scope: 'organization',
-    surfaceKey: 'store',
-    telemetryClass: 'product',
-  }),
   ...registerRoutes(['/:orgSlug/~/automation'], {
     fallback: '/:orgSlug/~/automation',
     mode: 'canvas',
@@ -700,8 +660,6 @@ const ORGANIZATION_ROUTE_REGISTRATIONS = [
       '/:orgSlug/~/settings/notifications',
       '/:orgSlug/~/settings/progress',
       '/:orgSlug/~/settings/members',
-      '/:orgSlug/~/settings/modules',
-      '/:orgSlug/~/settings/preferences',
       '/:orgSlug/~/settings/credits',
       '/:orgSlug/~/settings/subscription',
       '/:orgSlug/~/settings/referrals',
@@ -748,6 +706,7 @@ const ORGANIZATION_ROUTE_REGISTRATIONS = [
       '/:orgSlug/~/publishing/posts',
       '/:orgSlug/~/publishing/posts/:id',
       '/:orgSlug/~/publishing/content',
+      '/:orgSlug/~/publishing/review',
       '/:orgSlug/~/publishing/campaigns',
       '/:orgSlug/~/publishing/campaigns/new',
       '/:orgSlug/~/publishing/campaigns/compare',
@@ -781,7 +740,7 @@ const ORGANIZATION_ROUTE_REGISTRATIONS = [
       productClass: 'contextual-action',
       scope: 'organization',
       surfaceKey: 'studio-editor',
-      switcherItems: ['editor'],
+      switcherItems: ['studio'],
       telemetryClass: 'management',
     },
   ),
@@ -896,9 +855,9 @@ const BRAND_ROUTE_REGISTRATIONS = [
   ),
   ...registerRoutes(
     [
-      '/:orgSlug/:brandSlug/studio/turbo',
-      '/:orgSlug/:brandSlug/studio/turbo/new',
-      '/:orgSlug/:brandSlug/studio/turbo/:projectId',
+      '/:orgSlug/:brandSlug/studio/batch',
+      '/:orgSlug/:brandSlug/studio/batch/new',
+      '/:orgSlug/:brandSlug/studio/batch/:projectId',
       '/:orgSlug/:brandSlug/studio/clips',
       '/:orgSlug/:brandSlug/studio/clips/new',
       '/:orgSlug/:brandSlug/studio/clips/:projectId',
@@ -915,7 +874,7 @@ const BRAND_ROUTE_REGISTRATIONS = [
       productClass: 'contextual-action',
       scope: 'brand',
       surfaceKey: 'studio-specialized',
-      switcherItems: ['playground', 'storyboard', 'turbo', 'motion', 'clips'],
+      switcherItems: ['studio'],
       telemetryClass: 'product',
     },
   ),
@@ -946,7 +905,7 @@ const BRAND_ROUTE_REGISTRATIONS = [
       productClass: 'contextual-action',
       scope: 'brand',
       surfaceKey: 'studio-editor',
-      switcherItems: ['editor'],
+      switcherItems: ['studio'],
       telemetryClass: 'management',
     },
   ),
@@ -954,8 +913,9 @@ const BRAND_ROUTE_REGISTRATIONS = [
     [
       '/:orgSlug/:brandSlug/library',
       '/:orgSlug/:brandSlug/library/assets',
-      '/:orgSlug/:brandSlug/library/overview',
-      '/:orgSlug/:brandSlug/library/references',
+      '/:orgSlug/:brandSlug/library/elements/characters',
+      '/:orgSlug/:brandSlug/library/recent',
+      '/:orgSlug/:brandSlug/library/starred',
       '/:orgSlug/:brandSlug/library/trash',
       '/:orgSlug/:brandSlug/library/shelf/:shelf',
       '/:orgSlug/:brandSlug/library/videos',
@@ -983,6 +943,7 @@ const BRAND_ROUTE_REGISTRATIONS = [
       '/:orgSlug/:brandSlug/publishing/posts',
       '/:orgSlug/:brandSlug/publishing/posts/:id',
       '/:orgSlug/:brandSlug/publishing/content',
+      '/:orgSlug/:brandSlug/publishing/review',
       '/:orgSlug/:brandSlug/publishing/campaigns',
       '/:orgSlug/:brandSlug/publishing/campaigns/new',
       '/:orgSlug/:brandSlug/publishing/campaigns/compare',
@@ -1071,7 +1032,6 @@ const BRAND_ROUTE_REGISTRATIONS = [
   ...registerRoutes(
     [
       '/:orgSlug/:brandSlug/messages',
-      '/:orgSlug/:brandSlug/messages/overview',
       '/:orgSlug/:brandSlug/messages/outreach',
       '/:orgSlug/:brandSlug/messages/outreach/new',
       '/:orgSlug/:brandSlug/messages/outreach/:id',

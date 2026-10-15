@@ -4,8 +4,7 @@ import type { CredentialPlatform } from '@genfeedai/contracts';
 /** API-only trusted argument, kept separate from metrics and provider/queue payloads. */
 export type AnalyticsCollectionAuthorization = Readonly<{
   initiatingActor: BrandAccessActor & { isApiKey: boolean; scopes: string[] };
-  /** Re-reads the actor's live authority; with a brand, also asserts access to that brand. */
-  admit: (brandId?: string) => Promise<void>;
+  admit: () => Promise<void>;
 }>;
 
 export type AnalyticsCollectionPost = {

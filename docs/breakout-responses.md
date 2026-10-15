@@ -252,58 +252,6 @@ below-threshold comparison.
 Dispatch and publication wiring still must recheck this gate; no measurement
 alone grants authority or reserves money.
 
-## Visual outputs (image, carousel, video, short)
-
-A visual original is answered in its own format wherever the channel capability
-catalog (the one the scheduler validates against) publishes it, and an X original also
-keeps its text quote. The matrix is read from that catalog, never restated:
-
-| Platform | image | carousel | video | short |
-|---|---|---|---|---|
-| YouTube, TikTok | held | held | planned | planned |
-| Instagram | planned | planned (3) | planned | planned |
-| X | planned | planned (3, max 4) | planned | held |
-| LinkedIn | planned | held | planned | held |
-| hidden or planned channels | `platform_publishing_unavailable` | | | |
-
-A held pair reads `format_unsupported_for_platform`; a hidden or planned channel reads
-`platform_publishing_unavailable`. Nothing is blanket-held.
-
-One visual output is four paid steps, each a deterministic component of the output's
-generation key and each entered through the same admission, reauthorization and sub-budget
-attribution as text: the approved-brand caption (`:caption`), the visuals through the
-product's own image or video endpoints and prices (`:media:N`), the composition of those
-visuals onto the caption draft (free, one transaction), and quality (`:quality` for the
-caption, `:quality:visual:N` per visual). Everything is attributed to the output's own
-platform and format, so a platform or format sub-budget bounds the whole output. The planner
-prices generation from the product's generation quote and quality from the normal scoring
-estimate; an unknown price holds the format as `cost_unavailable` and is never guessed.
-
-The brand-capability preflight is free and runs before the caption. The visual quality gate
-is the existing visual judge (an image, or a video from sampled frames) against the strategy's
-configured image score; the caption keeps the normal text gate. Quality evidence is bound to
-the composed material's layout digest, so replacing a visual or the caption invalidates it.
-An interrupted or ambiguous provider step is read back from the retained assets and holds
-for reconciliation; a retained hold means a paid attempt already ran and is never repeated.
-A video on a self-hosted deployment is held as `media_quality_capability_unavailable`
-because its frames cannot be judged there.
-
-Visual outputs are admitted for review only (#6727): the brand validator cannot yet prove
-visual rules, so the preflight warns (`artifact_media_unsupported`) instead of blocking, the
-receipt can only resolve to `needs_review`, and each visual follow-up lands as
-`brand_review_required` in the review queue until a member approves it. Nothing auto-publishes.
-
-Each generated visual also gets its own approved-brand receipt, which persists the palette,
-font, OCR and placement proofs the validator can make (the last two only while the Admin
-setting `isBrandVisualAnalysisEnabled` is on). A visual that fails a hard brand rule (a
-blocked receipt) is composed onto the caption draft but not queued for review or scored; the
-output reads `awaiting_review` with `quality_or_brand_blocked`, which no approval clears, and
-the schedule-time and dispatch gates refuse it. A missing receipt changes nothing.
-
-Publication of a visual post runs the same admission at schedule time and at dispatch as text
-(re-reading the channel catalog, the composed material and every per-visual score). The
-YouTube direct upload runs it before the PUBLISHING write and before the upload job.
-
 ## Evidence and delivery
 
 Unit fixtures are written for capture, comparable-age evaluation, immutable

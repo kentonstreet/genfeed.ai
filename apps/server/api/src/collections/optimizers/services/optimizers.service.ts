@@ -105,8 +105,10 @@ export class OptimizersService {
     );
     await continuation?.reauthorize();
 
+    // Get metadata
     const metadata = this.extractMetadata(dto.content);
 
+    // Create and save score
     const score = await this.prisma.contentScore.create({
       data: {
         organizationId,
@@ -152,6 +154,7 @@ export class OptimizersService {
         platform: dto.platform,
       });
 
+      // Get optimized version from AI
       const result = await this.performAIOptimization(
         dto.content,
         dto.contentType,
@@ -221,6 +224,7 @@ export class OptimizersService {
       const count = dto.count || 10;
       const strategy = dto.strategy || 'balanced';
 
+      // Get hashtag suggestions from AI
       const prompt = this.buildHashtagPrompt(
         dto.content,
         dto.platform,
