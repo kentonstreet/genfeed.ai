@@ -37,15 +37,11 @@ import GenerationHarnessReceipt from '@ui/ingredients/tabs/prompts/GenerationHar
 import { useIngredientDownloadHandler } from '@ui/masonry/shared/useMasonryHover';
 import { PanelTabs } from '@ui/navigation/tabs/Tabs';
 import { Button } from '@ui/primitives/button';
-import { buttonVariants } from '@ui/primitives/button.variants';
 import {
   Download,
-  GitBranch,
-  ImagePlus,
   Maximize2,
   MessageSquare,
   RotateCcw,
-  Scissors,
   Send,
   Shuffle,
   Sparkles,
@@ -60,7 +56,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 
@@ -81,15 +76,11 @@ export default function StudioPlaygroundInspector({
   isFocused = false,
   job,
   onOpenPreview,
-  onPreviewRecovered,
   onRemix,
   onEdit,
   onSelect,
-  onUseAsReference,
   onUseInPost,
-  isUseAsReferenceEnabled,
   onVary,
-  parentJob,
   runJobs,
 }: StudioPlaygroundInspectorProps): ReactElement {
   const translate = useTranslations('pages.studioPlayground');
@@ -305,22 +296,6 @@ export default function StudioPlaygroundInspector({
     orgId,
   ]);
 
-  // Report each successful retry once, so the gallery card for the same asset
-  // leaves its own "Preview unavailable" state instead of staying stale.
-  const reportedRecoveryRef = useRef<string | null>(null);
-  const handlePreviewLoaded = () => {
-    if (previewRevision === 0 || !onPreviewRecovered) return;
-    const recovery = `${previewScope}\u0001${previewRevision}`;
-    if (reportedRecoveryRef.current === recovery) return;
-    reportedRecoveryRef.current = recovery;
-    onPreviewRecovered(
-      job,
-      ingredient?.mediaDelivery
-        ? undefined
-        : resolveStudioAssetUrl(currentReceipt),
-    );
-  };
-
   const handleRetryPreview = () => {
     if (!ingredient || isPreviewLoading || isPreviewUnsupported) return;
     setFailedPreviewScope(null);
@@ -425,7 +400,6 @@ export default function StudioPlaygroundInspector({
             sizes={isFocused ? '(min-width: 1024px) 65vw, 100vw' : '480px'}
             src={previewUrl}
             onError={() => setFailedPreviewScope(previewScope)}
-            onLoad={handlePreviewLoaded}
           />
         </div>
       );
@@ -443,10 +417,7 @@ export default function StudioPlaygroundInspector({
             preload: 'metadata',
           }}
           src={previewUrl}
-          mediaProps={{
-            onError: () => setFailedPreviewScope(previewScope),
-            onLoadedData: handlePreviewLoaded,
-          }}
+          mediaProps={{ onError: () => setFailedPreviewScope(previewScope) }}
           onPlaybackError={() => setFailedPreviewScope(previewScope)}
           thumbnail={ingredient?.thumbnailUrl}
         />
@@ -630,53 +601,6 @@ export default function StudioPlaygroundInspector({
           icon={<Shuffle className="size-3.5" />}
           label={translate('inspector.remix')}
           onClick={() => onRemix(job)}
-          size={ButtonSize.SM}
-          variant={ButtonVariant.SECONDARY}
-          withWrapper={false}
-        />
-      ) : null}
-      {onUseAsReference &&
-      isUseAsReferenceEnabled !== false &&
-      (job.type === 'image' ||
-        job.type === 'image-edit' ||
-        job.type === 'video' ||
-        job.type === 'avatar') ? (
-        <Button
-          ariaLabel={translate('useAsReferenceAria', {
-            prompt: studioAssetAccessibleLabel(job),
-            type: label.toLowerCase(),
-          })}
-          className="w-full"
-          icon={<ImagePlus className="size-3.5" />}
-          label={translate('useAsReference')}
-          onClick={() => onUseAsReference(job)}
-          size={ButtonSize.SM}
-          variant={ButtonVariant.SECONDARY}
-          withWrapper={false}
-        />
-      ) : null}
-      {ingredient && job.type === 'video' ? (
-        <Link
-          className={buttonVariants({
-            className: 'w-full',
-            size: ButtonSize.SM,
-            variant: ButtonVariant.SECONDARY,
-          })}
-          href={href(`${APP_ROUTES.STUDIO.CLIPS_NEW}?video=${ingredient.id}`)}
-        >
-          <Scissors aria-hidden="true" className="size-3.5" />
-          {translate('makeClips')}
-        </Link>
-      ) : null}
-      {parentJob ? (
-        <Button
-          ariaLabel={translate('sourceAssetAria', {
-            type: label.toLowerCase(),
-          })}
-          className="w-full"
-          icon={<GitBranch className="size-3.5" />}
-          label={translate('sourceAsset')}
-          onClick={() => onSelect(parentJob)}
           size={ButtonSize.SM}
           variant={ButtonVariant.SECONDARY}
           withWrapper={false}

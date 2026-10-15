@@ -24,8 +24,6 @@ import AudioPreviewPlayer from '@ui/audio/preview-player/AudioPreviewPlayer';
 import { Skeleton } from '@ui/display/skeleton/skeleton';
 import GenerationStatus from '@ui/feedback/generation-status/GenerationStatus';
 import AssetHoverDetails from '@ui/ingredients/asset-hover-details';
-import BrandModeBadge from '@ui/ingredients/brand-mode-badge';
-import IngredientTileOverlays from '@ui/ingredients/ingredient-tile-overlays';
 import {
   LazyMasonryImage,
   LazyMasonryVideo,
@@ -134,21 +132,14 @@ export default function StudioPlaygroundCard({
   onSelect,
   onUseAsReference,
   parentJob,
-  previewRevision = 0,
   view,
 }: StudioPlaygroundCardProps): ReactElement {
   const translate = useTranslations('pages.studioPlayground');
   const translateRecovery = useTranslations('pages.library.recovery');
-  const translateBrand = useTranslations(
-    'pages.studioPlayground.brandEnhancement',
-  );
   const { href } = useOrgUrl();
   const { label } = getStudioPlaygroundTypeConfig(job.type);
   const accessibleLabel = studioAssetAccessibleLabel(job);
-  // A failure belongs to the URL and retry revision it happened under, so a
-  // successful Inspector retry (a new revision) brings the tile back.
-  const [failedMediaKey, setFailedMediaKey] = useState<string | null>(null);
-  const mediaKey = job.url ? `${previewRevision}\u0001${job.url}` : null;
+  const [failedMediaUrl, setFailedMediaUrl] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const cancelGeneration = async () => {
     setIsCancelling(true);
@@ -168,7 +159,7 @@ export default function StudioPlaygroundCard({
     job.status === IngredientStatus.PROCESSING ||
     job.status === IngredientStatus.DRAFT;
   const isPreviewUnavailable =
-    !isPending && !isFailed && (!mediaKey || failedMediaKey === mediaKey);
+    !isPending && !isFailed && (!job.url || failedMediaUrl === job.url);
   const mediaState = isPending
     ? 'processing'
     : isFailed
@@ -180,19 +171,12 @@ export default function StudioPlaygroundCard({
   const height = Math.max(1, job.height || 1080);
   const masonryIngredient = useMemo(() => buildMasonryIngredient(job), [job]);
   const isListView = view === ViewType.LIST;
-  // Only the two modes a reader must not miss: an unapproved draft kit and a
-  // prompt that carried no brand at all.
-  const brandMode = job.ingredient?.generationHarness?.brandMode;
-  const unbrandedMode =
-    brandMode === 'raw' || brandMode === 'provisional_brand'
-      ? brandMode
-      : undefined;
 
   const handleMediaError = useCallback(() => {
-    if (mediaKey) {
-      setFailedMediaKey(mediaKey);
+    if (job.url) {
+      setFailedMediaUrl(job.url);
     }
-  }, [mediaKey]);
+  }, [job.url]);
 
   const handleCardActivate = useCallback(
     (event: MouseEvent<HTMLElement>) => {
@@ -336,17 +320,12 @@ export default function StudioPlaygroundCard({
         data-asset-details
       >
         <div className="flex min-w-0 items-center justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-1">
-            <Badge
-              className="w-fit shrink-0 text-2xs uppercase tracking-wide"
-              variant="secondary"
-            >
-              {label}
-            </Badge>
-            {unbrandedMode ? (
-              <BrandModeBadge brandMode={unbrandedMode} />
-            ) : null}
-          </div>
+          <Badge
+            className="w-fit shrink-0 text-2xs uppercase tracking-wide"
+            variant="secondary"
+          >
+            {label}
+          </Badge>
           <span className="truncate text-2xs text-muted-foreground">
             {job.modelKey || 'Auto'}
           </span>
@@ -459,9 +438,6 @@ export default function StudioPlaygroundCard({
             </>
           ) : undefined
         }
-        badge={
-          unbrandedMode ? <BrandModeBadge brandMode={unbrandedMode} /> : null
-        }
         metadata={job.modelKey || 'Auto'}
         typeLabel={label}
       />
@@ -484,7 +460,6 @@ export default function StudioPlaygroundCard({
       onReprompt: () => onReprompt(job),
       onSeeDetails: assetActions.onSeeDetails,
       onToggleFavorite: assetActions.onToggleFavorite,
-      previewRetryRevision: previewRevision,
     };
 
     return (
@@ -528,27 +503,9 @@ export default function StudioPlaygroundCard({
           )}
         </div>
 
-        {/* Grid cards share the Library tile overlays; Inspector carries
-            reference, clips and source. */}
-        {isListView ? (
-          renderDetails(!job.ingredient)
-        ) : job.ingredient ? (
-          <>
-            {unbrandedMode ? (
-              <BrandModeBadge
-                brandMode={unbrandedMode}
-                className="pointer-events-none absolute top-1.5 left-1.5 z-10"
-              />
-            ) : null}
-            <IngredientTileOverlays
-              ingredient={job.ingredient}
-              isReviewEnabled
-              onReviewUpdated={assetActions.onRefresh}
-            />
-          </>
-        ) : (
-          renderHoverDetails(true)
-        )}
+        {isListView
+          ? renderDetails(!job.ingredient)
+          : renderHoverDetails(!job.ingredient)}
       </article>
     );
   }
@@ -601,8 +558,6 @@ export default function StudioPlaygroundCard({
           />
         ) : isFailed || isPreviewUnavailable ? (
           <div
-            data-testid={`studio-asset-media-status-${job.id}`}
-            role="status"
             className={`flex flex-col items-center gap-2 px-3 text-center ${
               isFailed ? 'text-destructive' : 'text-muted-foreground'
             }`}
@@ -617,22 +572,6 @@ export default function StudioPlaygroundCard({
                 ? job.error || translate('generationFailed')
                 : translate('previewUnavailable')}
             </span>
-            {isFailed &&
-            job.failure === 'brand_enhancement' &&
-            assetActions.onGenerateWithoutBrand ? (
-              <Button
-                ariaLabel={translateBrand('generateWithoutBrandAria', {
-                  type: label.toLowerCase(),
-                })}
-                className="pointer-events-auto px-2 text-xs"
-                data-testid={`studio-asset-generate-without-brand-${job.id}`}
-                label={translateBrand('generateWithoutBrand')}
-                onClick={() => void assetActions.onGenerateWithoutBrand?.(job)}
-                size={ButtonSize.SM}
-                variant={ButtonVariant.SECONDARY}
-                withWrapper={false}
-              />
-            ) : null}
             {isPreviewUnavailable ? (
               <span className="max-w-48 text-2xs leading-relaxed text-muted-foreground/75">
                 {translate('previewUnavailableDescription')}

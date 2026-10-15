@@ -16,7 +16,6 @@ import {
   ButtonVariant,
   ComponentSize,
   IngredientCategory,
-  RouterPriority,
   SkillSurface,
   UploadStatus,
   ViewType,
@@ -35,7 +34,6 @@ import type {
   IStudioGenerateDraft,
   KnowledgeSelection,
 } from '@genfeedai/contracts/interfaces';
-import type { CrunInputControls } from '@genfeedai/contracts/interfaces/content/crun-contract.interface';
 import type {
   StudioGenerateDraftPayload,
   StudioPlaygroundJob,
@@ -74,7 +72,6 @@ import { useStudioPlaygroundDraft } from '@pages/studio/playground/hooks/useStud
 import { useStudioPlaygroundGallery } from '@pages/studio/playground/hooks/useStudioPlaygroundGallery';
 import { useStudioPlaygroundHandoff } from '@pages/studio/playground/hooks/useStudioPlaygroundHandoff';
 import { useStudioPlaygroundModels } from '@pages/studio/playground/hooks/useStudioPlaygroundModels';
-import { useStudioPlaygroundPreviewRecovery } from '@pages/studio/playground/hooks/useStudioPlaygroundPreviewRecovery';
 import { useStudioPlaygroundSettings } from '@pages/studio/playground/hooks/useStudioPlaygroundSettings';
 import { useStudioPromptEnhancement } from '@pages/studio/playground/hooks/useStudioPromptEnhancement';
 import {
@@ -123,7 +120,6 @@ import {
   sanitizeStudioPlaygroundState,
 } from '@pages/studio/playground/utils/studio-playground-storage';
 import {
-  filterStudioPlaygroundModels,
   getStudioPlaygroundTypeConfig,
   isStudioPlaygroundType,
   listStudioPlaygroundTypeConfigs,
@@ -183,20 +179,6 @@ interface StudioContentReference {
 
 const EMPTY_KNOWLEDGE_SELECTION: KnowledgeSelection = {};
 const EMPTY_ATTACHMENTS: AttachmentItem[] = [];
-
-// Auto defers to the router, which can pick a start/end-frame model, so a
-// start and end frame may be attached together. A concrete model decides.
-function resolveSupportsInterpolation(
-  modelKey: string | undefined,
-  videoControls: CrunInputControls | undefined,
-): boolean {
-  if (isAutoStudioModelKey(modelKey)) {
-    return true;
-  }
-  return videoControls?.mediaKind === 'video'
-    ? videoControls.videoRules?.referenceMode === 'start-end'
-    : hasInterpolation(modelKey ?? '');
-}
 
 function warnForImageEditEntry(
   entry: ImageEditEntryResolution,
@@ -469,15 +451,8 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
   });
 
   const { capabilities, modelCategory } = getStudioPlaygroundTypeConfig(type);
-  const {
-    isLoadingModels,
-    isModelCatalogReady,
-    models: catalogModels,
-  } = useStudioPlaygroundModels(modelCategory, organizationId);
-  const models = useMemo(
-    () => filterStudioPlaygroundModels(type, catalogModels, settings.avatarRef),
-    [catalogModels, settings.avatarRef, type],
-  );
+  const { isLoadingModels, isModelCatalogReady, models } =
+    useStudioPlaygroundModels(modelCategory, organizationId);
   const editSourceLimit = getImageEditMaxSources(
     models.find((model) => model.key === settings.modelKey)?.key ??
       models.find((model) => model.isDefault)?.key,
@@ -500,16 +475,8 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
   ]);
   const continuationDraftRef = useRef(continuationDraft);
   continuationDraftRef.current = continuationDraft;
-  // Until the saved draft is known an empty composer proves nothing: applying
-  // then would skip Replace draft and the restore, and autosave would
-  // overwrite the saved draft.
-  const isDraftLoadedRef = useRef(false);
   const prepareContinuation = useCallback(
     (apply: () => void) => {
-      if (!isDraftLoadedRef.current) {
-        notificationsService.info(translate('continuation.draftLoading'));
-        return;
-      }
       if (
         !prompt.trim() &&
         !contentReferences.length &&
@@ -540,7 +507,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     [
       attachments.length,
       contentReferences.length,
-      notificationsService,
       openConfirm,
       prompt,
       restoredAttachments.length,
@@ -593,21 +559,14 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       translate,
     ],
   );
-  const {
-    cancelJob,
-    generateWithoutBrand,
-    isGenerating,
-    jobs,
-    rehydratePending,
-    removeJob,
-    submit,
-  } = useStudioGeneration({
-    brandId,
-    models,
-    onGenerated: refresh,
-    settings,
-    type,
-  });
+  const { cancelJob, isGenerating, jobs, rehydratePending, removeJob, submit } =
+    useStudioGeneration({
+      brandId,
+      models,
+      onGenerated: refresh,
+      settings,
+      type,
+    });
   // #4670 Open in Studio: a resolved Agent handoff pre-fills the composer.
   // Precedence over remembered local settings comes for free from
   // `applyTypeSettings` — it marks every patched field `'user'`-owned in the
@@ -812,9 +771,8 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     updateSettings,
   ]);
 
-  // Auto (Advanced off) hides model choice and always routes for top quality,
-  // so a concrete pick or priority saved earlier must not keep applying
-  // unseen. An Agent handoff's pick is kept.
+  // Simple mode (Advanced off) hides model choice, so a concrete pick saved
+  // earlier must not keep applying unseen. An Agent handoff's pick is kept.
   const { isAdvancedMode, isLoaded: isAdvancedModeLoaded } =
     useAdvancedModePreference();
   useEffect(() => {
@@ -823,22 +781,17 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       isAdvancedMode ||
       !capabilities.hasModelSelection ||
       handoffPayload ||
-      (isAutoStudioModelKey(settings.modelKey) &&
-        settings.prioritize === RouterPriority.QUALITY)
+      isAutoStudioModelKey(settings.modelKey)
     ) {
       return;
     }
-    updateSettings({
-      modelKey: AUTO_MODEL_OPTION_VALUE,
-      prioritize: RouterPriority.QUALITY,
-    });
+    updateSettings({ modelKey: AUTO_MODEL_OPTION_VALUE });
   }, [
     capabilities.hasModelSelection,
     handoffPayload,
     isAdvancedMode,
     isAdvancedModeLoaded,
     settings.modelKey,
-    settings.prioritize,
     updateSettings,
   ]);
 
@@ -927,8 +880,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     });
     return resultSort === 'oldest' ? [...filtered].reverse() : filtered;
   }, [galleryJobs, resultSort, resultType, search]);
-  const { previewRevisions, recoverPreview, recoveredJobs } =
-    useStudioPlaygroundPreviewRecovery(visibleJobs);
   const showStarterIdeas =
     !galleryError &&
     !isLoadingGallery &&
@@ -984,12 +935,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
         (run) => run.id === runId,
       )?.jobs ?? [selectedJob]
     );
-  }, [selectedJob, visibleJobs]);
-  const selectedParentJob = useMemo(() => {
-    const parentId = selectedJob?.parentId;
-    return parentId
-      ? visibleJobs.find((job) => job.ingredientId === parentId)
-      : undefined;
   }, [selectedJob, visibleJobs]);
 
   useEffect(() => {
@@ -1409,10 +1354,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       const videoControls = models.find(
         (model) => model.key === settings.modelKey && model.provider === 'crun',
       )?.inputControls;
-      const supportsInterpolation = resolveSupportsInterpolation(
-        settings.modelKey,
-        videoControls,
-      );
+      const supportsInterpolation =
+        videoControls?.mediaKind === 'video'
+          ? videoControls.videoRules?.referenceMode === 'start-end'
+          : hasInterpolation(settings.modelKey);
       const hasStartFrame =
         contentReferences.some(
           (reference) => reference.role === 'startFrame',
@@ -1545,10 +1490,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       const videoControls = models.find(
         (model) => model.key === settings.modelKey && model.provider === 'crun',
       )?.inputControls;
-      const supportsInterpolation = resolveSupportsInterpolation(
-        settings.modelKey,
-        videoControls,
-      );
+      const supportsInterpolation =
+        videoControls?.mediaKind === 'video'
+          ? videoControls.videoRules?.referenceMode === 'start-end'
+          : hasInterpolation(settings.modelKey);
       const hasStartFrame =
         contentReferences.some(
           (reference) => reference.role === 'startFrame',
@@ -1704,29 +1649,26 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
       return;
     }
     const unsupportedRoles = new Set<StudioPlaygroundReferenceRole>();
-    const supportsInterpolation = resolveSupportsInterpolation(
-      settings.modelKey,
-      videoControls,
-    );
+    const supportsInterpolation =
+      videoControls?.mediaKind === 'video'
+        ? videoControls.videoRules?.referenceMode === 'start-end'
+        : hasInterpolation(settings.modelKey);
     const hasStartFrame =
       contentReferences.some((reference) => reference.role === 'startFrame') ||
       attachments.some(
         (attachment: AttachmentItem) =>
           getAttachmentRole(attachment) === 'startFrame',
       );
-    // Auto defers to the router, which picks a model that accepts the frame.
-    if (!isAutoStudioModelKey(settings.modelKey)) {
-      if (
-        !(videoControls?.mediaKind === 'video'
-          ? videoControls.videoRules?.referenceMode === 'start-end'
-          : hasEndFrame(settings.modelKey))
-      ) {
-        unsupportedRoles.add('endFrame');
-      } else if (supportsInterpolation && !hasStartFrame) {
-        unsupportedRoles.add('endFrame');
-      } else if (!supportsInterpolation && hasStartFrame) {
-        unsupportedRoles.add('endFrame');
-      }
+    if (
+      !(videoControls?.mediaKind === 'video'
+        ? videoControls.videoRules?.referenceMode === 'start-end'
+        : hasEndFrame(settings.modelKey))
+    ) {
+      unsupportedRoles.add('endFrame');
+    } else if (supportsInterpolation && !hasStartFrame) {
+      unsupportedRoles.add('endFrame');
+    } else if (!supportsInterpolation && hasStartFrame) {
+      unsupportedRoles.add('endFrame');
     }
     if (
       videoControls?.mediaKind === 'video' ||
@@ -1951,18 +1893,16 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     [brandId, getIngredientsService, restoreSettings],
   );
 
-  // A Library edit entry waits for the saved draft instead of blocking its
-  // restore, so replacing that draft goes through Replace draft / Cancel.
-  const { isLoaded: isDraftLoaded, saveStatus: draftSaveStatus } =
-    useStudioPlaygroundDraft({
-      brandId,
-      canRestore: isHydrated && !isHandoffLoading,
-      isAutosaveEnabled: true,
-      isRestoreBlocked: Boolean(handoffPayload),
-      onRestore: restoreDraft,
-      payload: draftPayload,
-    });
-  isDraftLoadedRef.current = isDraftLoaded;
+  const { saveStatus: draftSaveStatus } = useStudioPlaygroundDraft({
+    brandId,
+    canRestore: isHydrated && !isHandoffLoading,
+    isAutosaveEnabled: true,
+    isRestoreBlocked:
+      Boolean(handoffPayload) ||
+      (typeof window !== 'undefined' && Boolean(editSourceQueryId)),
+    onRestore: restoreDraft,
+    payload: draftPayload,
+  });
 
   const handleEditJob = useCallback(
     (job: StudioPlaygroundJob) => {
@@ -2019,14 +1959,13 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     ],
   );
 
-  const prepareContinuationRef = useRef(prepareContinuation);
-  prepareContinuationRef.current = prepareContinuation;
   const editEntryRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isHydrated || !brandId || !isDraftLoaded) return;
+    if (!isHydrated || !brandId) return;
     const sourceId = editSourceQueryId;
     if (!sourceId || editEntryRef.current === `${brandId}:${sourceId}`) return;
     editEntryRef.current = `${brandId}:${sourceId}`;
+    clearCrunRestore();
     const epoch = crunRestoreEpochRef.current;
     const scope = crunRestoreScopeRef.current;
     let cancelled = false;
@@ -2038,11 +1977,10 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     void getIngredientsService()
       .then(async (service) => {
         if (!isCurrent()) return;
-        const [ingredient] = await service.findByIds([sourceId]);
+        const ingredient = await service.findOne(sourceId, { brandId });
         if (!isCurrent()) return;
         if (
           !ingredient ||
-          ingredient.id !== sourceId ||
           ingredient.brandId !== brandId ||
           ingredient.isDeleted ||
           ingredient.category !== IngredientCategory.IMAGE
@@ -2050,34 +1988,24 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
           throw new Error('Editing source not found in this brand.');
         const reference = toContentReference(ingredient, 'editSource');
         if (!reference) throw new Error('Editing source has no preview.');
-        // The entry is consumed once offered: a reload restores whichever
-        // draft the creator kept instead of asking again.
-        const url = new URL(window.location.href);
-        url.searchParams.delete('editImage');
-        window.history.replaceState(null, '', url);
-        prepareContinuationRef.current(() => {
-          clearCrunRestore();
-          clearAttachments();
-          setRestoredAttachments(EMPTY_ATTACHMENTS);
-          restoredRolesRef.current.clear();
-          setContentReferences([reference]);
-          setType('image-edit');
-          setPrompt('');
-          const entry = imageEditEntryForAsset(ingredient);
-          applyTypeSettings('image-edit', entry.patch);
-          warnForImageEditEntry(
-            entry,
-            {
-              model: (model) =>
-                translateRef.current('editImage.modelFallback', { model }),
-              ratio: (ratio) =>
-                translateRef.current('editImage.aspectRatioFallback', {
-                  ratio,
-                }),
-            },
-            (message) => notificationsService.warning(message),
-          );
-        });
+        clearAttachments();
+        setRestoredAttachments(EMPTY_ATTACHMENTS);
+        restoredRolesRef.current.clear();
+        setContentReferences([reference]);
+        setType('image-edit');
+        setPrompt('');
+        const entry = imageEditEntryForAsset(ingredient);
+        applyTypeSettings('image-edit', entry.patch);
+        warnForImageEditEntry(
+          entry,
+          {
+            model: (model) =>
+              translateRef.current('editImage.modelFallback', { model }),
+            ratio: (ratio) =>
+              translateRef.current('editImage.aspectRatioFallback', { ratio }),
+          },
+          (message) => notificationsService.warning(message),
+        );
       })
       .catch((error: unknown) => {
         if (isCurrent())
@@ -2093,7 +2021,6 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
     };
   }, [
     isHydrated,
-    isDraftLoaded,
     brandId,
     editSourceQueryId,
     getIngredientsService,
@@ -2430,7 +2357,7 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
             />
           </div>
         }
-        refresh={
+        iconActions={
           <ButtonRefresh isRefreshing={isLoadingGallery} onClick={refresh} />
         }
         leading={
@@ -2468,15 +2395,9 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                     job={selectedJob}
                     onRemix={handleRemixJob}
                     onEdit={handleEditJob}
-                    onPreviewRecovered={recoverPreview}
-                    isUseAsReferenceEnabled={canUseGeneratedReference(
-                      selectedJob,
-                    )}
                     onSelect={handleSelectJob}
-                    onUseAsReference={handleUseGeneratedReference}
                     onUseInPost={assetActions.onPublishIngredient}
                     onVary={handleVaryRecipe}
-                    parentJob={selectedParentJob}
                     runJobs={selectedRunJobs}
                   />
                 </StudioPlaygroundFocusedPreview>
@@ -2535,15 +2456,13 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
                       assetActions={{
                         ...assetActions,
                         onCancelGeneration: cancelJob,
-                        onGenerateWithoutBrand: generateWithoutBrand,
                       }}
                       isLoading={isLoadingGallery}
-                      jobs={recoveredJobs}
+                      jobs={visibleJobs}
                       isUseAsReferenceEnabled={canUseGeneratedReference}
                       onReprompt={handleVaryRecipe}
                       onSelect={handleSelectJob}
                       onUseAsReference={handleUseGeneratedReference}
-                      previewRevisions={previewRevisions}
                       selectedJobId={selectedJobId}
                       view={resultsView}
                     />
@@ -2690,15 +2609,11 @@ export default function StudioPlaygroundWorkspace(): ReactElement {
           <StudioPlaygroundInspector
             job={selectedJob}
             onOpenPreview={handleOpenFocusedPreview}
-            onPreviewRecovered={recoverPreview}
             onRemix={handleRemixJob}
             onEdit={handleEditJob}
-            isUseAsReferenceEnabled={canUseGeneratedReference(selectedJob)}
             onSelect={handleSelectJob}
-            onUseAsReference={handleUseGeneratedReference}
             onUseInPost={assetActions.onPublishIngredient}
             onVary={handleVaryRecipe}
-            parentJob={selectedParentJob}
             runJobs={selectedRunJobs}
           />
         ) : null}
