@@ -21,7 +21,6 @@ import type {
   SocialAutomationState,
   SocialConversationStatus,
 } from '@genfeedai/contracts/interfaces';
-import { useFeatureFlagContext } from '@genfeedai/hooks/feature-flags/provider';
 import type { SocialMessageModel } from '@genfeedai/models/social/social-message.model';
 import type { MessagesSurface } from '@genfeedai/props/messages/messages-conversation-sidebar.props';
 import { cn } from '@helpers/formatting/cn/cn.util';
@@ -238,11 +237,9 @@ export default function MessagesPage() {
     settings,
     settingsLoading,
   } = useBrand();
-  const { flags: platformFlags } = useFeatureFlagContext();
   const moduleAccess = resolveOrganizationModulePresentationAccess(
     settingsLoading ? null : settings,
     'messages',
-    platformFlags,
   );
   const canWrite = Boolean(scopedOrganizationId && moduleAccess.isAllowed);
   const writeBlockedReason = canWrite
