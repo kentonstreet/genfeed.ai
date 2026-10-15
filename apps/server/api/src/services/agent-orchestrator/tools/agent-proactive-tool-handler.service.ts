@@ -1,28 +1,16 @@
-import { AgentStrategiesService } from '@api/collections/agent-strategies/services/agent-strategies.service';
 import { PostsService } from '@api/collections/posts/services/posts.service';
-import { ValidationException } from '@api/exceptions/validation.exception';
 import { resolveOptionalProvider } from '@api/helpers/utils/module-ref/resolve-optional-provider.util';
 import { agentPostPreviewInclude } from '@api/services/agent-orchestrator/tools/agent-post-preview.util';
 import type { ToolExecutionContext } from '@api/services/agent-orchestrator/tools/agent-tool-executor.service';
 import { readOptionalString } from '@api/services/agent-orchestrator/tools/agent-tool-parameter-readers';
-import {
-  buildContentAgentCreateInput,
-  buildContentAgentUpdateInput,
-  parseSaveContentAgentArgs,
-  resolveContentAgentPrincipal,
-} from '@api/services/agent-orchestrator/tools/save-content-agent';
+import { BatchGenerationService } from '@api/services/batch-generation/batch-generation.service';
+import { CreateManualReviewBatchDto } from '@api/services/batch-generation/dto/create-manual-review-batch.dto';
 import { TwitterService } from '@api/services/integrations/twitter/services/twitter.service';
 import { mapTwitterApiError } from '@api/services/integrations/twitter/utils/twitter-api-error.util';
 import { buildTwitterStatusUrl } from '@api/services/integrations/twitter/utils/twitter-post-id.util';
-import { CreateManualReviewTurboRunDto } from '@api/services/turbo-run/dto/create-manual-review-turbo-run.dto';
-import { TurboRunService } from '@api/services/turbo-run/turbo-run.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { scopedWhere } from '@api/tenancy/scoped-where';
-import {
-  AgentAutonomyMode,
-  parsePlatform,
-  TargetExecutionState,
-} from '@genfeedai/contracts';
+import { parsePlatform, TargetExecutionState } from '@genfeedai/contracts';
 import type { AgentToolResult } from '@genfeedai/contracts/interfaces';
 import { serializeAgentPost } from '@genfeedai/serializers';
 import { LoggerService } from '@libs/logger/logger.service';
@@ -35,7 +23,7 @@ import { ModuleRef } from '@nestjs/core';
  * discover_engagements is wired through TwitterService so X discovery never silently
  * returns empty for a missing trends endpoint (#2663). draft_engagement_reply lands
  * the drafted reply directly in the human review queue via
- * TurboRunService.createManualReviewTurboRun — no HTTP loopback.
+ * BatchGenerationService.createManualReviewBatch — no HTTP loopback.
  */
 @Injectable()
 export class AgentProactiveToolHandler {
@@ -46,17 +34,15 @@ export class AgentProactiveToolHandler {
     private readonly postsService: PostsService,
     @Optional() private readonly twitterService?: TwitterService,
     @Optional()
-    private readonly turboRunService?: TurboRunService,
+    private readonly batchGenerationService?: BatchGenerationService,
     @Optional() private readonly moduleRef?: ModuleRef,
     @Optional() private readonly prisma?: PrismaService,
-    @Optional()
-    private readonly agentStrategiesService?: AgentStrategiesService,
   ) {}
 
   async getApprovalSummary(
     ctx: ToolExecutionContext,
   ): Promise<AgentToolResult> {
-    if (!this.turboRunService) {
+    if (!this.batchGenerationService) {
       return {
         creditsUsed: 0,
         error: 'Batch generation service not available',
@@ -64,30 +50,30 @@ export class AgentProactiveToolHandler {
       };
     }
 
-    const result = await this.turboRunService.getTurboRuns(ctx.organizationId, {
-      limit: 50,
-    });
+    const result = await this.batchGenerationService.getBatches(
+      ctx.organizationId,
+      { limit: 50 },
+    );
 
     let totalPending = 0;
     let contentPending = 0;
     let engagementPending = 0;
     let oldestPendingAge = 0;
 
-    for (const turboRun of result.items) {
-      totalPending += turboRun.pendingCount ?? 0;
+    for (const batch of result.items) {
+      totalPending += batch.pendingCount ?? 0;
       // Aggregate counts based on source
       if (
-        (turboRun as unknown as Record<string, unknown>).source === 'proactive'
+        (batch as unknown as Record<string, unknown>).source === 'proactive'
       ) {
-        engagementPending += turboRun.pendingCount ?? 0;
+        engagementPending += batch.pendingCount ?? 0;
       } else {
-        contentPending += turboRun.pendingCount ?? 0;
+        contentPending += batch.pendingCount ?? 0;
       }
 
-      if (turboRun.createdAt) {
-        const age =
-          Date.now() - new Date(turboRun.createdAt as string).getTime();
-        if (age > oldestPendingAge && (turboRun.pendingCount ?? 0) > 0) {
+      if (batch.createdAt) {
+        const age = Date.now() - new Date(batch.createdAt as string).getTime();
+        if (age > oldestPendingAge && (batch.pendingCount ?? 0) > 0) {
           oldestPendingAge = age;
         }
       }
@@ -101,7 +87,7 @@ export class AgentProactiveToolHandler {
         contentPending,
         engagementPending,
         oldestPendingHours,
-        totalTurboRuns: result.total,
+        totalBatches: result.total,
         totalPending,
       },
       success: true,
@@ -241,157 +227,6 @@ export class AgentProactiveToolHandler {
     };
   }
 
-  async saveContentAgent(
-    params: Record<string, unknown>,
-    ctx: ToolExecutionContext,
-  ): Promise<AgentToolResult> {
-    const request = parseSaveContentAgentArgs(params);
-    if (typeof request === 'string') {
-      return { creditsUsed: 0, error: request, success: false };
-    }
-    if (!ctx.userId || !ctx.organizationId) {
-      return {
-        creditsUsed: 0,
-        error: 'Authenticated user is required',
-        success: false,
-      };
-    }
-    const principal = resolveContentAgentPrincipal(
-      ctx.scheduleAuthorityPrincipal ?? ctx.initiatingPrincipal,
-      ctx.organizationId,
-    );
-    if (principal === 'foreign') {
-      return {
-        creditsUsed: 0,
-        error: 'Schedule principal does not belong to this organization',
-        success: false,
-      };
-    }
-    if (!this.prisma || !this.agentStrategiesService) {
-      return {
-        creditsUsed: 0,
-        error: 'Content agent save is unavailable',
-        success: false,
-      };
-    }
-
-    const brandId = request.brandId;
-    if (ctx.brandId && brandId && ctx.brandId !== brandId) {
-      return {
-        creditsUsed: 0,
-        error: 'brandId does not match this conversation',
-        success: false,
-      };
-    }
-    if (brandId) {
-      const brand = await this.prisma.brand.findFirst({
-        where: scopedWhere(ctx.organizationId, { id: brandId }),
-      });
-      if (!brand) {
-        return {
-          creditsUsed: 0,
-          error: 'Brand was not found in this organization',
-          success: false,
-        };
-      }
-    }
-
-    try {
-      if (request.mode === 'create') {
-        const created = await this.agentStrategiesService.create(
-          buildContentAgentCreateInput({
-            organizationId: ctx.organizationId,
-            ...(principal ? { principal } : {}),
-            request,
-            userId: ctx.userId,
-          }),
-        );
-        return {
-          creditsUsed: 0,
-          data: {
-            autoPublishEnabled: request.autoPublish === true,
-            autonomyMode:
-              request.autoPublish === true
-                ? AgentAutonomyMode.AUTO_PUBLISH
-                : AgentAutonomyMode.SUPERVISED,
-            brandId: created.brandId,
-            id: created.id,
-            label: created.label,
-            mode: 'created',
-            scheduleBound: Boolean(principal),
-          },
-          success: true,
-        };
-      }
-
-      const existing = await this.agentStrategiesService.findOneById(
-        request.strategyId,
-        ctx.organizationId,
-      );
-      if (!existing) {
-        return {
-          creditsUsed: 0,
-          error: 'Content agent was not found',
-          success: false,
-        };
-      }
-      if (
-        request.brandId &&
-        existing.brandId &&
-        request.brandId !== existing.brandId
-      ) {
-        return {
-          creditsUsed: 0,
-          error: 'brandId does not match this content agent',
-          success: false,
-        };
-      }
-      if (ctx.brandId && existing.brandId && ctx.brandId !== existing.brandId) {
-        return {
-          creditsUsed: 0,
-          error: 'brandId does not match this conversation',
-          success: false,
-        };
-      }
-      const updated = await this.agentStrategiesService.patch(
-        request.strategyId,
-        buildContentAgentUpdateInput({
-          ...(principal ? { principal } : {}),
-          request,
-        }),
-      );
-      return {
-        creditsUsed: 0,
-        data: {
-          ...(request.autoPublish !== undefined
-            ? {
-                autoPublishEnabled: request.autoPublish,
-                autonomyMode: request.autoPublish
-                  ? AgentAutonomyMode.AUTO_PUBLISH
-                  : AgentAutonomyMode.SUPERVISED,
-              }
-            : {}),
-          brandId: updated.brandId,
-          id: updated.id,
-          label: updated.label,
-          mode: 'updated',
-          scheduleBound: Boolean(principal),
-        },
-        success: true,
-      };
-    } catch (error: unknown) {
-      const message =
-        error instanceof ValidationException
-          ? error.message
-          : 'Could not save the content agent';
-      this.loggerService.error(
-        `${this.constructorName} saveContentAgent failed`,
-        { error: message, organizationId: ctx.organizationId },
-      );
-      return { creditsUsed: 0, error: message, success: false };
-    }
-  }
-
   async updateStrategyState(
     params: Record<string, unknown>,
     _ctx: ToolExecutionContext,
@@ -497,7 +332,7 @@ export class AgentProactiveToolHandler {
     params: Record<string, unknown>,
     ctx: ToolExecutionContext,
   ): Promise<AgentToolResult> {
-    if (!this.turboRunService) {
+    if (!this.batchGenerationService) {
       return {
         creditsUsed: 0,
         error: 'Batch generation service not available',
@@ -526,7 +361,7 @@ export class AgentProactiveToolHandler {
       };
     }
 
-    const dto: CreateManualReviewTurboRunDto = {
+    const dto: CreateManualReviewBatchDto = {
       brandId,
       items: [
         {
@@ -543,7 +378,7 @@ export class AgentProactiveToolHandler {
     };
 
     try {
-      const turboRun = await this.turboRunService.createManualReviewTurboRun(
+      const batch = await this.batchGenerationService.createManualReviewBatch(
         dto,
         ctx.userId,
         ctx.organizationId,
@@ -552,7 +387,7 @@ export class AgentProactiveToolHandler {
       return {
         creditsUsed: 1,
         data: {
-          turboRunId: turboRun.id,
+          batchId: batch.id,
           message:
             'Reply draft is ready for review. Nothing posts until you approve it.',
           platform,
