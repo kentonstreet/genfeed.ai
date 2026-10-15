@@ -64,7 +64,6 @@ export const PLATFORM_SCHEDULED_TASKS = {
   WORKFLOW_CONTINUATION_RECONCILE: 'workflow-continuation-reconcile',
   WORKSPACE_TASK_ROLLUP_RECOVERY: 'workspace-task-rollup-recovery',
   X_REPLY_WATCH: 'x-reply-watch',
-  EXTERNAL_VOICE_CATALOG_SYNC: 'external-voice-catalog-sync',
   YOUTUBE_MESSAGES: 'youtube-messages',
   YOUTUBE_STATUS: 'youtube-status',
 } as const;
@@ -106,11 +105,8 @@ export const PLATFORM_SCHEDULE_CATALOG = {
     pattern: '0 8 * * *',
     timezone: 'UTC',
   },
-  // Finds the organizations with lifecycle deliveries, recaps, credit or trial
-  // notices, or product signals due, and queues one run for each. Idle
-  // organizations get none.
   [PLATFORM_SCHEDULED_TASKS.LIFECYCLE_EMAILS]: {
-    pattern: '0 * * * *',
+    pattern: '*/5 * * * *',
     timezone: 'UTC',
   },
   [PLATFORM_SCHEDULED_TASKS.TURBO_RUN_CREDIT_SETTLEMENT_RECONCILE]: {
@@ -137,10 +133,8 @@ export const PLATFORM_SCHEDULE_CATALOG = {
     pattern: '*/15 * * * *',
     timezone: 'UTC',
   },
-  // Provider prices change rarely; a weekly refresh is inside the 10-day
-  // staleness window (`MODEL_PRICING_REFRESH_STALE_DAYS`).
   [PLATFORM_SCHEDULED_TASKS.FAL_MODEL_DISCOVERY]: {
-    pattern: '0 7 * * 0',
+    pattern: '0 7 * * *',
     timezone: 'UTC',
   },
   // Admission already refuses an expired trial; this only removes the
@@ -220,9 +214,8 @@ export const PLATFORM_SCHEDULE_CATALOG = {
     pattern: '*/5 * * * *',
     timezone: 'UTC',
   },
-  // Weekly, an hour before fal (see FAL_MODEL_DISCOVERY).
   [PLATFORM_SCHEDULED_TASKS.REPLICATE_MODEL_DISCOVERY]: {
-    pattern: '0 6 * * 0',
+    pattern: '0 6 * * *',
     timezone: 'UTC',
   },
   [PLATFORM_SCHEDULED_TASKS.REVIEW_GATE_TIMEOUT]: {
@@ -265,10 +258,6 @@ export const PLATFORM_SCHEDULE_CATALOG = {
   },
   [PLATFORM_SCHEDULED_TASKS.X_REPLY_WATCH]: {
     pattern: X_REPLY_WATCH_SCHEDULE,
-    timezone: 'UTC',
-  },
-  [PLATFORM_SCHEDULED_TASKS.EXTERNAL_VOICE_CATALOG_SYNC]: {
-    pattern: '0 */12 * * *',
     timezone: 'UTC',
   },
   [PLATFORM_SCHEDULED_TASKS.YOUTUBE_MESSAGES]: {
