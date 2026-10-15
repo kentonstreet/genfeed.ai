@@ -209,7 +209,7 @@ function applyMenuSections(actions: IQuickAction[]): IQuickAction[] {
       orderedMenuActions.push({
         ...action,
         dividerBefore: hasRenderedSection && index === 0,
-        sectionLabel: section,
+        sectionLabel: index === 0 ? section : undefined,
       });
     });
 

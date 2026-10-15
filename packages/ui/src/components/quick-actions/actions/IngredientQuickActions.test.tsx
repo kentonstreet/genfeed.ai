@@ -12,7 +12,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   useQuickActions: vi.fn(),
-  push: vi.fn(),
   isSelfHostedDeployment: vi.fn(() => false),
   useBrand: vi.fn(() => ({ settings: null })),
 }));
@@ -25,15 +24,9 @@ vi.mock('@hooks/ui/use-storyboard-entry/use-storyboard-entry', () => ({
   }),
 }));
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }) }));
-vi.mock('@genfeedai/hooks/navigation/use-org-url', () => ({
-  useOrgUrl: () => ({ href: (path: string) => `/org/brand${path}` }),
+vi.mock('next-intl', () => ({
+  useTranslations: () => (key: string) => key,
 }));
-
-vi.mock('next-intl', async () => {
-  const { translateFromCatalog } = await import('@ui/tests/next-intl.stub');
-  return { useTranslations: translateFromCatalog };
-});
 
 vi.mock('@genfeedai/config/deployment', () => ({
   isSelfHostedDeployment: mocks.isSelfHostedDeployment,
@@ -286,26 +279,6 @@ describe('IngredientQuickActions', () => {
       };
     };
     expect(params.handlers.onUsePrompt).toBe(onReprompt);
-  });
-  it('opens an image editing draft from a ready Library image', () => {
-    render(
-      <IngredientQuickActions
-        selectedIngredient={{
-          ...ingredient,
-          status: IngredientStatus.GENERATED,
-          ingredientUrl: 'https://example.com/source.png',
-        }}
-        isMasonryCompact
-      />,
-    );
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'More' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit image' }));
-    expect(mocks.push).toHaveBeenCalledWith(
-      '/org/brand/studio/playground?editImage=ingredient-1',
-    );
   });
   it('offers Save as character in the image overflow menu', () => {
     render(

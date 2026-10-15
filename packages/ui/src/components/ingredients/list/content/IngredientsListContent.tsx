@@ -1,8 +1,8 @@
 'use client';
 
 import { useAssetSelection } from '@genfeedai/contexts/ui/asset-selection.context';
-import { useContextSidebar } from '@genfeedai/contexts/ui/context-sidebar-context';
 import {
+  ButtonSize,
   ButtonVariant,
   ComponentSize,
   categoryToString,
@@ -15,11 +15,7 @@ import {
 } from '@genfeedai/contracts';
 import { EMPTY_STATES } from '@genfeedai/contracts/constants';
 import type { IIngredient } from '@genfeedai/contracts/interfaces';
-import { useAuthorizedMediaPreview } from '@genfeedai/hooks/media/use-authorized-media-preview';
-import { useIntersectionObserver } from '@genfeedai/hooks/ui/use-intersection-observer/use-intersection-observer';
-import type { IngredientTimeGroupHeadingProps } from '@genfeedai/props/content/ingredient.props';
 import type { IngredientsListContentProps } from '@genfeedai/props/pages/ingredients-list.props';
-import { EnvironmentService } from '@genfeedai/services/core/environment.service';
 import {
   getIngredientFailureReason,
   getIngredientModelLabel,
@@ -27,10 +23,7 @@ import {
   getIngredientSizeLabel,
   isFailedIngredient,
 } from '@genfeedai/utils/media/ingredient-ledger.util';
-import {
-  getIngredientPreviewUrl,
-  isRasterPreviewUrl,
-} from '@genfeedai/utils/media/ingredient-preview.util';
+import { getIngredientPreviewUrl } from '@genfeedai/utils/media/ingredient-preview.util';
 import {
   getIngredientDisplayLabel,
   isVideoIngredient,
@@ -42,25 +35,18 @@ import { CardEmptyContent } from '@ui/card/empty/CardEmpty';
 import Badge from '@ui/display/badge/Badge';
 import { SkeletonList } from '@ui/display/skeleton/skeleton';
 import AppTable from '@ui/display/table/Table';
-import VideoPlayer from '@ui/display/video-player/VideoPlayer';
 import DropdownStatus from '@ui/dropdowns/status/DropdownStatus';
-import IngredientReviewActions from '@ui/ingredients/IngredientReviewActions';
-import IngredientOriginBadge from '@ui/ingredients/ingredient-origin-badge';
-import IngredientTagChips from '@ui/ingredients/ingredient-tag-chips';
 import LibraryAssetTypeBadge from '@ui/ingredients/library-asset-type-badge';
 import IngredientsMediaGrid from '@ui/ingredients/list/media-grid/IngredientsMediaGrid';
-import IngredientTimeGroupHeading from '@ui/ingredients/list/media-grid/ingredient-time-group-heading';
-import { groupIngredientsByTime } from '@ui/ingredients/list/media-grid/ingredient-time-groups.util';
-import FailedIngredientsRecovery from '@ui/ingredients/list/recovery/FailedIngredientsRecovery';
 import IngredientSound from '@ui/ingredients/sound/IngredientSound';
 import LazyLoadingFallback from '@ui/loading/fallback/LazyLoadingFallback';
-import { hoverRevealClassName } from '@ui/styles/hover-reveal';
+import { Button } from '@ui/primitives/button';
 import { format } from 'date-fns';
 import { Eye, Film, ImageIcon, Music, RefreshCw } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 // React Flow is heavier than the whole grid; only the canvas view pays for it.
 const LibraryCanvas = dynamic(
@@ -96,123 +82,12 @@ function isAudioReadyToPlay(ingredient: IIngredient): boolean {
   );
 }
 
-function IngredientTableVideoPreview({
-  url,
-  label,
-}: {
-  url: string;
-  label: string;
-}) {
-  const { ref, isIntersecting } = useIntersectionObserver<HTMLDivElement>({
-    rootMargin: '100px',
-    triggerOnce: true,
-  });
-  const [isReady, setIsReady] = useState(false);
-  const [hasError, setHasError] = useState(false);
-
-  return (
-    <div
-      ref={ref}
-      role="img"
-      aria-label={label}
-      className="relative flex size-10 items-center justify-center overflow-hidden rounded-md bg-foreground/6 text-foreground/45"
-    >
-      {!isReady || hasError ? (
-        <Film className="size-4" data-testid="ingredient-preview-fallback" />
-      ) : null}
-      {isIntersecting && !hasError ? (
-        <div
-          data-testid="ingredient-video-preview"
-          className={`pointer-events-none absolute inset-0 size-10 ${isReady ? 'opacity-100' : 'opacity-0'}`}
-        >
-          <VideoPlayer
-            src={url}
-            mediaClassName="object-cover"
-            config={{
-              autoPlay: false,
-              controls: false,
-              muted: true,
-              loop: false,
-              playsInline: true,
-              preload: 'metadata',
-            }}
-            mediaProps={{
-              'aria-hidden': true,
-              tabIndex: -1,
-              onLoadedMetadata: (event) => {
-                const video = event.currentTarget;
-                if (Number.isFinite(video.duration) && video.duration > 0) {
-                  video.currentTime = Math.min(0.05, video.duration / 2);
-                }
-              },
-              onLoadedData: () => setIsReady(true),
-              onSeeked: () => setIsReady(true),
-              onError: () => setHasError(true),
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
-  const grant = useAuthorizedMediaPreview(ingredient);
+  const previewUrl = getIngredientPreviewUrl(ingredient);
   const label = getIngredientDisplayLabel(ingredient) || 'Asset preview';
   const isVideo = isVideoIngredient(ingredient);
   const assetType = getLibraryAssetType(ingredient.category);
   const isAudio = isAudioIngredient(ingredient);
-  const videoAsset = isVideo || assetType?.id === 'video';
-  // Video grants can point at extensionless delivery endpoints. Only a known
-  // image suffix identifies an authorized poster; retained raw URLs never
-  // replace a pending or failed capability.
-  const imageSuffix = /\.(avif|gif|jpe?g|png|webp)(?:$|[?#])/i;
-  const grantIsPoster = Boolean(grant?.url && imageSuffix.test(grant.url));
-  const placeholderPrefix = `${EnvironmentService.assetsEndpoint}/placeholders/`;
-  const thumbnailUrl = ingredient.thumbnailUrl;
-  const legacyVideoUrl = ingredient.ingredientUrl;
-  const legacyPosterUrl = videoAsset
-    ? isRasterPreviewUrl(thumbnailUrl) &&
-      !thumbnailUrl.startsWith(placeholderPrefix)
-      ? thumbnailUrl
-      : legacyVideoUrl &&
-          imageSuffix.test(legacyVideoUrl) &&
-          !legacyVideoUrl.startsWith(placeholderPrefix)
-        ? legacyVideoUrl
-        : undefined
-    : getIngredientPreviewUrl(ingredient);
-  const previewUrl = grant
-    ? grant.state === 'READY' &&
-      (!videoAsset || grantIsPoster) &&
-      isRasterPreviewUrl(grant.url)
-      ? grant.url
-      : ''
-    : legacyPosterUrl;
-  const videoUrl =
-    videoAsset &&
-    !previewUrl &&
-    !isFailedIngredient(ingredient) &&
-    ingredient.status !== IngredientStatus.PROCESSING
-      ? grant
-        ? grant.state === 'READY'
-          ? grant.url
-          : null
-        : legacyVideoUrl &&
-            !legacyVideoUrl.startsWith(placeholderPrefix) &&
-            !imageSuffix.test(legacyVideoUrl)
-          ? legacyVideoUrl
-          : null
-      : null;
-
-  if (videoUrl) {
-    return (
-      <IngredientTableVideoPreview
-        key={videoUrl}
-        url={videoUrl}
-        label={label}
-      />
-    );
-  }
 
   if (!previewUrl) {
     return (
@@ -222,7 +97,7 @@ function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
         data-testid="ingredient-preview-fallback"
         role="img"
       >
-        {videoAsset ? (
+        {isVideo || assetType?.id === 'video' ? (
           <Film className="size-4" />
         ) : isAudio ? (
           <Music className="size-4" />
@@ -243,7 +118,7 @@ function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
         src={previewUrl}
         width={40}
       />
-      {videoAsset ? (
+      {isVideo || assetType?.id === 'video' ? (
         <span
           className={
             'pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25' /* design-system-allow-content-color -- media overlay */
@@ -270,14 +145,13 @@ function IngredientLedgerAssetCell({
 }: {
   ingredient: IIngredient;
 }) {
-  const grant = useAuthorizedMediaPreview(ingredient);
   const label = getIngredientDisplayLabel(ingredient);
   const failureReason = getIngredientFailureReason(ingredient);
   const promptText = ingredient.promptText?.trim();
   const isAudio = isAudioIngredient(ingredient);
 
   return (
-    <div className="flex w-40 min-w-0 max-w-40 items-center gap-2">
+    <div className="flex w-64 min-w-0 max-w-64 items-center gap-3">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span
           className="truncate text-sm font-medium"
@@ -306,9 +180,7 @@ function IngredientLedgerAssetCell({
         <AudioPreviewPlayer
           audioUrl={
             isAudioReadyToPlay(ingredient)
-              ? grant
-                ? (grant.url ?? undefined)
-                : ingredient.ingredientUrl
+              ? ingredient.ingredientUrl
               : undefined
           }
           label={label || 'Untitled asset'}
@@ -320,7 +192,6 @@ function IngredientLedgerAssetCell({
 }
 
 export default function IngredientsListContent({
-  recovery,
   type,
   activeTypeLabel,
   scope,
@@ -401,44 +272,10 @@ export default function IngredientsListContent({
     return { nonVisualIngredients: nonVisual, visualIngredients: visual };
   }, [filteredIngredients]);
 
-  const {
-    lightboxRequestCount,
-    requestedLightboxIngredient,
-    selectedIngredient: publishedIngredient,
-    setSelectedAsset,
-  } = useAssetSelection();
-  const handleReviewUpdated = useCallback(
-    (updated: IIngredient) => {
-      onSetIngredients((current) =>
-        current.flatMap((ingredient) => {
-          if (ingredient.id !== updated.id) return [ingredient];
-          return updated.status === IngredientStatus.REJECTED
-            ? []
-            : [
-                {
-                  ...ingredient,
-                  status: updated.status,
-                  reviewStatus: updated.reviewStatus ?? ingredient.reviewStatus,
-                },
-              ];
-        }),
-      );
-      if (publishedIngredient?.id === updated.id) {
-        setSelectedAsset({
-          ...publishedIngredient,
-          status: updated.status,
-          reviewStatus:
-            updated.reviewStatus ?? publishedIngredient.reviewStatus,
-        });
-      }
-    },
-    [onSetIngredients, publishedIngredient, setSelectedAsset],
-  );
-
   const columns = useMemo(
     () => [
       {
-        className: 'w-12',
+        className: 'w-14',
         header: '',
         key: 'ingredientUrl',
         render: (ingredient: IIngredient) => (
@@ -446,16 +283,16 @@ export default function IngredientsListContent({
         ),
       },
       {
-        className: 'w-44',
-        header: translate('browser.columns.asset'),
+        className: 'w-72',
+        header: 'Asset',
         key: 'metadataLabel',
         render: (ingredient: IIngredient) => (
           <IngredientLedgerAssetCell ingredient={ingredient} />
         ),
       },
       {
-        className: 'w-20',
-        header: translate('browser.columns.type'),
+        className: 'w-40',
+        header: 'Type',
         key: 'category',
         render: (ingredient: IIngredient) => {
           const format =
@@ -475,27 +312,8 @@ export default function IngredientsListContent({
         },
       },
       {
-        className: 'w-20',
-        header: translate('browser.columns.origin'),
-        key: 'origin',
-        render: (ingredient: IIngredient) => (
-          <IngredientOriginBadge origin={ingredient.origin} />
-        ),
-      },
-      {
-        className: 'w-16',
-        header: translate('browser.columns.tags'),
-        key: 'tags',
-        render: (ingredient: IIngredient) =>
-          ingredient.tags && ingredient.tags.length > 0 ? (
-            <IngredientTagChips max={1} tags={ingredient.tags} />
-          ) : (
-            <span className="text-foreground/35">—</span>
-          ),
-      },
-      {
-        className: 'w-24',
-        header: translate('browser.columns.model'),
+        className: 'w-52',
+        header: 'Model',
         key: 'model',
         render: (ingredient: IIngredient) => {
           const modelLabel = getIngredientModelLabel(ingredient);
@@ -507,7 +325,7 @@ export default function IngredientsListContent({
           const providerLabel = getIngredientProviderLabel(ingredient);
 
           return (
-            <div className="flex w-20 min-w-0 max-w-20 flex-col">
+            <div className="flex w-44 min-w-0 max-w-44 flex-col">
               <span className="truncate text-sm" title={modelLabel}>
                 {modelLabel}
               </span>
@@ -521,8 +339,8 @@ export default function IngredientsListContent({
         },
       },
       {
-        className: 'w-20',
-        header: translate('browser.columns.size'),
+        className: 'w-28',
+        header: 'Size',
         key: 'metadataSize',
         render: (ingredient: IIngredient) => {
           const sizeLabel = getIngredientSizeLabel(ingredient);
@@ -532,18 +350,15 @@ export default function IngredientsListContent({
           }
 
           return (
-            <span
-              className="block truncate text-xs tabular-nums text-foreground/70"
-              title={sizeLabel}
-            >
+            <span className="text-sm tabular-nums text-foreground/70">
               {sizeLabel}
             </span>
           );
         },
       },
       {
-        className: 'w-20',
-        header: translate('browser.columns.created'),
+        className: 'w-28',
+        header: 'Created',
         key: 'createdAt',
         render: (ingredient: IIngredient) => {
           const createdAt = ingredient.createdAt
@@ -556,43 +371,49 @@ export default function IngredientsListContent({
 
           return (
             <time
-              className="whitespace-nowrap text-xs tabular-nums text-foreground/70"
-              title={format(createdAt, 'd MMM yyyy')}
+              className="text-sm tabular-nums text-foreground/70"
               dateTime={createdAt.toISOString()}
             >
-              {format(createdAt, 'd MMM yy')}
+              {format(createdAt, 'd MMM yyyy')}
             </time>
           );
         },
       },
       {
-        className: 'w-32',
-        header: translate('browser.columns.status'),
+        className: 'w-40',
+        header: 'Status',
         key: 'status',
         render: (ingredient: IIngredient) => (
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
             <DropdownStatus
               entity={ingredient}
               onStatusChange={(_newStatus, updatedIngredient) => {
                 if (updatedIngredient) {
-                  handleReviewUpdated(updatedIngredient as IIngredient);
+                  onSetIngredients((prev) =>
+                    prev.map((ing: IIngredient) =>
+                      ing.id === ingredient.id
+                        ? (updatedIngredient as IIngredient)
+                        : ing,
+                    ),
+                  );
                 }
               }}
             />
-            {isActionsEnabled ? (
-              // Approve/reject are row actions: shown on row hover or focus.
-              <div className={hoverRevealClassName({ at: 'lg' })}>
-                <IngredientReviewActions
-                  ingredient={ingredient}
-                  onUpdated={handleReviewUpdated}
-                />
-              </div>
-            ) : null}
+            {isFailedIngredient(ingredient) && onReprompt && (
+              <Button
+                label={translateRetry('retry')}
+                ariaLabel={translateRetry('retryAriaLabel')}
+                icon={<RefreshCw className="size-3.5" />}
+                variant={ButtonVariant.GHOST}
+                size={ButtonSize.XS}
+                onClick={() => onReprompt(ingredient)}
+              />
+            )}
           </div>
         ),
       },
     ],
-    [translate, isActionsEnabled, handleReviewUpdated],
+    [onSetIngredients, onReprompt, translateRetry],
   );
 
   const openIngredientPreview = useCallback(
@@ -606,37 +427,23 @@ export default function IngredientsListContent({
     [onOpenIngredientModal, onOpenLightbox],
   );
 
-  const revealInspector = useContextSidebar()?.reveal;
-  const inspectIngredient = useCallback(
-    (ingredient: IIngredient) => {
-      setSelectedAsset(ingredient);
-      revealInspector?.();
-    },
-    [revealInspector, setSelectedAsset],
-  );
-  const handleSeeDetails = useCallback(
-    (ingredient: IIngredient) => {
-      if (scope === PageScope.BRAND) {
-        inspectIngredient(ingredient);
-        return;
-      }
-      onSeeDetails(ingredient);
-    },
-    [inspectIngredient, onSeeDetails, scope],
-  );
-
+  // A brand Library shows the selected asset in the workspace sidebar, so a
+  // click inspects it there and the sidebar preview opens the lightbox. Other
+  // scopes have no sidebar and keep opening the preview straight away.
   const handleMediaClick = useCallback(
     (ingredient: IIngredient) => {
       if (scope === PageScope.SUPERADMIN) {
         return;
       }
+
       if (scope === PageScope.BRAND) {
-        inspectIngredient(ingredient);
+        onSelectionChange([ingredient.id]);
         return;
       }
+
       openIngredientPreview(ingredient);
     },
-    [inspectIngredient, openIngredientPreview, scope],
+    [onSelectionChange, openIngredientPreview, scope],
   );
 
   const handleToggleSelection = useCallback(
@@ -698,19 +505,10 @@ export default function IngredientsListContent({
         isDisabled: (ingredient: IIngredient) =>
           storyboardEntry.pendingAssetId === ingredient.id,
       },
-      {
-        icon: <RefreshCw />,
-        isVisible: (ingredient: IIngredient) =>
-          Boolean(onReprompt) && isFailedIngredient(ingredient),
-        onClick: (ingredient: IIngredient) => onReprompt?.(ingredient),
-        tooltip: translateRetry('retryAriaLabel'),
-      },
     ],
     [
       handleViewIngredient,
       isActionsEnabled,
-      onReprompt,
-      translateRetry,
       scope,
       storyboardEntry.canCreateFromAsset,
       storyboardEntry.createFromAsset,
@@ -735,29 +533,8 @@ export default function IngredientsListContent({
     }
 
     if (viewMode === 'list') {
-      const timeGroups = groupIngredientsByTime(filteredIngredients);
-      const groupHeadingById = new Map<
-        string,
-        IngredientTimeGroupHeadingProps
-      >();
-
-      if (timeGroups) {
-        for (const group of timeGroups) {
-          const first = group.items[0];
-          if (first) {
-            groupHeadingById.set(first.id, {
-              count: group.items.length,
-              label: group.label,
-            });
-          }
-        }
-      }
-
       return (
         <AppTable
-          density="compact"
-          enableDragScroll
-          scrollAriaLabel={translate('scrollTable')}
           items={filteredIngredients}
           isLoading={isLoading}
           columns={columns}
@@ -767,28 +544,6 @@ export default function IngredientsListContent({
           getItemId={(ingredient: IIngredient) => ingredient.id}
           actions={tableActions}
           onRowClick={scope === PageScope.BRAND ? handleMediaClick : undefined}
-          isHeaderPinned
-          getGroupHeading={
-            timeGroups
-              ? (ingredient) => {
-                  const heading = groupHeadingById.get(ingredient.id);
-                  if (!heading) {
-                    return null;
-                  }
-
-                  return {
-                    key: heading.label,
-                    content: (
-                      <IngredientTimeGroupHeading
-                        count={heading.count}
-                        label={heading.label}
-                        placement="under-column-header"
-                      />
-                    ),
-                  };
-                }
-              : undefined
-          }
         />
       );
     }
@@ -843,10 +598,9 @@ export default function IngredientsListContent({
               onGenerateCaptions={onGenerateCaptions}
               onReverse={onReverse}
               onMirror={onMirror}
-              onSeeDetails={handleSeeDetails}
+              onSeeDetails={onSeeDetails}
               onUpdateParent={onUpdateParent}
               onRefresh={onRefresh}
-              onReviewUpdated={handleReviewUpdated}
               selectedIds={selectedIngredientIds}
               isPortraiting={isPortraiting}
               isGeneratingCaptions={isGeneratingCaptions}
@@ -874,9 +628,6 @@ export default function IngredientsListContent({
                 {translate('otherAssets')}
               </h3>
               <AppTable
-                density="compact"
-                enableDragScroll
-                scrollAriaLabel={translate('scrollTable')}
                 items={nonVisualIngredients}
                 isLoading={false}
                 columns={columns}
@@ -897,9 +648,6 @@ export default function IngredientsListContent({
 
     return (
       <AppTable
-        density="compact"
-        enableDragScroll
-        scrollAriaLabel={translate('scrollTable')}
         items={filteredIngredients}
         isLoading={isLoading}
         columns={columns}
@@ -918,7 +666,6 @@ export default function IngredientsListContent({
     formatFilter,
     handleMediaClick,
     handleToggleSelection,
-    handleReviewUpdated,
     isActionsEnabled,
     isDragEnabled,
     isAudioCategory,
@@ -938,7 +685,7 @@ export default function IngredientsListContent({
     onReprompt,
     onReverse,
     onScopeChange,
-    handleSeeDetails,
+    onSeeDetails,
     onSelectionChange,
     onSetIngredients,
     onUpdateParent,
@@ -955,19 +702,63 @@ export default function IngredientsListContent({
     visualIngredients,
   ]);
 
-  // Refresh the inspected record after edits without coupling the rail to
-  // checkbox selection. Closing the rail leaves the bulk selection intact.
+  /**
+   * The workspace rail inspects one asset. A multi-selection is a bulk action,
+   * so it publishes nothing rather than picking an arbitrary member to
+   * describe.
+   */
+  const inspectedIngredient = useMemo(() => {
+    if (selectedIngredientIds.length !== 1) {
+      return null;
+    }
+
+    return (
+      filteredIngredients.find(
+        (ingredient: IIngredient) => ingredient.id === selectedIngredientIds[0],
+      ) ?? null
+    );
+  }, [filteredIngredients, selectedIngredientIds]);
+
+  /**
+   * The grid owns the selection, the workspace shell owns the sidebar.
+   * Publishing into the shared asset selection is the whole handoff: the
+   * library surface adapter reads it back and renders the asset into the
+   * context sidebar, so the canvas never carries a second inspector.
+   */
+  const {
+    lightboxRequestCount,
+    requestedLightboxIngredient,
+    selectedIngredient: publishedIngredient,
+    setSelectedAsset,
+  } = useAssetSelection();
+  const confirmedPublishedIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!publishedIngredient) {
+    setSelectedAsset(inspectedIngredient);
+  }, [inspectedIngredient, setSelectedAsset]);
+
+  // Closing the sidebar clears the shared selection; follow that back into
+  // the grid. Only a publish this grid saw land counts, so the render between
+  // selecting and publishing is never mistaken for a close.
+  useEffect(() => {
+    if (!inspectedIngredient) {
+      // A deselect or multi-select ends that publish; reselecting the same
+      // asset must wait for its new publish before a clear can count.
+      confirmedPublishedIdRef.current = null;
       return;
     }
-    const current = filteredIngredients.find(
-      (ingredient) => ingredient.id === publishedIngredient.id,
-    );
-    if (current && current !== publishedIngredient) {
-      setSelectedAsset(current);
+    if (publishedIngredient?.id === inspectedIngredient.id) {
+      confirmedPublishedIdRef.current = inspectedIngredient.id;
+      return;
     }
-  }, [filteredIngredients, publishedIngredient, setSelectedAsset]);
+    if (
+      !publishedIngredient &&
+      confirmedPublishedIdRef.current === inspectedIngredient.id
+    ) {
+      confirmedPublishedIdRef.current = null;
+      onSelectionChange([]);
+    }
+  }, [inspectedIngredient, onSelectionChange, publishedIngredient]);
 
   // The sidebar preview asks for the lightbox by bumping a counter; a request
   // that predates this grid's mount is not ours to honor.
@@ -992,22 +783,13 @@ export default function IngredientsListContent({
 
   return (
     <div
-      className={`flex-1 min-w-0 ${
+      className={`flex-1 min-w-0 overflow-hidden ${
         isAudioCategory
           ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2'
           : ''
       }`}
     >
-      {recovery && !isLoading ? (
-        <FailedIngredientsRecovery
-          {...recovery}
-          ingredients={filteredIngredients.filter(isFailedIngredient)}
-          selectedIds={selectedIngredientIds}
-          isActionsEnabled={isActionsEnabled}
-          onSelectionChange={onSelectionChange}
-          onInspect={inspectIngredient}
-        />
-      ) : hasFilteredEmptyState ? (
+      {hasFilteredEmptyState ? (
         <CardEmptyContent
           label={EMPTY_STATES.RESULTS_FOUND}
           description="Try adjusting your filters or search terms."

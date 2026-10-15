@@ -1,0 +1,1790 @@
+import {
+  ContextSidebarOutlet,
+  ContextSidebarProvider,
+  useContextSidebar,
+} from '@contexts/ui/context-sidebar-context';
+import { MODEL_KEYS } from '@genfeedai/contracts/constants';
+import {
+  createStudioGenerateDraftOutbox,
+  type StudioGenerateDraftOutbox,
+} from '@pages/studio/generate/utils/studio-generate-draft-outbox';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { AUTO_MODEL_OPTION_VALUE } from '@ui/dropdowns/model-selector/model-selector.constants';
+import {
+  type ReactNode,
+  StrictMode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import StudioGenerateWorkspace from './StudioGenerateWorkspace';
+
+function ContextSidebarCloseControl() {
+  const contextSidebar = useContextSidebar();
+
+  return (
+    <button type="button" onClick={contextSidebar?.close}>
+      Close sidebar
+    </button>
+  );
+}
+
+/** The shell's side of the context sidebar: provider, outlet and close. */
+function ContextSidebarHost({ children }: { readonly children: ReactNode }) {
+  return (
+    <ContextSidebarProvider>
+      <ContextSidebarCloseControl />
+      <ContextSidebarOutlet testId="context-sidebar-outlet" />
+      {children}
+    </ContextSidebarProvider>
+  );
+}
+
+const mocks = vi.hoisted(() => ({
+  createFromUploadAssetId: vi.fn(),
+  assetActions: {
+    onClickIngredient: vi.fn(),
+    onConvertToVideo: vi.fn(),
+    onCopyPrompt: vi.fn(),
+    onCreateVariation: vi.fn(),
+    onDeleteIngredient: vi.fn(),
+    onMarkArchived: vi.fn(),
+    onMarkRejected: vi.fn(),
+    onMarkValidated: vi.fn(),
+    onPublishIngredient: vi.fn(),
+    onRefresh: vi.fn(),
+    onRemoveGeneration: vi.fn(),
+    onSeeDetails: vi.fn(),
+    onToggleFavorite: vi.fn(),
+    onUseAsVideoReference: vi.fn(),
+  },
+  assetActionsHook: vi.fn(),
+  attachments: vi.fn(),
+  clearAttachments: vi.fn(),
+  getDraft: vi.fn(),
+  outbox: { current: null as StudioGenerateDraftOutbox | null },
+  restoreSettings: vi.fn(),
+  saveDraft: vi.fn(),
+  applyTypeSettings: vi.fn(),
+  brandId: { value: 'brand-1' },
+  organizationId: { value: 'org-1' },
+  authIdentity: { value: 'identity-1' },
+  getToken: vi.fn().mockResolvedValue('test-token'),
+  composer: vi.fn(),
+  findByIds: vi.fn().mockResolvedValue([]),
+  gallery: vi.fn(),
+  // #4716 review — the Agent -> Studio handoff pipeline (apply, model
+  // validation/fallback, param validation, reference attachment, brand
+  // guard) has no other workspace-level coverage; only pure utils and the
+  // mocked hook were tested, which is exactly why the wiring gaps survived.
+  handoff: {
+    value: { isLoading: false, payload: null } as {
+      isLoading: boolean;
+      payload: Record<string, unknown> | null;
+    },
+  },
+  models: {
+    value: { isLoadingModels: false, models: [] as { key: string }[] },
+  },
+  notify: vi.fn(),
+  results: vi.fn(),
+  rehydratePending: vi.fn(),
+  removeJob: vi.fn(),
+  searchParams: { value: '' },
+  settings: vi.fn(),
+  enhancedPromptId: { value: undefined as string | undefined },
+  cancelEnhance: vi.fn(),
+  enhancePrompt: vi.fn(),
+  undoEnhance: vi.fn(),
+  promptCommandExtensions: [{ name: 'promptCommands' }],
+  resolvePromptCommands: vi.fn((text: string) => ({
+    content: text.replace('/cinema ', ''),
+    skillSlugs: [],
+  })),
+  submit: vi.fn(),
+  type: { value: 'image' },
+  isHydrated: { value: true },
+  setType: vi.fn(),
+  updateSettings: vi.fn(),
+}));
+
+const characterMentionMocks = vi.hoisted(() => ({
+  extraExtensions: [{ name: 'characterMention' }],
+  resolveSubmit: vi.fn(
+    ({
+      existingReferenceIds,
+      text,
+    }: {
+      existingReferenceIds: string[];
+      text: string;
+    }) => ({
+      notices: [],
+      referenceIds: [...existingReferenceIds, 'img-anna'],
+      text: text.replace('@anna', 'Anna'),
+    }),
+  ),
+}));
+
+vi.mock('@hooks/ui/use-storyboard-entry/use-storyboard-entry', () => ({
+  useStoryboardEntry: () => ({
+    createFromUploadAssetId: mocks.createFromUploadAssetId,
+  }),
+}));
+
+vi.mock('@genfeedai/agent', () => ({
+  useAgentApiService: () => null,
+}));
+
+vi.mock('@genfeedai/agent/hooks/use-studio-character-mentions', () => ({
+  useStudioCharacterMentions: () => ({
+    extraExtensions: characterMentionMocks.extraExtensions,
+    isLoading: false,
+    mentions: [],
+    resolveSubmit: characterMentionMocks.resolveSubmit,
+  }),
+}));
+
+vi.mock('@genfeedai/agent/hooks/use-content-mentions', () => ({
+  useContentMentions: () => ({ isLoading: false, mentions: [] }),
+}));
+
+vi.mock('@genfeedai/agent/hooks/use-microphone-input', () => ({
+  useMicrophoneInput: () => ({
+    isListening: false,
+    isSupported: true,
+    isTranscribing: false,
+    startListening: vi.fn(),
+    stopListening: vi.fn(),
+  }),
+}));
+
+vi.mock('@hooks/ui/use-attachments/use-attachments', () => ({
+  useAttachments: mocks.attachments,
+}));
+
+vi.mock('@contexts/user/brand-context/brand-context', () => ({
+  useBrand: () => ({
+    brandId: mocks.brandId.value,
+    organizationId: mocks.organizationId.value,
+  }),
+}));
+
+vi.mock('@genfeedai/contexts/ui/sidebar-navigation-context', () => ({
+  useSidebarNavigation: () => ({ hasCanonicalBreadcrumb: true }),
+}));
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/default/default/studio/generate',
+  useSearchParams: () => new URLSearchParams(mocks.searchParams.value),
+}));
+
+vi.mock('next-intl', () => ({
+  useTranslations: () => (key: string) =>
+    key === 'title'
+      ? 'Generate'
+      : key === 'description'
+        ? 'One prompt bar for every asset type, enriched with your brand.'
+        : key,
+}));
+
+vi.mock('@pages/studio/generate/components/StudioGenerateComposer', () => ({
+  default: (props: {
+    onResetSettings: () => void;
+    onSubmit: () => void;
+    prompt: string;
+  }) => {
+    mocks.composer(props);
+    return (
+      <div data-testid="studio-composer">
+        <span>{props.prompt || 'Empty composer'}</span>
+        <button type="button" onClick={props.onSubmit}>
+          Generate
+        </button>
+        <button type="button" onClick={props.onResetSettings}>
+          Reset
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock(
+  '@pages/library/knowledge/components/KnowledgeReferenceSection',
+  () => ({
+    countKnowledgeSelection: (selection: {
+      sourceIds?: string[];
+      spaceIds?: string[];
+      purposes?: string[];
+    }) =>
+      (selection.sourceIds?.length ?? 0) +
+      (selection.spaceIds?.length ?? 0) +
+      (selection.purposes?.length ?? 0),
+    default: (props: {
+      brandId?: string;
+      onChange: (value: { sourceIds: string[] }) => void;
+    }) => (
+      <button
+        type="button"
+        onClick={() => props.onChange({ sourceIds: ['source-1'] })}
+      >
+        Pick Knowledge for {props.brandId}
+      </button>
+    ),
+  }),
+);
+
+vi.mock('@pages/studio/generate/components/StudioGenerateResults', () => ({
+  default: (props: unknown) => {
+    mocks.results(props);
+    return <div data-testid="studio-results" />;
+  },
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioPromptEnhancement', () => ({
+  useStudioPromptEnhancement: () => ({
+    cancelEnhance: mocks.cancelEnhance,
+    enhancePrompt: mocks.enhancePrompt,
+    undoEnhance: mocks.undoEnhance,
+    isEnhancing: false,
+    previousPrompt: null,
+    enhancedPromptId: mocks.enhancedPromptId.value,
+  }),
+}));
+
+vi.mock('@ui/prompt-editor/use-prompt-command-extension', () => ({
+  usePromptCommandExtension: () => ({
+    extraExtensions: mocks.promptCommandExtensions,
+    resolveSubmit: mocks.resolvePromptCommands,
+  }),
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGenerateAssetActions', () => ({
+  useStudioGenerateAssetActions: (params: unknown) => {
+    mocks.assetActionsHook(params);
+    return mocks.assetActions;
+  },
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGenerateGallery', () => ({
+  useStudioGenerateGallery: mocks.gallery,
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGenerateModels', () => ({
+  useStudioGenerateModels: () => mocks.models.value,
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGenerateHandoff', () => ({
+  useStudioGenerateHandoff: () => mocks.handoff.value,
+}));
+
+// Bypasses the real auth-identity chain so the handoff reference-resolution
+// effect's `getIngredientsService()` resolves deterministically in this
+// unit test environment (mirrors the same mock in useStudioGenerateHandoff.test.ts).
+// Bypasses the real auth-identity chain so the handoff reference-resolution
+// effect's `getIngredientsService()` resolves deterministically in this unit
+// test environment. Mirrors the real hook's stability contract (a
+// `useCallback`-stable resolver independent of the caller's inline factory
+// identity) — an unstable mock resolver re-fires the consuming effect on
+// every render and cancels itself before the async call ever resolves.
+vi.mock('@hooks/auth/use-authed-service/use-authed-service', () => ({
+  useAuthedService: (factory: (token: string) => unknown) => {
+    const factoryRef = useRef(factory);
+    factoryRef.current = factory;
+    const identity = mocks.authIdentity.value;
+    return useCallback(
+      async () => factoryRef.current(await mocks.getToken(identity)),
+      [identity],
+    );
+  },
+}));
+
+vi.mock('@services/content/ingredients.service', () => ({
+  IngredientsService: {
+    getInstance: () => ({ findByIds: mocks.findByIds }),
+  },
+}));
+
+// The draft outbox is module state; every test gets its own.
+vi.mock(
+  '@pages/studio/generate/utils/studio-generate-draft-outbox',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('@pages/studio/generate/utils/studio-generate-draft-outbox')
+      >();
+    return {
+      ...actual,
+      get studioGenerateDraftOutbox() {
+        return mocks.outbox.current;
+      },
+    };
+  },
+);
+
+vi.mock('@hooks/auth/use-auth-identity/use-auth-identity', () => ({
+  useAuthIdentity: () => ({ userId: 'user-1' }),
+}));
+
+vi.mock('@services/content/studio-generate-drafts.service', () => ({
+  StudioGenerateDraftsService: {
+    getInstance: () => ({
+      getCurrent: mocks.getDraft,
+      saveCurrent: mocks.saveDraft,
+    }),
+  },
+}));
+
+vi.mock('@services/core/notifications.service', () => ({
+  NotificationsService: {
+    getInstance: () => ({
+      error: vi.fn(),
+      info: mocks.notify,
+      success: vi.fn(),
+      warning: mocks.notify,
+    }),
+  },
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGenerateSettings', () => ({
+  useStudioGenerateSettings: () => {
+    const legacy = mocks.settings();
+    return {
+      ...legacy,
+      applyTypeSettings: mocks.applyTypeSettings,
+      isHydrated: mocks.isHydrated.value,
+      restoreSettings: mocks.restoreSettings,
+      settings: {
+        ...legacy.settings,
+        aspectRatio: '9:16',
+        duration: 12,
+        outputs: 2,
+      },
+      settingsByType: { image: { outputs: 2 } },
+      setType: mocks.setType,
+      type: mocks.type.value,
+      updateSettings: mocks.updateSettings,
+    };
+  },
+}));
+
+vi.mock('@pages/studio/generate/hooks/useStudioGeneration', () => ({
+  useStudioGeneration: () => ({
+    isGenerating: false,
+    jobs: [],
+    rehydratePending: mocks.rehydratePending,
+    removeJob: mocks.removeJob,
+    submit: mocks.submit,
+  }),
+}));
+
+vi.mock('@pages/studio/generate/components/StudioGenerateInspector', () => ({
+  default: ({
+    job,
+    onRemix,
+    onVary,
+  }: {
+    job: { id: string; prompt: string };
+    onRemix: (job: { id: string }) => void;
+    onVary: (job: { id: string }) => void;
+  }) => (
+    <div data-testid="studio-inspector">
+      <span>{job.prompt}</span>
+      <button type="button" onClick={() => onVary(job)}>
+        Vary
+      </button>
+      <button type="button" onClick={() => onRemix(job)}>
+        Remix
+      </button>
+    </div>
+  ),
+}));
+
+describe('StudioGenerateWorkspace', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resolvePromptCommands
+      .mockReset()
+      .mockImplementation((text: string) => ({
+        content: text.replace('/cinema ', ''),
+        skillSlugs: [],
+      }));
+    mocks.enhancedPromptId.value = undefined;
+    mocks.isHydrated.value = true;
+    mocks.brandId.value = 'brand-1';
+    mocks.organizationId.value = 'org-1';
+    mocks.authIdentity.value = 'identity-1';
+    mocks.getToken.mockResolvedValue('test-token');
+    mocks.searchParams.value = '';
+    mocks.type.value = 'image';
+    mocks.handoff.value = { isLoading: false, payload: null };
+    mocks.models.value = { isLoadingModels: false, models: [] };
+    mocks.findByIds.mockResolvedValue([]);
+    window.localStorage.clear();
+    mocks.outbox.current = createStudioGenerateDraftOutbox();
+    mocks.getDraft.mockResolvedValue(null);
+    mocks.saveDraft.mockResolvedValue({});
+    mocks.submit.mockResolvedValue(false);
+    mocks.attachments.mockReturnValue({
+      addFiles: vi.fn(),
+      attachments: [],
+      clearAll: mocks.clearAttachments,
+      dragHandlers: {},
+      dragState: { isActive: false },
+      getCompletedAttachments: () => [
+        {
+          ingredientId: 'ingredient-1',
+          kind: 'image',
+          url: 'https://cdn.example/reference.png',
+        },
+      ],
+      isUploading: false,
+      removeAttachment: vi.fn(),
+    });
+    mocks.gallery.mockReturnValue({
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs: [],
+    });
+    mocks.settings.mockReturnValue({
+      resetSettings: vi.fn(),
+      settings: {},
+      setType: mocks.setType,
+      type: 'image',
+      updateSettings: vi.fn(),
+    });
+  });
+
+  it('offers Remix on completed video uploads while preserving their attachment and the composer', () => {
+    mocks.attachments.mockReturnValue({
+      addFiles: vi.fn(),
+      attachments: [
+        {
+          id: 'upload-1',
+          ingredientId: 'owned-upload',
+          kind: 'video',
+          name: 'My video',
+          status: 'completed',
+        },
+      ],
+      clearAll: mocks.clearAttachments,
+      dragHandlers: {},
+      dragState: { isActive: false },
+      getCompletedAttachments: () => [],
+      isUploading: false,
+      removeAttachment: vi.fn(),
+    });
+    render(<StudioGenerateWorkspace />);
+    const action = screen.getByRole('button', {
+      name: 'remixThisVideo: My video',
+    });
+    fireEvent.click(action);
+    expect(mocks.createFromUploadAssetId).toHaveBeenCalledWith('owned-upload');
+    expect(mocks.clearAttachments).not.toHaveBeenCalled();
+    expect(mocks.composer.mock.calls.at(-1)?.[0].isGenerating).toBe(false);
+  });
+
+  it('announces load failure, hides false empty results and keeps the composer enabled', () => {
+    const refresh = vi.fn();
+    mocks.gallery.mockReturnValue({
+      galleryError: 'load',
+      isLoadingGallery: false,
+      refresh,
+      storedJobs: [],
+    });
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'history.loadFailedTitle',
+    );
+    expect(screen.queryByTestId('studio-results')).not.toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'history.retry' });
+    retry.focus();
+    fireEvent.click(retry);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(mocks.composer.mock.calls.at(-1)?.[0].isGenerating).toBe(false);
+    mocks.gallery.mockReturnValue({
+      galleryError: 'load',
+      isLoadingGallery: true,
+      refresh,
+      storedJobs: [],
+    });
+    rerender(<StudioGenerateWorkspace />);
+    expect(
+      screen.getByRole('button', { name: 'history.retry' }),
+    ).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('history.retrying');
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    mocks.gallery.mockReturnValue({
+      galleryError: null,
+      isLoadingGallery: false,
+      refresh,
+      storedJobs: [],
+    });
+    rerender(<StudioGenerateWorkspace />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByTestId('studio-results')).toBeInTheDocument();
+  });
+
+  it('retains live or saved rows under a refresh warning', () => {
+    mocks.gallery.mockReturnValue({
+      galleryError: 'refresh',
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs: [
+        {
+          id: 'saved',
+          type: 'image',
+          prompt: '',
+          createdAt: 1,
+          status: 'completed',
+        },
+      ],
+    });
+    render(<StudioGenerateWorkspace />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'history.refreshFailedDescription',
+    );
+    expect(screen.getByTestId('studio-results')).toBeInTheDocument();
+    expect(mocks.results.mock.calls.at(-1)?.[0].jobs).toHaveLength(1);
+  });
+
+  it('removes gallery tabs without hiding history from other asset types', () => {
+    render(<StudioGenerateWorkspace />);
+
+    const topbar = screen.getByTestId('section-topbar');
+    expect(topbar).toContainElement(
+      screen.getByPlaceholderText('Search generations'),
+    );
+    expect(screen.queryByTestId('section-topbar-tabs')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'All' })).toBeNull();
+    expect(mocks.gallery).toHaveBeenCalledWith({
+      brandId: 'brand-1',
+      filter: 'all',
+    });
+    expect(screen.getByTestId('studio-results')).not.toContainElement(
+      screen.getByPlaceholderText('Search generations'),
+    );
+  });
+
+  it('removes a deleted asset from the current-session job queue', () => {
+    render(<StudioGenerateWorkspace />);
+
+    expect(mocks.assetActionsHook).toHaveBeenCalledWith(
+      expect.objectContaining({ onDeleted: mocks.removeJob }),
+    );
+  });
+
+  it('floats the composer over the gallery like the Agent dock', () => {
+    render(<StudioGenerateWorkspace />);
+
+    const container = screen
+      .getByTestId('studio-composer')
+      .closest('[data-layout-mode]');
+
+    expect(container).toHaveAttribute('data-layout-mode', 'surface-fixed');
+    expect(container).toHaveAttribute('data-max-width', '4xl');
+    expect(container).not.toHaveClass('bg-background');
+    expect(container).toContainElement(
+      document.querySelector('[data-composer-top-fade]'),
+    );
+  });
+
+  it('represents handoff selections as removable tokens and invalidates the harness override on scope change', async () => {
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        type: 'image',
+        prompt: 'A coast',
+        modelKey: 'provider/model',
+        requestedSkillSlugs: ['cinema'],
+        harness: false,
+      },
+    };
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    await waitFor(() =>
+      expect(mocks.composer.mock.calls.at(-1)?.[0].prompt).toBe(
+        '/cinema A coast',
+      ),
+    );
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('A coast'));
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+    expect(mocks.submit).toHaveBeenLastCalledWith(
+      'A coast',
+      expect.anything(),
+      { harness: false },
+    );
+    mocks.brandId.value = 'brand-2';
+    rerender(<StudioGenerateWorkspace />);
+    act(() =>
+      mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('Other coast'),
+    );
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+    expect(mocks.submit).toHaveBeenLastCalledWith(
+      'Other coast',
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it('sends the Library picker Knowledge pick and drops it on brand change', async () => {
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onOpenLibrary('reference'));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: `Pick Knowledge for ${mocks.brandId.value}`,
+      }),
+    );
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('A heron'));
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+    expect(mocks.submit).toHaveBeenLastCalledWith(
+      'A heron',
+      expect.anything(),
+      { knowledge: { sourceIds: ['source-1'] } },
+    );
+
+    mocks.brandId.value = 'brand-2';
+    rerender(<StudioGenerateWorkspace />);
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('A crane'));
+    act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+    expect(mocks.submit).toHaveBeenLastCalledWith(
+      'A crane',
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it.each(['image', 'video'])(
+    'strips commands and submits selected skills for %s',
+    (type) => {
+      mocks.type.value = type;
+      mocks.resolvePromptCommands.mockReturnValueOnce({
+        content: 'A coast',
+        skillSlugs: ['cinema'],
+      });
+      render(<StudioGenerateWorkspace />);
+      act(() =>
+        mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('/cinema A coast'),
+      );
+      act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+      expect(mocks.submit).toHaveBeenCalledWith('A coast', expect.anything(), {
+        requestedSkillSlugs: ['cinema'],
+      });
+    },
+  );
+  it.each(['music', 'avatar', 'voice'])(
+    'visibly blocks skill selections for %s',
+    (type) => {
+      mocks.type.value = type;
+      mocks.resolvePromptCommands.mockReturnValueOnce({
+        content: 'A coast',
+        skillSlugs: ['cinema'],
+      });
+      render(<StudioGenerateWorkspace />);
+      act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+      expect(mocks.notify).toHaveBeenCalledWith(
+        expect.stringContaining('Selected skills'),
+      );
+      expect(mocks.submit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['music'])(
+    'blocks Enhance for selected skills in %s and preserves the prompt tokens',
+    (type) => {
+      mocks.type.value = type;
+      mocks.resolvePromptCommands.mockReturnValue({
+        content: 'A coast',
+        skillSlugs: ['cinema'],
+      });
+      render(<StudioGenerateWorkspace />);
+      act(() =>
+        mocks.composer.mock.calls.at(-1)?.[0].onPromptChange('/cinema A coast'),
+      );
+      act(() => mocks.composer.mock.calls.at(-1)?.[0].onEnhancePrompt());
+      expect(mocks.enhancePrompt).not.toHaveBeenCalled();
+      expect(mocks.notify).toHaveBeenCalledWith(
+        expect.stringContaining('Selected skills'),
+      );
+      expect(mocks.composer.mock.calls.at(-1)?.[0].prompt).toBe(
+        '/cinema A coast',
+      );
+      act(() => mocks.composer.mock.calls.at(-1)?.[0].onSubmit());
+      expect(mocks.submit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['image', 'video'])(
+    'allows selected-skill Enhance for %s',
+    (type) => {
+      mocks.type.value = type;
+      mocks.resolvePromptCommands.mockReturnValue({
+        content: 'A coast',
+        skillSlugs: ['cinema'],
+      });
+      render(<StudioGenerateWorkspace />);
+      act(() => mocks.composer.mock.calls.at(-1)?.[0].onEnhancePrompt());
+      expect(mocks.enhancePrompt).toHaveBeenCalledOnce();
+      expect(mocks.notify).not.toHaveBeenCalled();
+    },
+  );
+
+  it('submits completed Agent-style attachments as generation references', () => {
+    render(<StudioGenerateWorkspace />);
+
+    const initialProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      extraExtensions?: unknown;
+      onPromptChange: (value: string) => void;
+    };
+    // The composer runs the character-mention extensions alongside the shared
+    // `/` command palette.
+    expect(initialProps.extraExtensions).toEqual([
+      ...characterMentionMocks.extraExtensions,
+      expect.objectContaining({ name: 'promptCommands' }),
+    ]);
+    act(() => initialProps.onPromptChange('Use this composition'));
+
+    const currentProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      onSubmit: () => void;
+    };
+    act(() => currentProps.onSubmit());
+
+    expect(characterMentionMocks.resolveSubmit).toHaveBeenCalled();
+    expect(mocks.submit).toHaveBeenCalledWith(
+      'Use this composition',
+      {
+        endFrameId: undefined,
+        imageReferenceIds: ['ingredient-1', 'img-anna'],
+        videoReferenceIds: [],
+      },
+      undefined,
+    );
+  });
+
+  it('serializes character mention display names and merges reference ids on generate', () => {
+    render(<StudioGenerateWorkspace />);
+
+    const initialProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      onPromptChange: (value: string) => void;
+    };
+    act(() => initialProps.onPromptChange('@anna walking'));
+
+    const currentProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      onSubmit: () => void;
+    };
+    act(() => currentProps.onSubmit());
+
+    expect(mocks.submit).toHaveBeenCalledWith(
+      'Anna walking',
+      {
+        endFrameId: undefined,
+        imageReferenceIds: ['ingredient-1', 'img-anna'],
+        videoReferenceIds: [],
+      },
+      undefined,
+    );
+  });
+
+  it.each([
+    [
+      'Reviewed visual prompt',
+      'Reviewed visual prompt',
+      { promptId: 'reviewed-prompt-id' },
+    ],
+    ['@anna walking', 'Anna walking', undefined],
+    ['/cinema Reviewed visual prompt', 'Reviewed visual prompt', undefined],
+  ])(
+    'only reuses the stored prompt ID for unchanged reviewed text: %s',
+    (prompt, submitted, options) => {
+      mocks.enhancedPromptId.value = 'reviewed-prompt-id';
+      render(<StudioGenerateWorkspace />);
+      const initial = mocks.composer.mock.calls.at(-1)?.[0] as {
+        onPromptChange: (text: string) => void;
+      };
+      act(() => initial.onPromptChange(prompt as string));
+      const current = mocks.composer.mock.calls.at(-1)?.[0] as {
+        onSubmit: () => void;
+      };
+      act(() => current.onSubmit());
+      expect(mocks.submit).toHaveBeenCalledWith(
+        submitted,
+        expect.any(Object),
+        options,
+      );
+    },
+  );
+
+  it('turns a gallery remix into a composer reference', () => {
+    render(<StudioGenerateWorkspace />);
+
+    const hookParams = mocks.assetActionsHook.mock.calls.at(-1)?.[0] as {
+      onAttachReference: (
+        ingredient: {
+          category: string;
+          id: string;
+          promptText: string;
+          thumbnailUrl: string;
+        },
+        type: 'image' | 'video',
+      ) => void;
+    };
+    act(() =>
+      hookParams.onAttachReference(
+        {
+          category: 'images',
+          id: 'generated-1',
+          promptText: 'A generated reference',
+          thumbnailUrl: 'https://cdn.example/generated.png',
+        },
+        'video',
+      ),
+    );
+
+    expect(
+      mocks.settings.mock.results.at(-1)?.value.setType,
+    ).toHaveBeenCalledWith('video');
+    const composerProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      attachedAssets: Array<{ id: string; previewUrl?: string }>;
+    };
+    expect(composerProps.attachedAssets).toContainEqual(
+      expect.objectContaining({
+        id: 'generated-1',
+        previewUrl: 'https://cdn.example/generated.png',
+      }),
+    );
+  });
+
+  it('resubscribes stored in-flight jobs when the playground remounts', () => {
+    const storedJobs = [
+      {
+        createdAt: 1,
+        id: 'processing-1',
+        prompt: 'Still rendering',
+        status: 'PROCESSING',
+        type: 'image',
+      },
+    ];
+    mocks.gallery.mockReturnValue({
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs,
+    });
+
+    render(<StudioGenerateWorkspace />);
+
+    expect(mocks.rehydratePending).toHaveBeenCalledWith(storedJobs);
+  });
+
+  it('defaults to the masonry grid and toggles the results into a list', () => {
+    render(<StudioGenerateWorkspace />);
+
+    expect(screen.getByTestId('studio-results').parentElement).toHaveClass(
+      'w-full',
+      'max-w-7xl',
+    );
+    expect(mocks.results.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ view: 'grid' }),
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'viewList' }));
+
+    expect(mocks.results.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ view: 'list' }),
+    );
+  });
+
+  it('prefills the composer from a card recipe on vary', () => {
+    const recipeJob = {
+      createdAt: 1,
+      id: 'job-1',
+      prompt: 'Raw box contents',
+      recipe: {
+        blacklist: [],
+        brandingMode: 'brand',
+        isAudioEnabled: false,
+        mood: 'confident',
+        outputs: 4,
+        promptTemplate: 'product-photo',
+        references: [],
+        style: 'editorial',
+        tags: [],
+        text: 'A founder at a desk',
+        type: 'image',
+      },
+      status: 'GENERATED',
+      type: 'image',
+    };
+    mocks.gallery.mockReturnValue({
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs: [recipeJob],
+    });
+
+    render(<StudioGenerateWorkspace />, { wrapper: ContextSidebarHost });
+
+    const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
+      onReprompt: (job: typeof recipeJob) => void;
+      onSelect: (job: typeof recipeJob) => void;
+    };
+    act(() => resultsProps.onReprompt(recipeJob));
+
+    expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
+      'image',
+      expect.objectContaining({
+        mood: 'confident',
+        outputs: 4,
+        promptTemplate: 'product-photo',
+        style: 'editorial',
+      }),
+    );
+    expect(screen.getByText('A founder at a desk')).toBeVisible();
+
+    act(() => resultsProps.onSelect(recipeJob));
+    fireEvent.click(screen.getByRole('button', { name: 'Vary' }));
+    expect(mocks.applyTypeSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it('remixes a selected image as an image reference', () => {
+    const job = {
+      createdAt: 1,
+      id: 'image-9',
+      ingredient: {
+        category: 'IMAGE',
+        cdnUrl: 'https://cdn.example/still.png',
+        id: 'image-9',
+        promptText: 'Sunlit desk',
+      },
+      prompt: 'Sunlit desk',
+      status: 'GENERATED',
+      type: 'image',
+    };
+    mocks.gallery.mockReturnValue({
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs: [job],
+    });
+
+    render(<StudioGenerateWorkspace />, { wrapper: ContextSidebarHost });
+    const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
+      onSelect: (selected: typeof job) => void;
+    };
+    act(() => resultsProps.onSelect(job));
+    fireEvent.click(screen.getByRole('button', { name: 'Remix' }));
+
+    expect(
+      mocks.settings.mock.results.at(-1)?.value.setType,
+    ).toHaveBeenCalledWith('image');
+    const composerProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+      attachedAssets: Array<{ id: string; role?: string }>;
+    };
+    expect(composerProps.attachedAssets).toContainEqual(
+      expect.objectContaining({ id: 'image-9', role: 'reference' }),
+    );
+  });
+
+  it('opens the selected asset in the context sidebar and deselects on close', () => {
+    const job = {
+      createdAt: 1,
+      id: 'job-7',
+      prompt: 'Selected asset prompt',
+      status: 'GENERATED',
+      type: 'image',
+    };
+    mocks.gallery.mockReturnValue({
+      isLoadingGallery: false,
+      refresh: vi.fn(),
+      storedJobs: [job],
+    });
+
+    render(<StudioGenerateWorkspace />, { wrapper: ContextSidebarHost });
+
+    const outlet = screen.getByTestId('context-sidebar-outlet');
+    expect(outlet).toBeEmptyDOMElement();
+
+    const resultsProps = mocks.results.mock.calls.at(-1)?.[0] as {
+      onSelect: (selected: typeof job) => void;
+    };
+    act(() => resultsProps.onSelect(job));
+
+    // The panel renders in the shell's outlet, not beside the results grid.
+    expect(outlet).toContainElement(screen.getByTestId('studio-inspector'));
+    expect(mocks.results.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedJobId: 'job-7',
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close sidebar' }));
+
+    expect(screen.queryByTestId('studio-inspector')).toBeNull();
+    expect(mocks.results.mock.calls.at(-1)?.[0]).toMatchObject({
+      selectedJobId: null,
+    });
+  });
+
+  it('applies an Agent handoff end-to-end: switches type, prefills the prompt, falls back an unavailable model and unsupported params with a notice, and attaches the resolved reference (#4716 review)', async () => {
+    // The type has already "switched" by the time the model-catalog effect
+    // reads it — `applyTypeSettings` is mocked, so this simulates the render
+    // that follows the real hook's own state update.
+    mocks.type.value = 'video';
+    mocks.models.value = {
+      isLoadingModels: false,
+      models: [{ key: 'provider/model-allowed' }],
+    };
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        aspectRatio: '2.39:1', // not in the type's aspect-ratio ladder
+        brandId: 'brand-1',
+        duration: 999, // not one of the type's duration options
+        modelKey: 'provider/model-unavailable', // not in the org's catalog
+        outputs: 99, // over the type/model's output cap
+        prompt: 'A neon skyline at dusk',
+        references: ['asset-1'],
+        type: 'video',
+      },
+    };
+    mocks.findByIds.mockResolvedValue([
+      {
+        category: 'video',
+        cdnUrl: 'https://cdn.example/neon.mp4',
+        id: 'asset-1',
+        metadataLabel: 'Neon skyline clip',
+      },
+    ]);
+
+    render(<StudioGenerateWorkspace />);
+
+    await waitFor(() => {
+      expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
+        'video',
+        expect.objectContaining({ modelKey: 'provider/model-unavailable' }),
+      );
+    });
+    expect(screen.getByText('A neon skyline at dusk')).toBeVisible();
+
+    await waitFor(() => {
+      expect(mocks.findByIds).toHaveBeenCalledWith(['asset-1']);
+    });
+    await waitFor(() => {
+      const composerProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+        attachedAssets: Array<{ id: string; name: string }>;
+      };
+      expect(composerProps.attachedAssets).toContainEqual(
+        expect.objectContaining({ id: 'asset-1', name: 'Neon skyline clip' }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(mocks.updateSettings).toHaveBeenCalledWith({
+        modelKey: AUTO_MODEL_OPTION_VALUE,
+      });
+    });
+    await waitFor(() => {
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          aspectRatio: expect.any(String),
+          duration: expect.any(Number),
+          outputs: expect.any(Number),
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect(mocks.notify).toHaveBeenCalledWith(
+        expect.stringContaining('model pick'),
+      );
+    });
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.stringContaining('aspect ratio, duration, output count'),
+    );
+  });
+
+  it('prefills avatar and voice from an identity handoff (#4717)', async () => {
+    mocks.type.value = 'avatar';
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        avatarPhotoUrl: 'https://cdn.test/portrait.png',
+        brandId: 'brand-1',
+        modelKey: 'heygen/avatar',
+        prompt: 'Say this as the brand',
+        type: 'avatar',
+        useIdentity: true,
+        voiceId: 'voice-1',
+      },
+    };
+
+    render(<StudioGenerateWorkspace />);
+
+    await waitFor(() => {
+      expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
+        'avatar',
+        expect.objectContaining({
+          avatarPhotoUrl: 'https://cdn.test/portrait.png',
+          voiceId: 'voice-1',
+        }),
+      );
+    });
+    expect(screen.getByText('Say this as the brand')).toBeVisible();
+    expect(mocks.notify).not.toHaveBeenCalled();
+  });
+
+  it('keeps the rest of the prefill and notices when identity could not be carried (#4717)', async () => {
+    mocks.type.value = 'avatar';
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        modelKey: 'heygen/avatar',
+        prompt: 'Say this as the brand',
+        type: 'avatar',
+        useIdentity: true,
+      },
+    };
+
+    render(<StudioGenerateWorkspace />);
+
+    await waitFor(() => {
+      expect(mocks.applyTypeSettings).toHaveBeenCalledWith(
+        'avatar',
+        expect.objectContaining({ modelKey: 'heygen/avatar' }),
+      );
+    });
+    expect(screen.getByText('Say this as the brand')).toBeVisible();
+    await waitFor(() => {
+      expect(mocks.notify).toHaveBeenCalledWith(
+        expect.stringContaining('avatar and voice'),
+      );
+    });
+  });
+
+  it('attaches the resolved reference exactly once under React StrictMode double-invoke (#4716 re-review P3)', async () => {
+    // StrictMode's dev-only double-invoke (mount -> cleanup -> mount) is what
+    // exposed the bug: the old single effect latched its ref before starting
+    // the fetch, so the synthetic remount correctly skipped a second fetch,
+    // but its cleanup flagged the *first* (and only) run as cancelled,
+    // discarding the one real result. The fix's ref latches before the fetch
+    // starts and the effect never cancels, so exactly one fetch happens and
+    // its result is kept.
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        modelKey: 'provider/model-x',
+        prompt: 'A neon skyline at dusk',
+        references: ['asset-1'],
+        type: 'image',
+      },
+    };
+    mocks.findByIds.mockResolvedValue([
+      {
+        category: 'image',
+        cdnUrl: 'https://cdn.example/neon.png',
+        id: 'asset-1',
+        metadataLabel: 'Neon skyline clip',
+      },
+    ]);
+
+    render(
+      <StrictMode>
+        <StudioGenerateWorkspace />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(mocks.findByIds).toHaveBeenCalledWith(['asset-1']);
+    });
+    await waitFor(() => {
+      const composerProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+        attachedAssets: Array<{ id: string; name: string }>;
+      };
+      expect(composerProps.attachedAssets).toContainEqual(
+        expect.objectContaining({ id: 'asset-1', name: 'Neon skyline clip' }),
+      );
+    });
+    expect(mocks.findByIds).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['handoff', 'brand', 'organization', 'identity', 'brand round trip'])(
+    'discards pending handoff references after a %s change',
+    async (change) => {
+      const asset = {
+        category: 'image',
+        cdnUrl: 'https://cdn.example/old.png',
+        id: 'old-reference',
+      };
+      const pending = Promise.withResolvers<(typeof asset)[]>();
+      mocks.findByIds.mockReturnValue(pending.promise);
+      mocks.handoff.value = {
+        isLoading: false,
+        payload: {
+          brandId: 'brand-1',
+          prompt: 'Original handoff',
+          references: ['old-reference'],
+          type: 'image',
+        },
+      };
+      const { rerender } = render(<StudioGenerateWorkspace />);
+      await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledTimes(1));
+
+      if (change === 'handoff') {
+        mocks.handoff.value = {
+          isLoading: false,
+          payload: {
+            ...mocks.handoff.value.payload,
+            prompt: 'Replacement handoff',
+            references: ['new-reference'],
+          },
+        };
+      } else if (change === 'organization') {
+        mocks.organizationId.value = 'org-2';
+      } else if (change === 'identity') {
+        mocks.authIdentity.value = 'identity-2';
+      } else {
+        mocks.brandId.value = 'brand-2';
+      }
+      rerender(<StudioGenerateWorkspace />);
+      if (change === 'brand round trip') {
+        mocks.brandId.value = 'brand-1';
+        rerender(<StudioGenerateWorkspace />);
+      }
+      await act(async () => pending.resolve([asset]));
+
+      expect(mocks.composer.mock.calls.at(-1)?.[0].attachedAssets).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: asset.id })]),
+      );
+      expect(mocks.findByIds).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does not request handoff references when identity changes while acquiring the service', async () => {
+    const token = Promise.withResolvers<string>();
+    mocks.getToken.mockReturnValue(token.promise);
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        prompt: 'Original handoff',
+        references: ['old-reference'],
+        type: 'image',
+      },
+    };
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    await waitFor(() => expect(mocks.getToken).toHaveBeenCalled());
+    mocks.authIdentity.value = 'identity-2';
+    rerender(<StudioGenerateWorkspace />);
+    await act(async () => token.resolve('replacement-token'));
+
+    expect(mocks.findByIds).not.toHaveBeenCalled();
+  });
+
+  it('does not use a later handoff after accepting one without references', async () => {
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        prompt: 'Original handoff',
+        type: 'image',
+      },
+    };
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    mocks.updateSettings.mockClear();
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        prompt: 'Replacement handoff',
+        references: ['new-reference'],
+        type: 'image',
+      },
+    };
+    rerender(<StudioGenerateWorkspace />);
+    await act(async () => {});
+
+    expect(mocks.findByIds).not.toHaveBeenCalled();
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
+    expect(screen.getByText('Original handoff')).toBeVisible();
+  });
+
+  it('does not request references after unmount while acquiring the service', async () => {
+    const token = Promise.withResolvers<string>();
+    mocks.getToken.mockReturnValue(token.promise);
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        prompt: 'Original handoff',
+        references: ['old-reference'],
+        type: 'image',
+      },
+    };
+    const { unmount } = render(<StudioGenerateWorkspace />);
+    await waitFor(() => expect(mocks.getToken).toHaveBeenCalled());
+    unmount();
+    await act(async () => token.resolve('test-token'));
+    expect(mocks.findByIds).not.toHaveBeenCalled();
+  });
+
+  it('attaches references when the brand resolves after the first render', async () => {
+    // The common load path: the brand provider has not resolved on the first
+    // render, so the handoff is accepted on a later one. Acceptance must
+    // re-trigger the reference and model-validation effects rather than
+    // leaving them gated on a value they never observed change.
+    mocks.brandId.value = '';
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        brandId: 'brand-1',
+        modelKey: 'provider/model-x',
+        prompt: 'A neon skyline at dusk',
+        references: ['asset-1'],
+        type: 'image',
+      },
+    };
+    mocks.findByIds.mockResolvedValue([
+      {
+        category: 'image',
+        cdnUrl: 'https://cdn.example/neon.png',
+        id: 'asset-1',
+        metadataLabel: 'Neon skyline clip',
+      },
+    ]);
+
+    const { rerender } = render(<StudioGenerateWorkspace />);
+    expect(mocks.findByIds).not.toHaveBeenCalled();
+    expect(mocks.applyTypeSettings).not.toHaveBeenCalled();
+
+    mocks.brandId.value = 'brand-1';
+    rerender(<StudioGenerateWorkspace />);
+
+    await waitFor(() => {
+      expect(mocks.findByIds).toHaveBeenCalledWith(['asset-1']);
+    });
+    await waitFor(() => {
+      const composerProps = mocks.composer.mock.calls.at(-1)?.[0] as {
+        attachedAssets: Array<{ id: string; name: string }>;
+      };
+      expect(composerProps.attachedAssets).toContainEqual(
+        expect.objectContaining({ id: 'asset-1', name: 'Neon skyline clip' }),
+      );
+    });
+    expect(mocks.findByIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a handoff created under a different brand and never runs model/param fallback on it either (#4716 re-review P2)', async () => {
+    // `type` already matches the payload's type (both default to 'image'),
+    // and the model catalog carries a real allowlist that does not include
+    // the payload's model — exactly the condition the re-review found: a
+    // foreign-brand handoff whose type happens to match the current one
+    // must not let the *second* effect (model/param fallback) run against a
+    // patch that was never applied, even though its own gate only checked
+    // "was a decision already made", not "was the handoff actually accepted".
+    mocks.models.value = {
+      isLoadingModels: false,
+      models: [{ key: 'provider/model-allowed' }],
+    };
+    mocks.handoff.value = {
+      isLoading: false,
+      payload: {
+        aspectRatio: '2.39:1',
+        brandId: 'brand-other',
+        duration: 999,
+        modelKey: 'provider/model-unavailable',
+        outputs: 99,
+        prompt: 'Should never appear',
+        type: 'image',
+      },
+    };
+
+    render(<StudioGenerateWorkspace />);
+
+    await waitFor(() => {
+      expect(mocks.notify).toHaveBeenCalledWith(
+        'That Studio handoff has expired or was already used. Continuing with your usual defaults.',
+      );
+    });
+    expect(mocks.applyTypeSettings).not.toHaveBeenCalled();
+    expect(screen.queryByText('Should never appear')).not.toBeInTheDocument();
+
+    // Give the (mis-gated, pre-fix) model/param effect every chance to fire.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
+    expect(mocks.notify).toHaveBeenCalledTimes(1);
+  });
+  describe('composer draft', () => {
+    const savedDraft = {
+      attachments: [{ id: 'upload-1', role: 'startFrame' }],
+      brandId: 'brand-1',
+      droppedReferenceIds: ['deleted-1'],
+      id: 'draft-1',
+      knowledgeSelection: { sourceIds: ['source-1'] },
+      organizationId: 'org-1',
+      prompt: 'A slow dolly shot across a neon street',
+      references: [
+        { id: 'library-1', role: 'reference' },
+        { id: 'unresolvable-1', role: 'reference' },
+      ],
+      settingsByType: { video: { blacklist: ['blurry'] } },
+      type: 'video',
+      userId: 'user-1',
+    };
+
+    function lastComposerProps() {
+      return mocks.composer.mock.calls.at(-1)?.[0] as {
+        attachedAssets: { id: string; role: string; source: string }[];
+        onPromptChange: (value: string) => void;
+        onSubmit: () => void;
+        prompt: string;
+      };
+    }
+
+    it('restores the prompt, settings, references and uploads after a reload', async () => {
+      mocks.getDraft.mockResolvedValueOnce(savedDraft);
+      mocks.findByIds.mockResolvedValueOnce([
+        {
+          category: 'image',
+          cdnUrl: 'https://cdn.example/library.png',
+          id: 'library-1',
+          metadataLabel: 'Library still',
+        },
+        {
+          category: 'image',
+          cdnUrl: 'https://cdn.example/upload.png',
+          id: 'upload-1',
+          metadataLabel: 'Uploaded frame',
+        },
+      ]);
+
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() =>
+        expect(lastComposerProps().prompt).toBe(savedDraft.prompt),
+      );
+      expect(mocks.restoreSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settingsByType: expect.objectContaining({
+            video: expect.objectContaining({ blacklist: ['blurry'] }),
+          }),
+          type: 'video',
+        }),
+      );
+      expect(mocks.findByIds).toHaveBeenCalledWith([
+        'library-1',
+        'unresolvable-1',
+        'upload-1',
+      ]);
+      await waitFor(() =>
+        expect(
+          mocks.attachments.mock.calls.at(-1)?.[0].initialAttachments,
+        ).toEqual([
+          expect.objectContaining({
+            id: 'upload-1',
+            ingredientId: 'upload-1',
+            previewUrl: 'https://cdn.example/upload.png',
+          }),
+        ]),
+      );
+      expect(lastComposerProps().attachedAssets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'library-1',
+            role: 'reference',
+            source: 'library',
+          }),
+        ]),
+      );
+      // One reference the server pruned and one the client could not load.
+      expect(mocks.notify).toHaveBeenCalledWith('draft.referencesDropped');
+    });
+
+    it('keeps a restored library end frame next to a restored uploaded start frame', async () => {
+      mocks.type.value = 'video';
+      mocks.settings.mockReturnValue({
+        resetSettings: vi.fn(),
+        settings: { modelKey: MODEL_KEYS.REPLICATE_GOOGLE_VEO_3_1 },
+        setType: mocks.setType,
+        type: 'video',
+        updateSettings: vi.fn(),
+      });
+      // Real hook timing: restored uploads land one render after the
+      // Library references.
+      mocks.attachments.mockImplementation(
+        (options: { initialAttachments?: unknown[] }) => {
+          const [items, setItems] = useState<unknown[]>([]);
+          useEffect(() => {
+            setItems(options.initialAttachments ?? []);
+          }, [options.initialAttachments]);
+          return {
+            addFiles: vi.fn(),
+            attachments: items,
+            clearAll: mocks.clearAttachments,
+            dragHandlers: {},
+            dragState: { isActive: false },
+            getCompletedAttachments: () => [],
+            isUploading: false,
+            removeAttachment: vi.fn(),
+          };
+        },
+      );
+      mocks.getDraft.mockResolvedValueOnce({
+        ...savedDraft,
+        attachments: [{ id: 'upload-start', role: 'startFrame' }],
+        droppedReferenceIds: [],
+        references: [{ id: 'library-end', role: 'endFrame' }],
+        type: 'video',
+      });
+      mocks.findByIds.mockResolvedValueOnce([
+        {
+          category: 'image',
+          cdnUrl: 'https://cdn.example/end.png',
+          id: 'library-end',
+        },
+        {
+          category: 'image',
+          cdnUrl: 'https://cdn.example/start.png',
+          id: 'upload-start',
+        },
+      ]);
+
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() =>
+        expect(lastComposerProps().attachedAssets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: 'upload-start', role: 'startFrame' }),
+            expect.objectContaining({ id: 'library-end', role: 'endFrame' }),
+          ]),
+        ),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(lastComposerProps().attachedAssets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'library-end', role: 'endFrame' }),
+        ]),
+      );
+      expect(mocks.notify).not.toHaveBeenCalledWith(
+        'Unsupported frame or video references were cleared for the selected model.',
+      );
+    });
+
+    it('reads the draft of the brand open in this tab', async () => {
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() =>
+        expect(mocks.getDraft).toHaveBeenCalledWith(
+          'brand-1',
+          expect.any(AbortSignal),
+        ),
+      );
+    });
+
+    it('keeps edits made while draft reference assets are loading', async () => {
+      mocks.getDraft.mockResolvedValueOnce(savedDraft);
+      const pending = Promise.withResolvers<never[]>();
+      mocks.findByIds.mockReturnValueOnce(pending.promise);
+      render(<StudioGenerateWorkspace />);
+      await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledTimes(1));
+
+      act(() => lastComposerProps().onPromptChange('My newer prompt'));
+      await act(async () => pending.resolve([]));
+
+      expect(lastComposerProps().prompt).toBe('My newer prompt');
+      expect(mocks.restoreSettings).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mocks.saveDraft).toHaveBeenCalledWith(
+          'brand-1',
+          expect.objectContaining({ prompt: 'My newer prompt' }),
+          expect.anything(),
+        ),
+      );
+    });
+
+    it('leaves the composer untouched when the reference lookup fails, then restores it whole', async () => {
+      mocks.getDraft.mockResolvedValue(savedDraft);
+      mocks.findByIds
+        .mockRejectedValueOnce(new Error('lookup failed'))
+        .mockResolvedValueOnce([
+          {
+            category: 'image',
+            cdnUrl: 'https://cdn.example/library.png',
+            id: 'library-1',
+          },
+        ]);
+
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledTimes(1));
+      expect(lastComposerProps().prompt).toBe('');
+      expect(mocks.restoreSettings).not.toHaveBeenCalled();
+
+      // The load retries; the prompt it did not apply is not an edit.
+      await waitFor(() => expect(mocks.findByIds).toHaveBeenCalledTimes(2), {
+        timeout: 4000,
+      });
+      await waitFor(() =>
+        expect(lastComposerProps().prompt).toBe(savedDraft.prompt),
+      );
+      expect(lastComposerProps().attachedAssets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'library-1', source: 'library' }),
+        ]),
+      );
+      expect(mocks.saveDraft).not.toHaveBeenCalledWith(
+        'brand-1',
+        expect.objectContaining({
+          prompt: savedDraft.prompt,
+          references: [],
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('never restores the saved draft over an Agent handoff', async () => {
+      mocks.getDraft.mockResolvedValue(savedDraft);
+      mocks.handoff.value = {
+        isLoading: false,
+        payload: {
+          brandId: 'brand-1',
+          prompt: 'A coast',
+          type: 'image',
+        },
+      };
+
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
+      await waitFor(() => expect(lastComposerProps().prompt).toBe('A coast'));
+      expect(mocks.restoreSettings).not.toHaveBeenCalled();
+    });
+
+    it('waits for a handoff in the URL to resolve before reading the draft', async () => {
+      mocks.handoff.value = { isLoading: true, payload: null };
+
+      render(<StudioGenerateWorkspace />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mocks.getDraft).not.toHaveBeenCalled();
+    });
+
+    it('ignores a legacy remix ?run= link: the draft restores and autosaves', async () => {
+      mocks.searchParams.value = 'run=run-1';
+      mocks.getDraft.mockResolvedValue(savedDraft);
+
+      render(<StudioGenerateWorkspace />);
+
+      await waitFor(() => expect(mocks.restoreSettings).toHaveBeenCalled());
+      expect(
+        screen.queryByRole('region', { name: 'Remix run' }),
+      ).not.toBeInTheDocument();
+      act(() => lastComposerProps().onPromptChange('An edited idea'));
+
+      await waitFor(() =>
+        expect(mocks.saveDraft).toHaveBeenCalledWith(
+          'brand-1',
+          expect.objectContaining({ prompt: 'An edited idea' }),
+          expect.anything(),
+        ),
+      );
+    });
+
+    it('saves the composer shortly after a change and shows the save status', async () => {
+      render(<StudioGenerateWorkspace />);
+      await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
+
+      act(() => lastComposerProps().onPromptChange('A new idea'));
+
+      await waitFor(() =>
+        expect(mocks.saveDraft).toHaveBeenCalledWith(
+          'brand-1',
+          expect.objectContaining({
+            prompt: 'A new idea',
+            settingsByType: { image: { outputs: 2 } },
+            type: 'image',
+          }),
+          expect.anything(),
+        ),
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId('studio-draft-status')).toHaveTextContent(
+          'draft.saved',
+        ),
+      );
+    });
+
+    it('keeps the composer usable and retries when a save fails', async () => {
+      mocks.saveDraft.mockRejectedValueOnce(new Error('offline'));
+
+      render(<StudioGenerateWorkspace />);
+      await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
+      act(() => lastComposerProps().onPromptChange('Keep this'));
+
+      await waitFor(() =>
+        expect(screen.getByTestId('studio-draft-status')).toHaveTextContent(
+          'draft.saveFailed',
+        ),
+      );
+      expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled();
+      await waitFor(() => expect(mocks.saveDraft).toHaveBeenCalledTimes(2), {
+        timeout: 4000,
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId('studio-draft-status')).toHaveTextContent(
+          'draft.saved',
+        ),
+      );
+    });
+
+    it('clears the prompt and references after a successful submit and keeps settings', async () => {
+      mocks.submit.mockResolvedValueOnce(true);
+
+      render(<StudioGenerateWorkspace />);
+      await waitFor(() => expect(mocks.getDraft).toHaveBeenCalled());
+      act(() => lastComposerProps().onPromptChange('Ship it'));
+      await waitFor(() =>
+        expect(mocks.saveDraft).toHaveBeenCalledWith(
+          'brand-1',
+          expect.objectContaining({ prompt: 'Ship it' }),
+          expect.anything(),
+        ),
+      );
+      act(() => lastComposerProps().onSubmit());
+
+      await waitFor(() => expect(lastComposerProps().prompt).toBe(''));
+      expect(mocks.clearAttachments).toHaveBeenCalledTimes(1);
+      await waitFor(() =>
+        expect(mocks.saveDraft).toHaveBeenLastCalledWith(
+          'brand-1',
+          expect.objectContaining({
+            prompt: '',
+            references: [],
+            settingsByType: { image: { outputs: 2 } },
+          }),
+          expect.anything(),
+        ),
+      );
+    });
+
+    it('keeps the prompt when the generation was not accepted', async () => {
+      mocks.submit.mockResolvedValueOnce(false);
+
+      render(<StudioGenerateWorkspace />);
+      act(() => lastComposerProps().onPromptChange('Try again'));
+      act(() => lastComposerProps().onSubmit());
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(lastComposerProps().prompt).toBe('Try again');
+      expect(mocks.clearAttachments).not.toHaveBeenCalled();
+    });
+  });
+});

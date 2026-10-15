@@ -1,41 +1,19 @@
 'use client';
 
 import {
-  useIngredientOverlay,
-  usePostModal,
-} from '@genfeedai/contexts/providers/global-modals/global-modals.provider';
-import {
   ButtonVariant,
   ComponentSize,
   IngredientCategory,
-  IngredientLineageDirection,
   LIBRARY_SHELF_LABELS,
   LibraryShelf,
 } from '@genfeedai/contracts';
 import { cn } from '@genfeedai/helpers/formatting/cn/cn.util';
-import { useAuthorizedMediaPreview } from '@genfeedai/hooks/media/use-authorized-media-preview';
-import { useIngredientActions } from '@genfeedai/hooks/ui/ingredient/use-ingredient-actions/use-ingredient-actions';
 import type { IngredientInspectorRailProps } from '@genfeedai/props/content/ingredient.props';
 import { canOptimizeImageSource } from '@genfeedai/utils/media/image-optimization.util';
-import {
-  formatIngredientFileSize,
-  getIngredientDimensionsLabel,
-  getIngredientDurationLabel,
-  getIngredientFailureReason,
-  getIngredientFormatLabel,
-  getIngredientModelLabel,
-  getIngredientPromptText,
-  getIngredientProviderLabel,
-  getIngredientStyleLabel,
-} from '@genfeedai/utils/media/ingredient-ledger.util';
-import {
-  getIngredientPreviewUrl,
-  isRasterPreviewUrl,
-} from '@genfeedai/utils/media/ingredient-preview.util';
+import { getIngredientPreviewUrl } from '@genfeedai/utils/media/ingredient-preview.util';
 import { isVideoIngredient } from '@genfeedai/utils/media/ingredient-type.util';
 import Badge from '@ui/display/badge/Badge';
 import VideoPlayer from '@ui/display/video-player/VideoPlayer';
-import IngredientOriginBadge from '@ui/ingredients/ingredient-origin-badge';
 import LibraryAssetTypeBadge from '@ui/ingredients/library-asset-type-badge';
 import { Button } from '@ui/primitives/button';
 import IngredientQuickActions from '@ui/quick-actions/actions/IngredientQuickActions';
@@ -43,24 +21,38 @@ import { format } from 'date-fns';
 import { Maximize2 } from 'lucide-react';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
-import IngredientLineageStrip from './IngredientLineageStrip';
-import IngredientPromptBlock from './IngredientPromptBlock';
-import IngredientTagsControl from './IngredientTagsControl';
+
 import { getIngredientShelf } from './ingredient-shelf.util';
 
 const SHELF_VARIANTS: Record<
   LibraryShelf,
   'info' | 'warning' | 'success' | 'error' | 'slate'
 > = {
-  [LibraryShelf.REFERENCES]: 'slate',
   [LibraryShelf.GENERATING]: 'info',
   [LibraryShelf.UNSORTED]: 'slate',
   [LibraryShelf.NEEDS_REVIEW]: 'warning',
   [LibraryShelf.APPROVED]: 'success',
-  [LibraryShelf.REJECTED]: 'error',
   [LibraryShelf.FAILED]: 'error',
   [LibraryShelf.ARCHIVED]: 'slate',
 };
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB'] as const;
+
+function formatBytes(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+
+  let value = bytes;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${unitIndex === 0 ? Math.round(value) : value.toFixed(1)} ${BYTE_UNITS[unitIndex]}`;
+}
 
 function InspectorField({
   label,
@@ -86,18 +78,16 @@ function InspectorField({
 }
 
 /**
- * The prompt and a failure reason are long enough to wrap, so each gets its
- * own block instead of a `<dl>` row. Its label travels as a prop like every
- * other label in this rail.
+ * The prompt is the one field long enough to wrap, so it gets its own block
+ * instead of a `<dl>` row. Its label travels as a prop like every other label
+ * in this rail.
  */
 function InspectorNote({
   label,
   text,
-  tone = 'default',
 }: {
   label: string;
   text?: string | null;
-  tone?: 'default' | 'error';
 }) {
   if (!text) {
     return null;
@@ -108,12 +98,7 @@ function InspectorNote({
       <div className="text-2xs uppercase tracking-[0.12em] text-foreground/35">
         {label}
       </div>
-      <p
-        className={cn(
-          'min-w-0 select-text whitespace-pre-wrap break-words text-xs leading-relaxed',
-          tone === 'error' ? 'text-destructive' : 'text-foreground/62',
-        )}
-      >
+      <p className="min-w-0 select-text whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/62">
         {text}
       </p>
     </div>
@@ -133,28 +118,14 @@ export default function IngredientInspectorRail({
 }: IngredientInspectorRailProps) {
   const translate = useTranslations('pages.library.inspector');
   const shelf = getIngredientShelf(ingredient);
-  const grant = useAuthorizedMediaPreview(ingredient);
-  // The rail is a full detail surface, so Publish and Download run the same
-  // handlers as the asset modal. Without them the quick actions render as
-  // locked placeholders.
-  const { openPostBatchModal } = usePostModal();
-  const { openIngredientOverlay } = useIngredientOverlay();
-  const { handlers, loadingStates } = useIngredientActions({
-    onPublishIngredient: openPostBatchModal,
-  });
-  const previewUrl = grant
-    ? isRasterPreviewUrl(grant.url)
-      ? grant.url
-      : ''
-    : getIngredientPreviewUrl(ingredient);
+  const previewUrl = getIngredientPreviewUrl(ingredient);
   const videoUrl = isVideoIngredient(ingredient)
-    ? grant
-      ? (grant.url ?? undefined)
-      : ingredient.ingredientUrl
+    ? ingredient.ingredientUrl
     : undefined;
-  const fileSize = formatIngredientFileSize(
-    ingredient.fileSize || ingredient.metadataSize,
-  );
+  const dimensions =
+    ingredient.width && ingredient.height
+      ? `${ingredient.width} × ${ingredient.height}`
+      : null;
 
   return (
     <aside
@@ -231,43 +202,18 @@ export default function IngredientInspectorRail({
             <LibraryAssetTypeBadge category={ingredient.category} />
           </dd>
         </div>
-        {ingredient.origin ? (
-          <div className="flex items-baseline justify-between gap-3 py-1.5">
-            <dt className="shrink-0 text-2xs uppercase tracking-[0.12em] text-foreground/35">
-              {translate('origin')}
-            </dt>
-            <dd className="min-w-0">
-              <IngredientOriginBadge origin={ingredient.origin} />
-            </dd>
-          </div>
-        ) : null}
+        <InspectorField label="Size" value={dimensions} />
         <InspectorField
-          label={translate('model')}
-          value={getIngredientModelLabel(ingredient)}
+          label="File"
+          value={formatBytes(ingredient.metadataSize)}
         />
         <InspectorField
-          label={translate('provider')}
-          value={getIngredientProviderLabel(ingredient)}
+          label="Model"
+          value={ingredient.metadataModelLabel || ingredient.model}
         />
+        <InspectorField label="Provider" value={ingredient.provider} />
         <InspectorField
-          label={translate('style')}
-          value={getIngredientStyleLabel(ingredient)}
-        />
-        <InspectorField
-          label={translate('dimensions')}
-          value={getIngredientDimensionsLabel(ingredient)}
-        />
-        <InspectorField
-          label={translate('duration')}
-          value={getIngredientDurationLabel(ingredient)}
-        />
-        <InspectorField
-          label={translate('format')}
-          value={getIngredientFormatLabel(ingredient)}
-        />
-        <InspectorField label={translate('file')} value={fileSize} />
-        <InspectorField
-          label={translate('created')}
+          label="Created"
           value={
             ingredient.createdAt
               ? format(new Date(ingredient.createdAt), 'd MMM yyyy, HH:mm')
@@ -276,39 +222,8 @@ export default function IngredientInspectorRail({
         />
       </dl>
 
-      <InspectorNote
-        label={translate('failureReason')}
-        text={getIngredientFailureReason(ingredient)}
-        tone="error"
-      />
-      <IngredientPromptBlock
-        key={ingredient.id}
-        prompt={getIngredientPromptText(ingredient)}
-      />
-
-      <IngredientTagsControl ingredient={ingredient} />
-
-      <IngredientLineageStrip
-        direction={IngredientLineageDirection.MADE_FROM}
-        ingredientId={ingredient.id}
-      />
-      <IngredientLineageStrip
-        direction={IngredientLineageDirection.USED_IN}
-        ingredientId={ingredient.id}
-      />
-
-      <IngredientQuickActions
-        align="start"
-        isDownloading={loadingStates.isDownloading}
-        isPublishing={loadingStates.isPublishing}
-        onDownload={async (asset) => {
-          await handlers.handleDownload(asset);
-          return undefined;
-        }}
-        onPublish={handlers.handlePublish}
-        onSeeDetails={(ingredient) => openIngredientOverlay(ingredient)}
-        selectedIngredient={ingredient}
-      />
+      <IngredientQuickActions align="start" selectedIngredient={ingredient} />
+      <InspectorNote label="Prompt" text={ingredient.promptText} />
     </aside>
   );
 }

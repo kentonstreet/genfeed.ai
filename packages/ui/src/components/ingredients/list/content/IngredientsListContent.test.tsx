@@ -5,7 +5,6 @@ import {
   PageScope,
 } from '@genfeedai/contracts';
 import type { IIngredient } from '@genfeedai/contracts/interfaces';
-import { EnvironmentService } from '@genfeedai/services/core/environment.service';
 import {
   act,
   fireEvent,
@@ -14,49 +13,23 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import type DropdownStatus from '@ui/dropdowns/status/DropdownStatus';
 import IngredientsListContent from '@ui/ingredients/list/content/IngredientsListContent';
 import { format } from 'date-fns';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const previewVisibility = vi.hoisted(() => ({ visible: false }));
-
-vi.mock(
-  '@genfeedai/hooks/ui/use-intersection-observer/use-intersection-observer',
-  async () => {
-    const { useRef } = await import('react');
-    return {
-      useIntersectionObserver: () => ({
-        ref: useRef<HTMLDivElement>(null),
-        isIntersecting: previewVisibility.visible,
-      }),
-    };
-  },
-);
-
-beforeEach(() => {
-  previewVisibility.visible = false;
-});
-
-const { assetSelection, setSelectedAsset, revealSidebar } = vi.hoisted(() => ({
+const { assetSelection, setSelectedAsset } = vi.hoisted(() => ({
   assetSelection: {
     lightboxRequestCount: 0,
     requestedLightboxIngredient: null as IIngredient | null,
     published: null as { id: string } | null,
   },
   setSelectedAsset: vi.fn(),
-  revealSidebar: vi.fn(),
 }));
 
 // The grid hands its single selection to the shared asset selection, and the
 // library surface adapter renders the rail from there. Stubbing the context is
 // what lets this test assert the handoff instead of the rail's markup.
-vi.mock('@genfeedai/hooks/media/use-authorized-media-preview', () => ({
-  useAuthorizedMediaPreview: (ingredient: IIngredient) =>
-    ingredient.mediaDelivery ?? null,
-}));
-
 vi.mock('@hooks/ui/use-storyboard-entry/use-storyboard-entry', () => ({
   useStoryboardEntry: () => ({
     createFromAsset: vi.fn(),
@@ -79,10 +52,6 @@ vi.mock('@genfeedai/contexts/ui/asset-selection.context', () => ({
   }),
 }));
 
-vi.mock('@genfeedai/contexts/ui/context-sidebar-context', () => ({
-  useContextSidebar: () => ({ reveal: revealSidebar }),
-}));
-
 vi.mock('next/image', () => ({
   default: ({ alt, src }: { alt: string; src: string }) => (
     <img alt={alt} src={src} />
@@ -95,28 +64,8 @@ vi.mock('next-intl', async () => {
   return { useTranslations: translateFromCatalog };
 });
 
-vi.mock('@ui/ingredients/IngredientReviewActions', () => ({
-  default: () => null,
-}));
-
 vi.mock('@ui/dropdowns/status/DropdownStatus', () => ({
-  default: ({
-    entity,
-    onStatusChange,
-  }: ComponentProps<typeof DropdownStatus>) => (
-    <button
-      data-testid="status-dropdown"
-      onClick={() =>
-        onStatusChange?.(IngredientStatus.REJECTED, {
-          ...entity,
-          status: IngredientStatus.REJECTED,
-        } as IIngredient)
-      }
-      type="button"
-    >
-      Reject from status menu
-    </button>
-  ),
+  default: () => <div data-testid="status-dropdown" />,
 }));
 
 // The canvas pulls React Flow in behind next/dynamic, whose loader never
@@ -146,36 +95,17 @@ vi.mock('@ui/ingredients/list/media-grid/IngredientsMediaGrid', () => ({
   default: ({
     items,
     onClickIngredient,
-    onSeeDetails,
-    onReviewUpdated,
   }: {
     items: IIngredient[];
     onClickIngredient: (ingredient: IIngredient) => void;
-    onSeeDetails: (ingredient: IIngredient) => void;
-    onReviewUpdated: (ingredient: IIngredient) => void;
   }) => (
-    <>
-      <button
-        data-testid="media-grid-item"
-        onClick={() => onClickIngredient(items[0])}
-        type="button"
-      >
-        {items[0]?.metadataLabel ?? 'Media item'}
-      </button>
-      <button onClick={() => onSeeDetails(items[0])} type="button">
-        See Details
-      </button>
-      {items[0] ? (
-        <button
-          onClick={() =>
-            onReviewUpdated({ ...items[0], status: IngredientStatus.REJECTED })
-          }
-          type="button"
-        >
-          Reject from grid
-        </button>
-      ) : null}
-    </>
+    <button
+      data-testid="media-grid-item"
+      onClick={() => onClickIngredient(items[0])}
+      type="button"
+    >
+      {items[0]?.metadataLabel ?? 'Media item'}
+    </button>
   ),
 }));
 
@@ -307,66 +237,6 @@ const staleErrorIngredient = {
 } as unknown as IIngredient;
 
 describe('IngredientsListContent', () => {
-  it('removes a rejected asset from the contact sheet while preserving other cards', () => {
-    const onSetIngredients = vi.fn();
-    const asset = { ...baseIngredient, category: IngredientCategory.IMAGE };
-    const otherAsset = { ...asset, id: 'other-asset' };
-    renderContent({
-      filteredIngredients: [asset, otherAsset],
-      onSetIngredients,
-      type: 'ingredients',
-      singularType: IngredientCategory.INGREDIENT,
-      viewMode: 'grid',
-    });
-    fireEvent.click(screen.getByText('Reject from grid'));
-    const update = onSetIngredients.mock.lastCall?.[0];
-    expect(update([asset, otherAsset])).toEqual([otherAsset]);
-  });
-
-  it('removes a rejected asset after changing status from the list menu', () => {
-    const onSetIngredients = vi.fn();
-    const otherAsset = { ...baseIngredient, id: 'other-asset' };
-    const { rerenderContent } = renderContent({
-      filteredIngredients: [baseIngredient, otherAsset],
-      onSetIngredients,
-      viewMode: 'list',
-    });
-
-    fireEvent.click(screen.getAllByText('Reject from status menu')[0]);
-
-    const update = onSetIngredients.mock.lastCall?.[0];
-    const remaining = update([baseIngredient, otherAsset]);
-    expect(remaining).toEqual([otherAsset]);
-    rerenderContent({ filteredIngredients: remaining });
-    expect(screen.getAllByText('Reject from status menu')).toHaveLength(1);
-  });
-
-  it('never feeds a protected video capability or stale original poster into an image thumbnail', () => {
-    renderContent({
-      viewMode: 'list',
-      type: 'videos',
-      singularType: IngredientCategory.VIDEO,
-      filteredIngredients: [
-        {
-          ...videoIngredient,
-          mediaDelivery: {
-            id: videoIngredient.id,
-            purpose: 'preview',
-            state: 'READY',
-            url: 'https://media.test/protected.mp4?grant=fresh',
-            expiresAt: null,
-          },
-        },
-      ],
-    });
-    expect(
-      screen.getByTestId('ingredient-preview-fallback'),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByAltText(videoIngredient.metadataLabel as string),
-    ).not.toBeInTheDocument();
-  });
-
   it('renders generic Library media as a contact sheet in grid mode', () => {
     const { onOpenLightbox } = renderContent({
       filteredIngredients: [videoIngredient],
@@ -436,57 +306,6 @@ describe('IngredientsListContent', () => {
     expect(
       screen.getByText('Landscape').closest('[class*="bg-tertiary"]'),
     ).not.toBeNull();
-  });
-
-  it('shows the origin of every list row in its own column', () => {
-    renderContent({
-      filteredIngredients: [
-        { ...videoIngredient, origin: 'IMPORTED' } as unknown as IIngredient,
-      ],
-      singularType: IngredientCategory.INGREDIENT,
-      type: 'ingredients',
-    });
-
-    expect(
-      screen.getByRole('columnheader', { name: 'Origin' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Imported')).toBeInTheDocument();
-  });
-
-  it('shows the tags of every list row in their own column', () => {
-    renderContent({
-      filteredIngredients: [
-        {
-          ...videoIngredient,
-          tags: [
-            { backgroundColor: '#000000', id: 'tag-1', label: 'S1E12' },
-            { backgroundColor: '#112233', id: 'tag-2', label: 'Launch' },
-          ],
-        } as unknown as IIngredient,
-      ],
-      singularType: IngredientCategory.INGREDIENT,
-      type: 'ingredients',
-    });
-
-    expect(
-      screen.getByRole('columnheader', { name: 'Tags' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('S1E12')).toBeInTheDocument();
-    expect(screen.getByText('+1')).toHaveAttribute('title', 'Launch');
-  });
-
-  it('shows a dash instead of tags for an untagged row', () => {
-    renderContent({
-      filteredIngredients: [
-        { ...videoIngredient, tags: [] } as unknown as IIngredient,
-      ],
-      singularType: IngredientCategory.INGREDIENT,
-      type: 'ingredients',
-    });
-
-    expect(
-      screen.queryByRole('list', { name: 'Tags' }),
-    ).not.toBeInTheDocument();
   });
 
   it('falls back to a video placeholder when there is no poster', () => {
@@ -764,16 +583,18 @@ describe('IngredientsListContent inspector handoff', () => {
         title,
         within(row).getByTestId('action-button'),
       ]) {
-        setSelectedAsset.mockClear();
+        onSelectionChange.mockClear();
         fireEvent.click(target);
-        expect(setSelectedAsset).toHaveBeenCalledExactlyOnceWith(ingredient);
-        expect(onSelectionChange).not.toHaveBeenCalled();
+        expect(onSelectionChange).toHaveBeenCalledExactlyOnceWith([
+          ingredient.id,
+        ]);
       }
       for (const key of ['Enter', ' ']) {
-        setSelectedAsset.mockClear();
+        onSelectionChange.mockClear();
         fireEvent.keyDown(row, { key });
-        expect(setSelectedAsset).toHaveBeenCalledExactlyOnceWith(ingredient);
-        expect(onSelectionChange).not.toHaveBeenCalled();
+        expect(onSelectionChange).toHaveBeenCalledExactlyOnceWith([
+          ingredient.id,
+        ]);
       }
       expect(row).toHaveAttribute('tabindex', '0');
       expect(onOpenLightbox).not.toHaveBeenCalled();
@@ -791,8 +612,9 @@ describe('IngredientsListContent inspector handoff', () => {
       viewMode: 'grid',
     });
     fireEvent.click(screen.getByText('Opening Theme'));
-    expect(setSelectedAsset).toHaveBeenCalledWith(musicIngredient);
-    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledExactlyOnceWith([
+      musicIngredient.id,
+    ]);
   });
 
   it('keeps retry and audio controls independent of brand row inspection', () => {
@@ -862,27 +684,7 @@ describe('IngredientsListContent inspector handoff', () => {
 
     fireEvent.click(screen.getByTestId('media-grid-item'));
 
-    expect(setSelectedAsset).toHaveBeenCalledWith(videoIngredient);
-    expect(onSelectionChange).not.toHaveBeenCalled();
-    expect(onOpenLightbox).not.toHaveBeenCalled();
-  });
-
-  it('keeps inspecting a brand asset when its tile is clicked again', () => {
-    const onSelectionChange = vi.fn();
-    const { onOpenLightbox } = renderContent({
-      filteredIngredients: [videoIngredient, baseIngredient],
-      onSelectionChange,
-      scope: PageScope.BRAND,
-      selectedIngredientIds: [videoIngredient.id, baseIngredient.id],
-      singularType: IngredientCategory.INGREDIENT,
-      type: 'ingredients',
-      viewMode: 'grid',
-    });
-
-    fireEvent.click(screen.getByTestId('media-grid-item'));
-
-    expect(setSelectedAsset).toHaveBeenCalledWith(videoIngredient);
-    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledWith([videoIngredient.id]);
     expect(onOpenLightbox).not.toHaveBeenCalled();
   });
 
@@ -923,7 +725,7 @@ describe('IngredientsListContent inspector handoff', () => {
     expect(onOpenLightbox).toHaveBeenCalledTimes(1);
   });
 
-  it('preserves checkbox selection when the sidebar closes', () => {
+  it('clears its own selection when the sidebar close clears the shared one', () => {
     const onSelectionChange = vi.fn();
     const { rerenderContent } = renderContent({
       onSelectionChange,
@@ -938,7 +740,7 @@ describe('IngredientsListContent inspector handoff', () => {
 
     assetSelection.published = null;
     rerenderContent();
-    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledWith([]);
   });
 
   it('keeps a reselected asset selected while its new publish lands', () => {
@@ -974,16 +776,17 @@ describe('IngredientsListContent inspector handoff', () => {
     expect(onSelectionChange).not.toHaveBeenCalled();
   });
 
-  it('does not publish checkbox selection to the workspace rail', () => {
+  it('publishes a single selection for the workspace rail', () => {
     renderContent({ selectedIngredientIds: [baseIngredient.id] });
 
-    expect(setSelectedAsset).not.toHaveBeenCalled();
+    expect(setSelectedAsset).toHaveBeenCalledWith(baseIngredient);
   });
 
   it('publishes nothing for a multi-selection', () => {
     renderContent({ selectedIngredientIds: [baseIngredient.id, 'other-id'] });
 
-    expect(setSelectedAsset).not.toHaveBeenCalled();
+    expect(setSelectedAsset).toHaveBeenCalledWith(null);
+    expect(setSelectedAsset).not.toHaveBeenCalledWith(baseIngredient);
   });
 
   it('clears the published asset when the library unmounts', () => {
@@ -1006,7 +809,7 @@ describe('IngredientsListContent inspector handoff', () => {
 });
 
 describe('IngredientsListContent generation ledger columns', () => {
-  it('renders the ledger column headers in order', () => {
+  it('renders the seven ledger column headers in order', () => {
     renderContent({ viewMode: 'list' });
 
     const headers = screen
@@ -1020,8 +823,6 @@ describe('IngredientsListContent generation ledger columns', () => {
       '',
       'Asset',
       'Type',
-      'Origin',
-      'Tags',
       'Model',
       'Size',
       'Created',
@@ -1040,14 +841,8 @@ describe('IngredientsListContent generation ledger columns', () => {
     expect(screen.getByText('genfeedai')).toBeInTheDocument();
     expect(screen.getByText('1920 × 1080')).toBeInTheDocument();
     expect(
-      screen.getByText(format(ledgerCreatedAt, 'd MMM yy')),
-    ).toHaveAttribute('title', format(ledgerCreatedAt, 'd MMM yyyy'));
-    expect(
-      screen.getByText(format(ledgerCreatedAt, 'd MMM yy')),
-    ).toHaveAttribute('datetime', ledgerCreatedAt.toISOString());
-    expect(
-      screen.getByRole('region', { name: 'Scroll table horizontally' }),
-    ).toHaveAttribute('tabindex', '0');
+      screen.getByText(format(ledgerCreatedAt, 'd MMM yyyy')),
+    ).toBeInTheDocument();
   });
 
   it('surfaces the failure reason for a FAILED asset', () => {
@@ -1077,13 +872,13 @@ describe('IngredientsListContent generation ledger columns', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('renders an em dash when model, size and tags are unavailable', () => {
+  it('renders an em dash when model and size are unavailable', () => {
     renderContent({ viewMode: 'list' });
 
-    expect(screen.getAllByText('—')).toHaveLength(3);
+    expect(screen.getAllByText('—')).toHaveLength(2);
   });
 
-  it('offers a retry row action for a FAILED asset', () => {
+  it('offers a retry action next to the status chip for a FAILED asset', () => {
     const onReprompt = vi.fn();
     renderContent({
       filteredIngredients: [failedIngredient],
@@ -1120,253 +915,5 @@ describe('IngredientsListContent generation ledger columns', () => {
     expect(
       screen.queryByRole('button', { name: 'Retry generation' }),
     ).not.toBeInTheDocument();
-  });
-});
-
-describe('Library See Details sidebar routing', () => {
-  it('selects the asset without opening its overlay or toggling it off', () => {
-    const onSelectionChange = vi.fn();
-    const onSeeDetails = vi.fn();
-    const { onOpenIngredientModal, onOpenLightbox } = renderContent({
-      scope: PageScope.BRAND,
-      singularType: IngredientCategory.IMAGE,
-      filteredIngredients: [
-        { ...baseIngredient, category: IngredientCategory.IMAGE },
-      ],
-      selectedIngredientIds: [baseIngredient.id],
-      onSelectionChange,
-      onSeeDetails,
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'See Details' }));
-    expect(setSelectedAsset).toHaveBeenCalledWith(
-      expect.objectContaining({ id: baseIngredient.id }),
-    );
-    expect(onSelectionChange).not.toHaveBeenCalled();
-    expect(onSeeDetails).not.toHaveBeenCalled();
-    expect(revealSidebar).toHaveBeenCalled();
-    expect(onOpenIngredientModal).not.toHaveBeenCalled();
-    expect(onOpenLightbox).not.toHaveBeenCalled();
-  });
-  it('preserves details behavior outside the brand workspace', () => {
-    const onSeeDetails = vi.fn();
-    const onSelectionChange = vi.fn();
-    renderContent({
-      scope: PageScope.ORGANIZATION,
-      singularType: IngredientCategory.IMAGE,
-      filteredIngredients: [
-        { ...baseIngredient, category: IngredientCategory.IMAGE },
-      ],
-      onSelectionChange,
-      onSeeDetails,
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'See Details' }));
-    expect(onSeeDetails).toHaveBeenCalledWith(
-      expect.objectContaining({ id: baseIngredient.id }),
-    );
-    expect(onSelectionChange).not.toHaveBeenCalled();
-  });
-  describe('paused video frame thumbnails', () => {
-    function getVideoPreview() {
-      const video = screen
-        .getByTestId('ingredient-video-preview')
-        .querySelector('video');
-      if (!video) throw new Error('Video thumbnail was not mounted');
-      return video;
-    }
-
-    const withoutPoster = { ...videoIngredient, thumbnailUrl: undefined };
-
-    it('defers video loading until visible, decodes an opening frame and falls back on media errors', () => {
-      const { rerenderContent } = renderContent({
-        filteredIngredients: [withoutPoster],
-        viewMode: 'list',
-      });
-      expect(
-        screen.queryByTestId('ingredient-video-preview'),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByTestId('ingredient-preview-fallback'),
-      ).toBeInTheDocument();
-      previewVisibility.visible = true;
-      rerenderContent();
-      const video = getVideoPreview();
-      expect(video).toHaveAttribute('src', videoIngredient.ingredientUrl);
-      expect(video).toHaveAttribute('preload', 'metadata');
-      expect(video.autoplay).toBe(false);
-      expect(video.controls).toBe(false);
-      expect(video.muted).toBe(true);
-      expect(video.paused).toBe(true);
-      Object.defineProperty(video, 'duration', { value: 0.04 });
-      fireEvent.loadedMetadata(video);
-      expect(video.currentTime).toBe(0.02);
-      fireEvent.seeked(video);
-      expect(
-        screen.queryByTestId('ingredient-preview-fallback'),
-      ).not.toBeInTheDocument();
-      fireEvent.error(video);
-      expect(
-        screen.queryByTestId('ingredient-video-preview'),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByTestId('ingredient-preview-fallback'),
-      ).toBeInTheDocument();
-    });
-
-    it('uses only the current authorized video, clears it when access becomes pending, and resets frame state on renewal', () => {
-      previewVisibility.visible = true;
-      const readyGrant = {
-        id: videoIngredient.id,
-        purpose: 'preview' as const,
-        state: 'READY' as const,
-        url: 'https://media.test/current.mp4',
-        expiresAt: null,
-      };
-      const { rerenderContent } = renderContent({
-        filteredIngredients: [
-          { ...videoIngredient, mediaDelivery: readyGrant },
-        ],
-        viewMode: 'list',
-      });
-      const video = getVideoPreview();
-      expect(video).toHaveAttribute('src', readyGrant.url);
-      expect(document.querySelector('img')).toBeNull();
-      fireEvent.loadedData(video);
-      expect(
-        screen.queryByTestId('ingredient-preview-fallback'),
-      ).not.toBeInTheDocument();
-      rerenderContent({
-        filteredIngredients: [
-          {
-            ...videoIngredient,
-            mediaDelivery: { ...readyGrant, state: 'PENDING', url: null },
-          },
-        ],
-      });
-      expect(
-        screen.queryByTestId('ingredient-video-preview'),
-      ).not.toBeInTheDocument();
-      expect(document.querySelector('img')).toBeNull();
-      rerenderContent({
-        filteredIngredients: [
-          {
-            ...videoIngredient,
-            mediaDelivery: {
-              ...readyGrant,
-              url: 'https://media.test/renewed.mp4',
-            },
-          },
-        ],
-      });
-      expect(getVideoPreview()).toHaveAttribute(
-        'src',
-        'https://media.test/renewed.mp4',
-      );
-      expect(
-        screen.getByTestId('ingredient-preview-fallback'),
-      ).toBeInTheDocument();
-    });
-
-    it.each(['PENDING', 'FAILED', 'UNSUPPORTED'] as const)(
-      'never falls back to the original video or poster for a %s grant',
-      (state) => {
-        previewVisibility.visible = true;
-        renderContent({
-          filteredIngredients: [
-            {
-              ...videoIngredient,
-              mediaDelivery: {
-                id: videoIngredient.id,
-                purpose: 'preview',
-                state,
-                url: null,
-                expiresAt: null,
-              },
-            },
-          ],
-          viewMode: 'list',
-        });
-        expect(
-          screen.queryByTestId('ingredient-video-preview'),
-        ).not.toBeInTheDocument();
-        expect(document.querySelector('img')).toBeNull();
-        expect(
-          screen.getByTestId('ingredient-preview-fallback'),
-        ).toBeInTheDocument();
-      },
-    );
-
-    it('treats an extensionless authorized video endpoint as video rather than an image', () => {
-      previewVisibility.visible = true;
-      renderContent({
-        filteredIngredients: [
-          {
-            ...videoIngredient,
-            mediaDelivery: {
-              id: videoIngredient.id,
-              purpose: 'preview',
-              state: 'READY',
-              url: 'https://media.test/preview/asset',
-              expiresAt: null,
-            },
-          },
-        ],
-        viewMode: 'list',
-      });
-      expect(getVideoPreview()).toHaveAttribute(
-        'src',
-        'https://media.test/preview/asset',
-      );
-      expect(document.querySelector('img')).toBeNull();
-    });
-
-    it('ignores the model placeholder poster and loads its extensionless local video endpoint', () => {
-      previewVisibility.visible = true;
-      renderContent({
-        filteredIngredients: [
-          {
-            ...videoIngredient,
-            thumbnailUrl: `${EnvironmentService.assetsEndpoint}/placeholders/landscape.jpg`,
-            ingredientUrl: 'https://ingredients.test/videos/video-1',
-          },
-        ],
-        viewMode: 'list',
-      });
-      expect(getVideoPreview()).toHaveAttribute(
-        'src',
-        'https://ingredients.test/videos/video-1',
-      );
-      expect(document.querySelector('img')).toBeNull();
-    });
-
-    it('prefers a poster without mounting a video', () => {
-      previewVisibility.visible = true;
-      renderContent({
-        filteredIngredients: [videoIngredient],
-        viewMode: 'list',
-      });
-      expect(
-        screen.getByRole('img', { name: 'A red apple on a table' }),
-      ).toHaveAttribute('src', videoIngredient.thumbnailUrl);
-      expect(
-        screen.queryByTestId('ingredient-video-preview'),
-      ).not.toBeInTheDocument();
-    });
-
-    it.each([IngredientStatus.PROCESSING, IngredientStatus.FAILED])(
-      'leaves %s videos as placeholders',
-      (status) => {
-        previewVisibility.visible = true;
-        renderContent({
-          filteredIngredients: [{ ...withoutPoster, status }],
-          viewMode: 'list',
-        });
-        expect(
-          screen.queryByTestId('ingredient-video-preview'),
-        ).not.toBeInTheDocument();
-        expect(
-          screen.getByTestId('ingredient-preview-fallback'),
-        ).toBeInTheDocument();
-      },
-    );
   });
 });

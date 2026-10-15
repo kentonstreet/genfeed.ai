@@ -39,16 +39,11 @@ for (const kind of ['image', 'video'] as const) {
                 status: 'UPLOADED',
                 organizationId: 'mock-org-id-e2e-test',
                 brandId: 'brand-1',
-                metadata: {
-                  id: `metadata-${id}`,
-                  label: `Owned ${kind}`,
-                  size: 2048,
-                  duration: kind === 'video' ? 10 : undefined,
-                  width: 1080,
-                  height: 1920,
-                },
+                metadataLabel: `Owned ${kind}`,
+                metadataSize: 2048,
+                metadataDuration: kind === 'video' ? 10 : undefined,
                 createdAt: '2026-09-30T10:00:00.000Z',
-                prompt: { id: `prompt-${id}`, original: 'Owned source' },
+                prompt: 'Owned source',
                 width: 1080,
                 height: 1920,
                 cdnUrl: `https://cdn.genfeed.ai/mock/${id}.${kind === 'video' ? 'mp4' : 'png'}`,
@@ -146,37 +141,20 @@ for (const kind of ['image', 'video'] as const) {
         }),
       });
     });
-    await page.goto(brandPath(APP_ROUTES.STUDIO.PLAYGROUND), {
+    await page.goto(brandPath(APP_ROUTES.STUDIO.GENERATE), {
       waitUntil: 'domcontentloaded',
     });
     const card = page.getByTestId(`studio-asset-${id}`);
     await expect(card).toBeVisible();
     await card.getByRole('button', { name: 'More', exact: true }).focus();
     await page.keyboard.press('Enter');
-    if (kind === 'video') {
-      await page
-        .getByRole('menuitem', { name: 'Transform', exact: true })
-        .focus();
-      await page.keyboard.press('ArrowRight');
-    }
     const label = kind === 'video' ? 'Remix this video' : 'Add to Storyboard';
     const action = page.getByRole('menuitem', { name: label, exact: true });
     await expect(action).toBeVisible();
-    if (kind === 'video') {
-      await page.keyboard.press('ArrowLeft');
-      await page
-        .getByRole('menuitem', { name: 'Library', exact: true })
-        .focus();
-      await page.keyboard.press('ArrowRight');
+    if (kind === 'video')
       await expect(
         page.getByRole('menuitem', { name: 'Open in Editor', exact: true }),
       ).toBeVisible();
-      await page.keyboard.press('ArrowLeft');
-      await page
-        .getByRole('menuitem', { name: 'Transform', exact: true })
-        .focus();
-      await page.keyboard.press('ArrowRight');
-    }
     await expectNoErrorOverlay(page);
     await page.screenshot({
       path: testInfo.outputPath('entry-action.png'),
