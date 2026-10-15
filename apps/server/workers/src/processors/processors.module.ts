@@ -68,6 +68,7 @@ import { LoggerModule } from '@libs/logger/logger.module';
 import { HttpModule } from '@nestjs/axios';
 import { forwardRef, Module } from '@nestjs/common';
 import { CronPostsModule } from '@workers/crons/posts/cron.posts.module';
+// --- collections/ processors ---
 import { AgentTurnWorkflowProcessor } from '@workers/processors/api/collections/workflows/services/agent-turn-workflow.processor';
 import { BackgroundSystemWorkflowProcessor } from '@workers/processors/api/collections/workflows/services/background-system-workflow.processor';
 import { PlatformSystemWorkflowProcessor } from '@workers/processors/api/collections/workflows/services/platform-system-workflow.processor';
@@ -82,7 +83,9 @@ import { MediaPerceptionProcessor } from '@workers/processors/api/queues/media-p
 import { NotificationDeliveryProcessor } from '@workers/processors/api/queues/notification-delivery/notification-delivery.processor';
 import { NotificationDeliveryRecoveryModule } from '@workers/processors/api/queues/notification-delivery/notification-delivery-recovery.module';
 import { ReplicatePollProcessor } from '@workers/processors/api/queues/replicate-poll/replicate-poll.processor';
+// --- queues/ processors ---
 import { TurboRewriteProcessor } from '@workers/processors/api/queues/turbo-rewrite/turbo-rewrite.processor';
+// --- services/ processors ---
 import { WebhookClientProcessor } from '@workers/processors/api/services/webhook-client/webhook-client.processor';
 import { WorkersQueuesModule } from '@workers/queues/queues.module';
 import { AdsServicesModule } from '@workers/services/ads-services.module';
@@ -159,6 +162,7 @@ import { SocialIntegrationsModule } from '@workers/services/social-integrations.
   ],
   providers: [
     AccountGenerationProcessor,
+    // --- queues/ processors ---
     TurboRewriteProcessor,
     CreditDeductionProcessor,
     LlmCostSettlementProcessor,
@@ -170,8 +174,10 @@ import { SocialIntegrationsModule } from '@workers/services/social-integrations.
     MediaModerationProcessor,
     BrandVisionProcessor,
 
+    // --- services/ processors ---
     WebhookClientProcessor,
 
+    // --- collections/ processors ---
     CollectionsWorkflowExecutionProcessor,
     PlatformSystemWorkflowProcessor,
     BackgroundSystemWorkflowProcessor,
