@@ -99,9 +99,7 @@ describe('SELF_HOSTED_MODELS', () => {
       provider: ModelProvider.HEYGEN,
       providerCostUsd: 0.0385,
     });
-    expect(photoAvatar?.lifecycle).toBe(ModelLifecycle.AVAILABLE);
   });
-
   it.each([
     // $0.08 per 1,000 characters at 3.33x is 26.64, ceiled to 27 credits.
     [MODEL_KEYS.ELEVENLABS_V4, 0.08, 27, true],

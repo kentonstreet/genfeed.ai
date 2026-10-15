@@ -473,8 +473,7 @@ export const SELF_HOSTED_MODELS = [
    * updated 2026-09-16, read 2026-10-14). The reviewed rate sheet carries the
    * same single rate with no selector, so the configured `providerCostUsd`
    * and the reviewed rate price a render identically: held at the estimated
-   * clip length, settled at the duration HeyGen returns. Available, not the
-   * avatar default — Avatar IV stays the recommended engine.
+   * clip length, settled at the duration HeyGen returns.
    */
   {
     category: ModelCategory.AVATAR,
@@ -489,7 +488,6 @@ export const SELF_HOSTED_MODELS = [
     isHighlighted: false,
     key: MODEL_KEYS.HEYGEN_AVATAR,
     label: 'HeyGen Photo Avatar',
-    lifecycle: ModelLifecycle.AVAILABLE,
     pricingType: PricingType.PER_SECOND,
     provider: ModelProvider.HEYGEN,
     providerConfig: { name: 'avatar', owner: 'heygen' },
