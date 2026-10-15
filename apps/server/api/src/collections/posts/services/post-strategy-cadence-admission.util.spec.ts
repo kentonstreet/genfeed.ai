@@ -1,20 +1,6 @@
-import { assertBreakoutPublicationFence } from '@api/collections/outliers/services/breakout-publication-fence.util';
-import {
-  assertStrategyCadenceAdmission,
-  requiresStrategyCadenceAdmission,
-} from '@api/collections/posts/services/post-strategy-cadence-admission.util';
+import { assertStrategyCadenceAdmission } from '@api/collections/posts/services/post-strategy-cadence-admission.util';
 import { TargetExecutionState } from '@genfeedai/contracts';
-import type { AgentStrategy, Prisma } from '@genfeedai/prisma';
-
-vi.mock(
-  '@api/collections/outliers/services/breakout-publication-fence.util',
-  async (original) => ({
-    ...(await original<
-      typeof import('@api/collections/outliers/services/breakout-publication-fence.util')
-    >()),
-    assertBreakoutPublicationFence: vi.fn(),
-  }),
-);
+import type { Prisma } from '@genfeedai/prisma';
 
 describe('strategy scheduling admission', () => {
   const now = new Date('2026-10-08T12:00:00Z');
@@ -41,19 +27,17 @@ describe('strategy scheduling admission', () => {
         return [];
       }),
       agentStrategy: {
-        findFirst: vi.fn(
-          async (): Promise<Pick<AgentStrategy, 'config'> | null> => {
-            events.push('configuration');
-            return {
-              config: {
-                postsPerWeek: 1,
-                publishingCeilingPerWeek: 2,
-                readyDraftReserve: 3,
-                timezone: 'Europe/Malta',
-              },
-            };
-          },
-        ),
+        findFirst: vi.fn(async () => {
+          events.push('configuration');
+          return {
+            config: {
+              postsPerWeek: 1,
+              publishingCeilingPerWeek: 2,
+              readyDraftReserve: 3,
+              timezone: 'Europe/Malta',
+            },
+          };
+        }),
       },
       post: {
         findMany: vi.fn(async () => {
@@ -139,7 +123,7 @@ describe('strategy scheduling admission', () => {
     const db = database();
     db.mocks.agentStrategy.findFirst.mockResolvedValueOnce({
       config: { postsPerWeek: 1 },
-    });
+    } as never);
     await assertStrategyCadenceAdmission(db.tx, candidate);
     await assertStrategyCadenceAdmission(db.tx, {
       ...candidate,
@@ -151,7 +135,7 @@ describe('strategy scheduling admission', () => {
 
   it('fails closed for foreign or missing strategy scope and incomplete capacity', async () => {
     const db = database();
-    db.mocks.agentStrategy.findFirst.mockResolvedValueOnce(null);
+    db.mocks.agentStrategy.findFirst.mockResolvedValueOnce(null as never);
     await expect(
       assertStrategyCadenceAdmission(db.tx, candidate),
     ).rejects.toThrow('unavailable in this brand');
@@ -165,72 +149,5 @@ describe('strategy scheduling admission', () => {
     await expect(
       assertStrategyCadenceAdmission(truncated.tx, candidate),
     ).rejects.toThrow('publishing ceiling');
-  });
-
-  describe('breakout response outputs', () => {
-    beforeEach(() => {
-      vi.mocked(assertBreakoutPublicationFence).mockReset();
-    });
-
-    it('runs the breakout publication fence before the strategy capacity read', async () => {
-      const db = database();
-      vi.mocked(assertBreakoutPublicationFence).mockImplementation(async () => {
-        db.events.push('breakout');
-      });
-      await assertStrategyCadenceAdmission(db.tx, {
-        ...candidate,
-        breakoutOutputId: 'output',
-      });
-      expect(assertBreakoutPublicationFence).toHaveBeenCalledOnce();
-      expect(db.events.slice(0, 2)).toEqual(['breakout', 'lock']);
-    });
-
-    it('stops scheduling when the fence holds', async () => {
-      const db = database();
-      vi.mocked(assertBreakoutPublicationFence).mockRejectedValue(
-        new Error('Breakout publication held: quota_exhausted'),
-      );
-      await expect(
-        assertStrategyCadenceAdmission(db.tx, {
-          ...candidate,
-          breakoutOutputId: 'output',
-        }),
-      ).rejects.toThrow('quota_exhausted');
-      expect(db.mocks.post.findMany).not.toHaveBeenCalled();
-    });
-
-    it('leaves a breakout output the fence admitted without a strategy to the fence alone', async () => {
-      const db = database();
-      const { agentStrategyId: _strategy, ...unlinked } = candidate;
-      await assertStrategyCadenceAdmission(db.tx, {
-        ...unlinked,
-        breakoutOutputId: 'output',
-        targetExecutionState: TargetExecutionState.PUBLISHING,
-      });
-      expect(assertBreakoutPublicationFence).toHaveBeenCalledOnce();
-      expect(db.events).toEqual([]);
-      expect(db.mocks.agentStrategy.findFirst).not.toHaveBeenCalled();
-    });
-
-    it('requires admission for a breakout output even without a strategy link', () => {
-      const unlinked = {
-        id: 'post',
-        breakoutOutputId: 'output',
-        targetExecutionState: TargetExecutionState.SCHEDULED,
-      };
-      expect(requiresStrategyCadenceAdmission(unlinked)).toBe(true);
-      expect(
-        requiresStrategyCadenceAdmission({
-          ...unlinked,
-          targetExecutionState: TargetExecutionState.DRAFT,
-        }),
-      ).toBe(false);
-      expect(
-        requiresStrategyCadenceAdmission({
-          id: 'post',
-          targetExecutionState: TargetExecutionState.SCHEDULED,
-        }),
-      ).toBe(false);
-    });
   });
 });

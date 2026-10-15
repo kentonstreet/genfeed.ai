@@ -1,4 +1,3 @@
-import type { AgentStrategyDocument } from '@api/collections/agent-strategies/schemas/agent-strategy.schema';
 import { AgentStrategyAutopilotService } from '@api/collections/agent-strategies/services/agent-strategy-autopilot.service';
 import { AgentStrategyAutopilotExecutionService } from '@api/collections/agent-strategies/services/agent-strategy-autopilot-execution.service';
 import { AgentStrategyAutopilotPerformanceService } from '@api/collections/agent-strategies/services/agent-strategy-autopilot-performance.service';
@@ -140,8 +139,8 @@ describe('AgentStrategyAutopilotService', () => {
       }),
       patch: vi.fn().mockResolvedValue({ id: draftId }),
     };
-    const turboRunService = {
-      createManualReviewTurboRun: vi.fn().mockResolvedValue({
+    const batchGenerationService = {
+      createManualReviewBatch: vi.fn().mockResolvedValue({
         id: 'batch-1',
         items: [
           {
@@ -214,7 +213,7 @@ describe('AgentStrategyAutopilotService', () => {
       evaluationsOperationsService as never,
       postsService as never,
       postAccountFanoutService as never,
-      turboRunService as never,
+      batchGenerationService as never,
       autonomousPublishPolicy,
       logger as never,
     );
@@ -235,7 +234,7 @@ describe('AgentStrategyAutopilotService', () => {
       logger,
       trendsService,
       agentStrategiesService,
-      turboRunService,
+      batchGenerationService,
       contentGatewayService,
       evaluationsOperationsService,
       opportunitiesService,
@@ -296,7 +295,7 @@ describe('AgentStrategyAutopilotService', () => {
       }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -623,10 +622,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -717,10 +716,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -807,10 +806,10 @@ describe('AgentStrategyAutopilotService', () => {
     });
 
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledTimes(1);
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       {
         agentStrategyId: strategyId,
@@ -918,7 +917,7 @@ describe('AgentStrategyAutopilotService', () => {
       expect.objectContaining({ decisionReason: expect.any(String) }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).not.toHaveBeenCalled();
   });
 
@@ -1079,7 +1078,7 @@ describe('AgentStrategyAutopilotService', () => {
       expect.objectContaining({ decisionReason: expect.any(String) }),
     );
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).not.toHaveBeenCalled();
   });
 
@@ -1253,7 +1252,7 @@ describe('AgentStrategyAutopilotService', () => {
         publishingCeilingPerWeek: 14,
         readyDraftReserve: 3,
         timezone: 'Europe/Malta',
-      } as unknown as AgentStrategyDocument);
+      } as never);
       expect(status).toMatchObject({
         week: 1,
         readyDrafts: 0,
@@ -1334,7 +1333,7 @@ describe('AgentStrategyAutopilotService', () => {
     ).not.toHaveBeenCalled();
     expect(deps.postAccountFanoutService.resolveTargets).not.toHaveBeenCalled();
     expect(
-      deps.turboRunService.createManualReviewTurboRun,
+      deps.batchGenerationService.createManualReviewBatch,
     ).toHaveBeenCalledWith(
       expect.objectContaining({ agentStrategyId: strategyId }),
       userId,
@@ -1378,67 +1377,6 @@ describe('AgentStrategyAutopilotService', () => {
     });
     expect(draftGenerator).not.toHaveBeenCalled();
     expect(deps.opportunitiesService.createIfMissing).not.toHaveBeenCalled();
-  });
-
-  it('reuses unchanged account quality and bills adapted captions through the bounded evaluator', async () => {
-    const deps = createService();
-    deps.agentStrategiesService.findOneById.mockResolvedValue({
-      ...baseStrategy,
-      publishingCeilingPerWeek: 7,
-      readyDraftReserve: 0,
-    });
-    deps.postAccountFanoutService.resolveTargets.mockResolvedValue([
-      {
-        caption: 'Strong post draft',
-        credentialId,
-        platform: Platform.TWITTER,
-      },
-      {
-        caption: 'Adapted post draft',
-        credentialId: 'second-account',
-        platform: Platform.TWITTER,
-      },
-    ]);
-    deps.opportunitiesService.listOpenByStrategy.mockResolvedValue([
-      {
-        id: opportunityId,
-        estimatedCreditCost: 10,
-        formatCandidates: ['text'],
-        platformCandidates: ['twitter'],
-        priorityScore: 90,
-        sourceType: 'evergreen',
-        status: 'queued',
-        topic: 'AI hooks',
-      },
-    ]);
-    const evaluateQuality = vi.fn().mockResolvedValue({
-      analysis: { overallScore: 90, metadata: { hasCallToAction: true } },
-      creditsUsed: 1,
-    });
-    const draftGenerator = vi.fn().mockResolvedValue({
-      draft: {
-        id: draftId,
-        description: 'Strong post draft',
-        targetSettings: { generation: { metadata: {} } },
-      },
-      creditsUsed: 2,
-      evaluateQuality,
-    });
-    const result = await deps.service.executeQueuedRun({
-      organizationId,
-      strategyId,
-      userId,
-      runId: 'run',
-      creditBudget: 10,
-      draftGenerator,
-    });
-    expect(result.creditsUsed).toBe(4);
-    expect(evaluateQuality).toHaveBeenCalledTimes(2);
-    expect(evaluateQuality).toHaveBeenLastCalledWith(
-      'Adapted post draft',
-      Platform.TWITTER,
-    );
-    expect(deps.optimizersService.analyzeContent).not.toHaveBeenCalled();
   });
 
   it('uses the requested reporting period and deduplicates cumulative post snapshots', async () => {

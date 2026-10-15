@@ -1,6 +1,5 @@
 import { preferredWorkflowTemplateIdForAgentType } from '@pages/agents/content-team/content-team-presets';
 import type {
-  AgentStrategyDialogProps,
   AgentStrategyFormState,
   AgentStrategyPayload,
 } from '@props/automation/agent-strategies-page.props';
@@ -10,20 +9,10 @@ export function isCadenceFormValid(
     AgentStrategyFormState,
     'postsPerWeek' | 'publishingCeilingPerWeek' | 'readyDraftReserve'
   >,
-  initial?: Pick<
-    NonNullable<AgentStrategyDialogProps['initialStrategy']>,
-    'postsPerWeek' | 'publishingCeilingPerWeek' | 'readyDraftReserve'
-  > | null,
 ): boolean {
   const target = form.postsPerWeek?.trim() ?? '';
   const ceiling = form.publishingCeilingPerWeek?.trim() ?? '';
   const reserve = form.readyDraftReserve?.trim() ?? '';
-  if (
-    (initial?.postsPerWeek !== undefined && !target) ||
-    (initial?.publishingCeilingPerWeek !== undefined && !ceiling) ||
-    (initial?.readyDraftReserve !== undefined && !reserve)
-  )
-    return false;
   if (
     target &&
     (!Number.isInteger(Number(target)) ||

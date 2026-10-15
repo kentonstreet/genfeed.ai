@@ -12,10 +12,6 @@ import { CreditsUtilsService } from '@api/collections/credits/services/credits.u
 import { OptimizersService } from '@api/collections/optimizers/services/optimizers.service';
 import type { PostDocument } from '@api/collections/posts/post.schema';
 import { PostsService } from '@api/collections/posts/services/posts.service';
-import {
-  currentWorkflowAccountingScope,
-  runWithWorkflowAccounting,
-} from '@api/collections/workflow-executions/services/workflow-accounting.context';
 import type {
   AgentTurnWorkflowResult,
   PreparedAgentTurnState,
@@ -48,16 +44,15 @@ export class AgentCadenceExecutionService {
     state: PreparedAgentTurnState,
   ): Promise<AgentTurnWorkflowResult | null> {
     if (state.request.source !== 'proactive' || !state.strategyId) return null;
-    const strategyId = state.strategyId;
     const strategy = await this.strategies.findOneById(
-      strategyId,
+      state.strategyId,
       state.organizationId,
     );
     if (
       !strategy?.isActive ||
       strategy.isEnabled === false ||
       strategy.userId !== state.userId ||
-      (strategy.brandId ?? undefined) !== state.request.brandId
+      strategy.brandId !== state.request.brandId
     )
       throw new Error(
         'Cadence strategy is no longer authorized in this scope.',
@@ -77,86 +72,91 @@ export class AgentCadenceExecutionService {
     let completed = false;
     const startedAt = new Date();
     try {
-      const execution = await this.withAccounting(state, () =>
-        this.autopilot.executeQueuedRun({
-          organizationId: state.organizationId,
-          strategyId,
-          userId: state.userId,
-          runId: state.executionId,
-          creditBudget: state.request.creditBudget,
-          draftGenerator: async (input) => {
-            if (input.format !== 'text')
-              throw new CadenceGenerationUnavailableError(
-                'Cadence generation requires an authoritative credit quote for this media format; the opportunity is held without provider dispatch.',
-              );
-            if (
-              !(
-                Object.values(ContentIntelligencePlatform) as string[]
-              ).includes(input.platform)
-            )
-              throw new CadenceGenerationUnavailableError(
-                'Cadence generation is unavailable for this platform; no provider was called.',
-              );
-            if (input.creditBudget < GENERATE_CONTENT_TEXT_CREDITS)
-              return { creditsUsed: 0 };
-            const result = await this.textGeneration.generateContent(
-              {
-                brandId: strategy.brandId,
-                topic: input.opportunity.topic,
-                platform: input.platform,
-                variationsCount: 1,
-              },
-              {
-                organizationId: state.organizationId,
-                userId: state.userId,
-                brandId: strategy.brandId ?? undefined,
-                strategyId,
-                runId: state.executionId,
-                sourceActionId: input.opportunity.id,
-                creditBudget: input.creditBudget,
-                requestedSkillSlugs: strategy.skillSlugs,
-              },
+      const execution = await this.autopilot.executeQueuedRun({
+        organizationId: state.organizationId,
+        strategyId: state.strategyId,
+        userId: state.userId,
+        runId: state.executionId,
+        creditBudget: state.request.creditBudget,
+        draftGenerator: async (input) => {
+          if (input.format !== 'text')
+            throw new CadenceGenerationUnavailableError(
+              'Cadence generation requires an authoritative credit quote for this media format; the opportunity is held without provider dispatch.',
             );
-            charged += result.creditsUsed;
-            let opportunitySpend = result.creditsUsed;
-            const data = readRecord(result.data);
-            if (
-              !result.success ||
-              typeof data.content !== 'string' ||
-              !data.content.trim()
+          if (
+            !(Object.values(ContentIntelligencePlatform) as string[]).includes(
+              input.platform,
             )
-              return { creditsUsed: result.creditsUsed };
-            const draft = await this.adoptDraft(
-              state,
-              strategyId,
-              strategy.brandId ?? undefined,
-              input,
-              data,
+          )
+            throw new CadenceGenerationUnavailableError(
+              'Cadence generation is unavailable for this platform; no provider was called.',
             );
-            generatedCount++;
-            return {
-              draft: draft as PostDocument,
-              creditsUsed: result.creditsUsed,
-              evaluateQuality: (content, platform) =>
-                this.evaluateQuality(
-                  state,
-                  { ...input, platform: platform ?? input.platform },
-                  content ?? (data.content as string),
-                  input.creditBudget - opportunitySpend,
-                  (fee) => {
-                    charged += fee;
-                    opportunitySpend += fee;
-                  },
-                ),
-            };
-          },
-        }),
-      );
+          if (input.creditBudget < GENERATE_CONTENT_TEXT_CREDITS)
+            return { creditsUsed: 0 };
+          const result = await this.textGeneration.generateContent(
+            {
+              brandId: strategy.brandId,
+              topic: input.opportunity.topic,
+              platform: input.platform,
+              variationsCount: 1,
+            },
+            {
+              organizationId: state.organizationId,
+              userId: state.userId,
+              brandId: strategy.brandId ?? undefined,
+              strategyId: state.strategyId,
+              runId: state.executionId,
+              sourceActionId: input.opportunity.id,
+              creditBudget: input.creditBudget,
+              requestedSkillSlugs: strategy.skillSlugs,
+            },
+          );
+          charged += result.creditsUsed;
+          const data = readRecord(result.data);
+          if (
+            !result.success ||
+            typeof data.content !== 'string' ||
+            !data.content.trim()
+          )
+            return { creditsUsed: result.creditsUsed };
+          const draft = await this.posts.create({
+            agentStrategyId: state.strategyId,
+            brandId: strategy.brandId ?? undefined,
+            category: PostCategory.TEXT,
+            description: data.content,
+            label: input.opportunity.topic,
+            ingredients: [],
+            organizationId: state.organizationId,
+            userId: state.userId,
+            platform: parsePlatform(input.platform) ?? undefined,
+            source: 'agent-cadence',
+            sourceActionId: input.opportunity.id,
+            workflowExecutionId: state.executionId,
+            agentThreadId: state.threadId,
+            targetExecutionState: TargetExecutionState.DRAFT,
+          });
+          generatedCount++;
+          return {
+            draft: draft as PostDocument,
+            creditsUsed: result.creditsUsed,
+            evaluateQuality: () =>
+              this.evaluateQuality(
+                state,
+                input,
+                data.content as string,
+                input.creditBudget - result.creditsUsed,
+                (fee) => {
+                  charged += fee;
+                },
+              ),
+          };
+        },
+      });
       completed = true;
       return this.result(state, execution.summary, charged);
     } finally {
       await this.strategies.recordRun(
-        strategyId,
+        state.strategyId,
         {
           startedAt,
           completedAt: new Date(),
@@ -171,55 +171,6 @@ export class AgentCadenceExecutionService {
         state.organizationId,
       );
     }
-  }
-
-  private async adoptDraft(
-    state: PreparedAgentTurnState,
-    strategyId: string,
-    brandId: string | undefined,
-    input: Parameters<CadenceDraftGenerator>[0],
-    data: Record<string, unknown>,
-  ): Promise<PostDocument> {
-    if (typeof data.postId !== 'string' || typeof data.receiptId !== 'string')
-      throw new CadenceGenerationUnavailableError(
-        'Cadence generation did not return a receipt-bound draft. No replacement draft was created.',
-      );
-    const draft = await this.posts.patchOneWhere(
-      {
-        id: data.postId,
-        organizationId: state.organizationId,
-        brandId: brandId,
-        userId: state.userId,
-        isDeleted: false,
-        targetExecutionState: TargetExecutionState.DRAFT,
-      },
-      {
-        agentStrategyId: strategyId,
-        brandId: brandId ?? undefined,
-        category: PostCategory.TEXT,
-        label: input.opportunity.topic,
-        ingredients: [],
-        organizationId: state.organizationId,
-        userId: state.userId,
-        platform: parsePlatform(input.platform) ?? undefined,
-        source: 'agent-cadence',
-        sourceActionId: input.opportunity.id,
-        workflowExecutionId: state.executionId,
-        agentThreadId: state.threadId,
-        targetExecutionState: TargetExecutionState.DRAFT,
-        brandedReceiptId: data.receiptId,
-        brandedReceiptState:
-          typeof data.receiptState === 'string'
-            ? data.receiptState
-            : 'needs_review',
-      },
-      [],
-    );
-    if (!draft)
-      throw new CadenceGenerationUnavailableError(
-        'The receipt-bound cadence draft is no longer available in this scope.',
-      );
-    return draft;
   }
 
   private async evaluateQuality(
@@ -253,9 +204,7 @@ export class AgentCadenceExecutionService {
         cap,
       );
       return {
-        analysis: readRecord(
-          analysis.data ?? analysis,
-        ) as OptimizerAnalysisResult,
+        analysis: analysis as OptimizerAnalysisResult,
         creditsUsed: fee,
       };
     } finally {
@@ -271,27 +220,6 @@ export class AgentCadenceExecutionService {
         onCharge(fee);
       }
     }
-  }
-
-  private withAccounting<T>(
-    state: PreparedAgentTurnState,
-    execute: () => Promise<T>,
-  ): Promise<T> {
-    const current = currentWorkflowAccountingScope();
-    if (
-      current?.organizationId === state.organizationId &&
-      current.workflowExecutionId === state.executionId
-    )
-      return execute();
-    return runWithWorkflowAccounting(
-      {
-        organizationId: state.organizationId,
-        workflowExecutionId: state.executionId,
-        workflowNodeId: 'agent.turn.execute',
-        workflowOperationId: `cadence:${state.executionId}`,
-      },
-      execute,
-    );
   }
 
   private result(

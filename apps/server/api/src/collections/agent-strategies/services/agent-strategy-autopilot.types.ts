@@ -65,10 +65,7 @@ export type CadenceDraftGenerator = (input: {
 }) => Promise<{
   draft?: PostDocument;
   creditsUsed: number;
-  evaluateQuality?: (
-    content?: string,
-    platform?: string,
-  ) => Promise<{
+  evaluateQuality?: () => Promise<{
     analysis: OptimizerAnalysisResult;
     creditsUsed: number;
   }>;
@@ -97,9 +94,6 @@ export interface ImageEvaluationResult {
 }
 
 export interface FinalizeOpportunityInput {
-  evaluateQuality?: Awaited<
-    ReturnType<CadenceDraftGenerator>
-  >['evaluateQuality'];
   evaluatedReceipt?: string;
   draft: PostDocument;
   draftContent: string;

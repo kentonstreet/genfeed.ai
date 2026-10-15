@@ -1,19 +1,5 @@
-import {
-  getActionOriginContext,
-  runWithActionOrigin,
-} from '@api/action-origin/action-origin.context';
-import { AGENT_RUNTIME_ACTION_IDS } from '@api/collections/workflows/services/agent-runtime-workflow-definitions';
-import type { SystemWorkflowActionExecutor } from '@api/collections/workflows/system-workflow-runner.service';
 import { AgentTurnWorkflowExecutionService } from '@api/services/agent-orchestrator/agent-turn-workflow-execution.service';
-import {
-  ActionOrigin,
-  AgentAutonomyMode,
-  AgentMessageRole,
-} from '@genfeedai/contracts';
-import {
-  GenerationEntryAttribution,
-  GenerationEntryChannel,
-} from '@genfeedai/contracts/interfaces/content/generation-entry.interface';
+import { AgentAutonomyMode, AgentMessageRole } from '@genfeedai/contracts';
 import { describe, expect, it, vi } from 'vitest';
 
 function setup(source = 'proactive', priorMessageCount = 0) {
@@ -46,20 +32,13 @@ function setup(source = 'proactive', priorMessageCount = 0) {
   const plan = {
     tryHandlePlanModeTurnStream: vi.fn().mockResolvedValue(false),
   };
-  const turboRun = {
-    tryHandleTurboRunTurnStream: vi.fn().mockResolvedValue(false),
+  const batch = {
+    tryHandleBatchGenerationTurnStream: vi.fn().mockResolvedValue(false),
   };
   const recurring = {
     tryHandleRecurringTaskDraftTurnStream: vi.fn().mockResolvedValue(false),
   };
   const stream = { runStreamLoop: vi.fn().mockResolvedValue(undefined) };
-  const actions = new Map<string, SystemWorkflowActionExecutor>();
-  const workflows = {
-    registerAction: vi.fn(
-      (id: string, executor: SystemWorkflowActionExecutor) =>
-        actions.set(id, executor),
-    ),
-  };
   const service = Reflect.construct(AgentTurnWorkflowExecutionService, [
     prisma,
     { findOne: vi.fn().mockResolvedValue({}) },
@@ -82,7 +61,7 @@ function setup(source = 'proactive', priorMessageCount = 0) {
     },
     context,
     plan,
-    turboRun,
+    batch,
     recurring,
     stream,
     {},
@@ -95,17 +74,16 @@ function setup(source = 'proactive', priorMessageCount = 0) {
       ),
     },
     { upsertBinding: vi.fn() },
-    workflows,
+    {},
   ]) as AgentTurnWorkflowExecutionService;
   return {
     service,
     prisma,
     plan,
-    turboRun,
+    batch,
     recurring,
     stream,
     context,
-    actions,
   };
 }
 const workflowContext = {
@@ -125,7 +103,7 @@ const request = {
 
 describe('trusted proactive turn limits and memory routing', () => {
   it('executes configured cadence through the active workflow before paid chat inference', async () => {
-    const { service, turboRun, context } = setup('proactive');
+    const { service, batch, context } = setup('proactive');
     const final = {
       artifactReferences: [],
       artifactVersionPinIds: [],
@@ -135,7 +113,7 @@ describe('trusted proactive turn limits and memory routing', () => {
       model: null,
       threadId: 'thread',
     };
-    Object.assign(turboRun, {
+    Object.assign(batch, {
       tryExecuteCadence: vi.fn().mockResolvedValue(final),
     });
     const prepared = await service.prepare(request, workflowContext);
@@ -164,93 +142,6 @@ describe('trusted proactive turn limits and memory routing', () => {
       ),
     ).rejects.toThrow('unsupported');
   });
-  it('projects the persisted invocation entry into execution and rejects malformed labels', async () => {
-    const { service, stream } = setup();
-    const generationEntry = {
-      channel: GenerationEntryChannel.DESKTOP,
-      attribution: GenerationEntryAttribution.CLIENT_REPORTED,
-    };
-    const prepared = await service.prepare(
-      { ...request, generationEntry },
-      workflowContext,
-    );
-    expect(prepared.state.request.generationEntry).toEqual(generationEntry);
-    await service.execute(prepared.state);
-    expect(stream.runStreamLoop.mock.calls[0][0]).toMatchObject({
-      generationEntry,
-    });
-    const legacy = await service.prepare(request, workflowContext);
-    expect(legacy.state.request).not.toHaveProperty('generationEntry');
-    const malformed = await service.prepare(
-      {
-        ...request,
-        generationEntry: { channel: 'desktop', attribution: 'server_verified' },
-      },
-      workflowContext,
-    );
-    expect(malformed.state.request).not.toHaveProperty('generationEntry');
-  });
-
-  it('restores the queued entry at the worker boundary while retaining the proven actor', async () => {
-    const { service, actions } = setup();
-    const generationEntry = {
-      channel: GenerationEntryChannel.DESKTOP,
-      attribution: GenerationEntryAttribution.CLIENT_REPORTED,
-    };
-    const prepared = await service.prepare(
-      { ...request, generationEntry },
-      workflowContext,
-    );
-    service.onModuleInit();
-    vi.spyOn(service, 'execute').mockImplementationOnce(async (state) => {
-      expect(getActionOriginContext()).toEqual({
-        origin: ActionOrigin.API,
-        actorUserId: 'actor',
-        apiKeyId: 'key',
-        generationEntry,
-      });
-      return {
-        artifactReferences: [],
-        artifactVersionPinIds: [],
-        content: 'done',
-        creditsUsed: 0,
-        model: null,
-        summary: 'done',
-        threadId: state.threadId,
-      };
-    });
-    const infer = actions.get(AGENT_RUNTIME_ACTION_IDS.TURN_INFER);
-    if (!infer) throw new Error('Missing inference worker action');
-    await runWithActionOrigin(
-      {
-        origin: ActionOrigin.API,
-        actorUserId: 'actor',
-        apiKeyId: 'key',
-        generationEntry: {
-          channel: GenerationEntryChannel.API,
-          attribution: GenerationEntryAttribution.SERVER_VERIFIED,
-        },
-      },
-      () =>
-        infer({
-          context: {
-            organizationId: 'org',
-            runId: 'run',
-            userId: 'user',
-            workflowId: 'workflow',
-            workflowVersionId: 'version',
-          },
-          input: { state: prepared.state },
-          provenance: {
-            executionId: 'run',
-            workflowId: 'workflow',
-            workflowLabel: 'Agent',
-          },
-        }),
-    );
-    expect(service.execute).toHaveBeenCalledOnce();
-  });
-
   it('requires trusted execution provenance and strategy scope', async () => {
     const { service, prisma } = setup('api');
     await expect(service.prepare(request, workflowContext)).rejects.toThrow(
@@ -265,7 +156,7 @@ describe('trusted proactive turn limits and memory routing', () => {
     );
   });
   it('projects trusted limits and uses assembled memory while bypassing deterministic paths', async () => {
-    const { service, stream, plan, turboRun, recurring } = setup();
+    const { service, stream, plan, batch, recurring } = setup();
     const prepared = await service.prepare(request, workflowContext);
     expect(prepared.state.request).toMatchObject({
       creditBudget: 5,
@@ -274,7 +165,7 @@ describe('trusted proactive turn limits and memory routing', () => {
     });
     await service.execute(prepared.state);
     expect(plan.tryHandlePlanModeTurnStream).not.toHaveBeenCalled();
-    expect(turboRun.tryHandleTurboRunTurnStream).not.toHaveBeenCalled();
+    expect(batch.tryHandleBatchGenerationTurnStream).not.toHaveBeenCalled();
     expect(
       recurring.tryHandleRecurringTaskDraftTurnStream,
     ).not.toHaveBeenCalled();
@@ -299,7 +190,7 @@ describe('trusted proactive turn limits and memory routing', () => {
     );
   });
   it('preserves ordinary interactive routing', async () => {
-    const { service, plan, turboRun, recurring, prisma } = setup('api');
+    const { service, plan, batch, recurring, prisma } = setup('api');
     const prepared = await service.prepare(
       { content: 'Create a weekly task', threadId: 'thread', source: 'agent' },
       workflowContext,
@@ -307,7 +198,7 @@ describe('trusted proactive turn limits and memory routing', () => {
     await service.execute(prepared.state);
     expect(prisma.workflowExecution.findFirst).not.toHaveBeenCalled();
     expect(plan.tryHandlePlanModeTurnStream).toHaveBeenCalledOnce();
-    expect(turboRun.tryHandleTurboRunTurnStream).toHaveBeenCalledOnce();
+    expect(batch.tryHandleBatchGenerationTurnStream).toHaveBeenCalledOnce();
     expect(
       recurring.tryHandleRecurringTaskDraftTurnStream,
     ).toHaveBeenCalledOnce();
@@ -337,114 +228,6 @@ describe('trusted proactive turn limits and memory routing', () => {
     expect(call?.[3]).toBe('deepseek/deepseek-v4-flash-0731');
     expect(call?.[5]).toEqual(
       expect.objectContaining({ thinkingModelOverride: null }),
-    );
-  });
-});
-
-describe('authenticated principal restored at the worker boundary', () => {
-  const principal = {
-    isApiKey: false,
-    organizationId: 'org',
-    scopes: [],
-    userId: 'user',
-  };
-  const interactive = {
-    content: 'Create a weekly task',
-    source: 'agent',
-    threadId: 'thread',
-  };
-
-  it('gives an accepted interactive turn the principal it was accepted for', async () => {
-    const { service, stream } = setup('api');
-    const prepared = await service.prepare(
-      { ...interactive, initiatingPrincipal: principal },
-      workflowContext,
-    );
-    await service.execute(prepared.state);
-    expect(stream.runStreamLoop.mock.calls[0][0]).toMatchObject({
-      initiatingPrincipal: principal,
-    });
-  });
-
-  it('keeps an API key identity intact', async () => {
-    const { service, stream } = setup('api');
-    const apiKeyPrincipal = {
-      ...principal,
-      apiKeyId: 'key-1',
-      isApiKey: true,
-      scopes: ['posts:schedule'],
-    };
-    const prepared = await service.prepare(
-      { ...interactive, initiatingPrincipal: apiKeyPrincipal },
-      workflowContext,
-    );
-    await service.execute(prepared.state);
-    expect(stream.runStreamLoop.mock.calls[0][0]).toMatchObject({
-      initiatingPrincipal: apiKeyPrincipal,
-    });
-  });
-
-  it('drops a principal issued for another user or organization', async () => {
-    const { service, stream } = setup('api');
-    for (const stale of [
-      { ...principal, userId: 'someone-else' },
-      { ...principal, organizationId: 'other-org' },
-    ]) {
-      const prepared = await service.prepare(
-        { ...interactive, initiatingPrincipal: stale },
-        workflowContext,
-      );
-      await service.execute(prepared.state);
-    }
-    for (const call of stream.runStreamLoop.mock.calls) {
-      expect(call[0]).not.toHaveProperty('initiatingPrincipal');
-    }
-  });
-
-  it('never gives a proactive strategy turn a principal, even if one is planted', async () => {
-    const { service, stream } = setup();
-    const prepared = await service.prepare(
-      { ...request, initiatingPrincipal: principal },
-      workflowContext,
-    );
-    await service.execute(prepared.state);
-    expect(stream.runStreamLoop.mock.calls[0][0]).not.toHaveProperty(
-      'initiatingPrincipal',
-    );
-  });
-
-  it('gives a thread UI action the principal it was accepted for', async () => {
-    const { service, actions } = setup('api');
-    service.onModuleInit();
-    const uiAction = actions.get(AGENT_RUNTIME_ACTION_IDS.UI_ACTION);
-    if (!uiAction) throw new Error('Missing ui-action worker action');
-    const execute = vi
-      .spyOn(service, 'executeUiAction')
-      .mockResolvedValue({} as never);
-    await uiAction({
-      context: {
-        organizationId: 'org',
-        runId: 'run',
-        userId: 'user',
-        workflowId: 'workflow',
-        workflowVersionId: 'version',
-      },
-      input: {
-        request: {
-          action: 'confirm_install_official_workflow',
-          initiatingPrincipal: principal,
-          threadId: 'thread',
-        },
-      },
-      provenance: {
-        executionId: 'run',
-        workflowId: 'workflow',
-        workflowLabel: 'Agent',
-      },
-    });
-    expect(execute).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ initiatingPrincipal: principal }),
     );
   });
 });

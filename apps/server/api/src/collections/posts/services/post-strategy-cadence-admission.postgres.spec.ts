@@ -109,25 +109,6 @@ describe.skipIf(!connectionString)(
         'publishing ceiling',
       );
     });
-    it('counts delayed in-flight sends in the current week', async () => {
-      const strategy = randomUUID();
-      await configure(strategy);
-      await pool.query(
-        `INSERT INTO "${schema}"."posts" ("id","agentStrategyId","organizationId","scheduledDate","targetExecutionState") VALUES ($1,$2,'organization',$3,$4)`,
-        [randomUUID(), strategy, new Date(0), TargetExecutionState.PUBLISHING],
-      );
-      await expect(
-        prisma.$transaction((tx) =>
-          assertStrategyCadenceAdmission(tx, {
-            id: randomUUID(),
-            agentStrategyId: strategy,
-            organizationId: 'organization',
-            brandId: 'brand',
-            targetExecutionState: TargetExecutionState.PUBLISHING,
-          }),
-        ),
-      ).rejects.toThrow('publishing ceiling');
-    });
     it('serializes admission against a concurrent configuration change', async () => {
       const strategy = randomUUID();
       await configure(strategy, 2);

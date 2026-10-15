@@ -7,8 +7,6 @@ import {
   recordReadyDraftReceipt,
   resolveCadencePolicy,
 } from '@api/collections/agent-strategies/services/agent-strategy-cadence.util';
-import type { PostDocument } from '@api/collections/posts/post.schema';
-import type { PostsService } from '@api/collections/posts/services/posts.service';
 import {
   PersistedReviewDecision,
   TargetExecutionState,
@@ -41,14 +39,11 @@ describe('strategy cadence', () => {
       patch: vi.fn(),
     };
     const evaluatedReceipt = buildReadyDraftReceipt(original);
-    await recordReadyDraftReceipt(
-      posts as unknown as Pick<PostsService, 'findOne' | 'patch'>,
-      {
-        draft: original as unknown as PostDocument,
-        organizationId: 'organization',
-        evaluatedReceipt,
-      },
-    );
+    await recordReadyDraftReceipt(posts as never, {
+      draft: original as never,
+      organizationId: 'organization',
+      evaluatedReceipt,
+    });
     const update = posts.patch.mock.calls[0][1];
     expect(
       isReadyCadenceDraft({
@@ -153,10 +148,7 @@ describe('strategy cadence', () => {
       ...draft,
       targetSettings: {
         generation: {
-          metadata: {
-            cadenceQualityReceipt: receipt,
-            reviewTurboRunId: 'turboRun',
-          },
+          metadata: { cadenceQualityReceipt: receipt, reviewBatchId: 'batch' },
         },
       },
     };

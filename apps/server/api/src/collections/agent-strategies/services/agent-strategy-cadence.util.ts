@@ -3,12 +3,7 @@ import {
   projectPostArtifactMaterial,
   readArtifactRecord,
 } from '@api/agent-artifacts/agent-artifact-material.util';
-import type { AgentStrategyOpportunityDocument } from '@api/collections/agent-strategies/schemas/agent-strategy-opportunity.schema';
-import type {
-  CadenceDraftGenerator,
-  FinalizeOpportunityInput,
-} from '@api/collections/agent-strategies/services/agent-strategy-autopilot.types';
-import type { AgentStrategyOpportunitiesService } from '@api/collections/agent-strategies/services/agent-strategy-opportunities.service';
+import type { FinalizeOpportunityInput } from '@api/collections/agent-strategies/services/agent-strategy-autopilot.types';
 import type { PostsService } from '@api/collections/posts/services/posts.service';
 import { scopedWhere } from '@api/tenancy/scoped-where';
 import {
@@ -111,26 +106,6 @@ export function cadencePublicationDate(
       : null;
 }
 
-export function bindCadenceQualityEvaluator(
-  opportunities: Pick<AgentStrategyOpportunitiesService, 'updateStatus'>,
-  opportunity: AgentStrategyOpportunityDocument,
-  organizationId: string,
-  evaluate: Awaited<ReturnType<CadenceDraftGenerator>>['evaluateQuality'],
-): Awaited<ReturnType<CadenceDraftGenerator>>['evaluateQuality'] {
-  if (!evaluate) return undefined;
-  return async (content, platform) => {
-    const result = await evaluate(content, platform);
-    opportunity.estimatedCreditCost += result.creditsUsed;
-    await opportunities.updateStatus(
-      opportunity.id,
-      organizationId,
-      'generating',
-      { estimatedCreditCost: opportunity.estimatedCreditCost },
-    );
-    return result;
-  };
-}
-
 // Inbox linkage and this receipt are bookkeeping, not evaluated content.
 // Keep all other canonical material, including generation settings and media.
 export function buildReadyDraftReceipt(
@@ -141,7 +116,7 @@ export function buildReadyDraftReceipt(
   const metadata = { ...readArtifactRecord(generation.metadata) };
   for (const key of [
     'cadenceQualityReceipt',
-    'reviewTurboRunId',
+    'reviewBatchId',
     'reviewItemId',
     'reviewPostId',
   ])
