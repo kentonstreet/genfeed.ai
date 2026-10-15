@@ -100,13 +100,6 @@ export interface AvatarGenerationFunding extends AvatarGenerationPrice {
   engine?: HeyGenAvatarEngine;
   heygenApiKey?: string;
   elevenLabsApiKey?: string;
-  /**
-   * Set when the organization's own HeyGen key renders and only the platform
-   * speech is charged: the speech catalog row the hold is priced on and the
-   * provider model id the speech must be generated with.
-   */
-  speechModelKey?: string;
-  speechModelId?: string;
 }
 
 export interface ResolvedIdentity {

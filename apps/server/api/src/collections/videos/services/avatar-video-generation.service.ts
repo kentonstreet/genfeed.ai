@@ -10,10 +10,7 @@ import type {
   ResolvedIdentity,
 } from '@api/collections/videos/services/avatar-video-generation.types';
 import { resolveAvatarIdentityInputs } from '@api/collections/videos/services/avatar-video-identity.util';
-import type {
-  AvatarGenerationQuote,
-  HeyGenGenerationProvider,
-} from '@genfeedai/contracts/interfaces';
+import type { HeyGenGenerationProvider } from '@genfeedai/contracts/interfaces';
 import { toPrismaJson } from '@genfeedai/prisma';
 
 export type { AvatarGenerationPrice } from '@api/collections/videos/services/avatar-video-generation.types';
@@ -85,34 +82,17 @@ export class AvatarVideoGenerationService {
     params: AvatarVideoGenerationParams,
     context: AvatarVideoGenerationContext,
   ): Promise<AvatarGenerationPrice> {
-    const { billingMode, credits, modelKey } = await this.quote(
-      params,
-      context,
-    );
-    return { billingMode, credits, modelKey };
-  }
-
-  /**
-   * The read-only Studio quote: the price {@link quoteCredits} holds plus the
-   * clip length a per-second hold is estimated at.
-   */
-  async quote(
-    params: AvatarVideoGenerationParams,
-    context: AvatarVideoGenerationContext,
-  ): Promise<AvatarGenerationQuote> {
     const brand = await this.findBrandForContext(context);
     const identity = await this.resolveIdentityInputs(params, context, brand);
     await this.admitCharacter(identity, brand.id, context);
     this.assertUsableVoiceSource(params, identity);
     await this.admitIdentity(params, identity, context);
-    const { billingMode, credits, durationQuote, modelKey } =
-      await this.resolveFunding(params, identity, context);
-    return {
-      billingMode,
-      credits,
-      estimatedSeconds: durationQuote?.estimatedSeconds ?? null,
-      modelKey,
-    };
+    const { billingMode, credits, modelKey } = await this.resolveFunding(
+      params,
+      identity,
+      context,
+    );
+    return { billingMode, credits, modelKey };
   }
 
   /**
@@ -747,7 +727,6 @@ export class AvatarVideoGenerationService {
         context.organizationId,
         context.userId,
         funding.elevenLabsApiKey,
-        ...(funding.speechModelId ? [{ modelId: funding.speechModelId }] : []),
       );
 
       return {
