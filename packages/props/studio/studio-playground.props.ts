@@ -103,11 +103,6 @@ export interface StudioPlaygroundAssetActions {
   onCopyPrompt: (ingredient: IIngredient) => void | Promise<void>;
   onCreateVariation: (ingredient: IIngredient) => void;
   onDeleteIngredient: (ingredient: IIngredient) => void;
-  /**
-   * Re-sends a generation that stopped on a brand enhancement failure with the
-   * prompt exactly as typed and no brand applied (`brandMode: 'raw'`).
-   */
-  onGenerateWithoutBrand?: (job: StudioPlaygroundJob) => void | Promise<void>;
   onMarkArchived: (ingredient: IIngredient) => void | Promise<void>;
   onMarkRejected: (ingredient: IIngredient) => void | Promise<void>;
   onMarkValidated: (ingredient: IIngredient) => void | Promise<void>;
@@ -256,13 +251,7 @@ export interface StudioPlaygroundInspectorProps {
   onEdit?: (job: StudioPlaygroundJob) => void;
   onSelect: (job: StudioPlaygroundJob) => void;
   onUseInPost: (ingredient: IIngredient) => void;
-  /** Attaches the asset to the composer under its reference role. */
-  onUseAsReference?: (job: StudioPlaygroundJob) => void;
-  /** False when the current composer type cannot take this asset as a reference. */
-  isUseAsReferenceEnabled?: boolean;
   onVary: (job: StudioPlaygroundJob) => void;
-  /** The asset this one was transformed from (extend, upscale, reframe, …). */
-  parentJob?: StudioPlaygroundJob;
   runJobs: readonly StudioPlaygroundJob[];
 }
 
