@@ -15,21 +15,18 @@ describe('homepage metadata', () => {
 
     const result = await PageModule.generateMetadata({}, parent);
 
-    expect(result.title).toBe('Genfeed.ai | Ask once. Show up everywhere.');
+    expect(result.title).toBe(
+      'Genfeed.ai | Ask for content. Get it published.',
+    );
     expect(result.description).toBe(
-      'Genfeed is an open-source content agent. Create on-brand videos, images and posts, then review and publish to your connected channels.',
+      'Create on-brand videos, images, ads, and posts with Genfeed, review every draft, and schedule approved content across more than 20 channels.',
     );
     expect(result.openGraph?.description).toBe(result.description);
     expect(result.twitter?.description).toBe(result.description);
     expect(result.openGraph?.title).toBe(result.title);
     expect(result.twitter?.title).toBe(result.title);
     expect(result.openGraph?.images).toEqual([
-      expect.objectContaining({
-        url: 'https://genfeed.ai/og/home',
-        width: 1200,
-        height: 630,
-        type: 'image/png',
-      }),
+      'https://cdn.genfeed.ai/previous.jpg',
     ]);
   });
 });
