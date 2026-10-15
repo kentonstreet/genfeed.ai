@@ -25,7 +25,6 @@ vi.mock('@services/ingredients/heygen.service', () => ({
 const voice: HeyGenCatalogVoice = {
   voiceId: 'personal',
   name: 'Personal',
-  gender: null,
   preview: '',
   index: 0,
   ownership: 'private',
@@ -71,7 +70,6 @@ describe('HeyGen catalogue recovery', () => {
     const avatar: HeyGenCatalogAvatar = {
       avatarId: 'look',
       name: 'Look',
-      gender: null,
       preview: '',
       index: 0,
       avatarRef: {

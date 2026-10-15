@@ -1,18 +1,14 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import type { ElevenLabsAccountVoicesService } from '@api/collections/voices/services/elevenlabs-account-voices.service';
-import { ElevenLabsSpeechBindingService } from '@api/collections/voices/services/elevenlabs-speech-binding.service';
 import { VoiceCreditsService } from '@api/collections/voices/services/voice-credits.service';
 import { VoiceGenerationService } from '@api/collections/voices/services/voice-generation.service';
 import { VoicesService } from '@api/collections/voices/services/voices.service';
 import { AGENT_RUNTIME_ACTION_IDS } from '@api/collections/workflows/services/agent-runtime-workflow-definitions';
 import { FilesClientService } from '@api/services/files-microservice/client/files-client.service';
 import { ElevenLabsService } from '@api/services/integrations/elevenlabs/services/elevenlabs.service';
-import type { ElevenLabsConnectionService } from '@api/services/integrations/elevenlabs/services/elevenlabs-connection.service';
 import { HeyGenService } from '@api/services/integrations/heygen/services/heygen.service';
 import { HeyGenSpeechVoicesService } from '@api/services/integrations/heygen/services/heygen-speech-voices.service';
 import { RouterService } from '@api/services/router/router.service';
 import { SharedService } from '@api/shared/services/shared/shared.service';
-import { ElevenLabsError } from '@elevenlabs/elevenlabs-js';
 import { getActionDefinition } from '@genfeedai/actions';
 import {
   ActivityKey,
@@ -61,33 +57,6 @@ describe('VoiceGenerationService', () => {
       provider: 'heygen',
     },
   };
-  const elevenLabsPlatformBinding = {
-    credentialVersionId: 'platform',
-    kind: 'platform' as const,
-    organizationId,
-    provider: 'elevenlabs' as const,
-  };
-  const elevenLabsPersonalBinding = {
-    credentialVersionId: 'credential-v1',
-    kind: 'byok' as const,
-    organizationId,
-    provider: 'elevenlabs' as const,
-  };
-  const speechReceipt = (
-    binding:
-      | typeof elevenLabsPlatformBinding
-      | typeof elevenLabsPersonalBinding,
-    state: 'accepted' | 'submitted' | 'completed' = 'accepted',
-  ) => ({
-    connection: binding,
-    organizationId,
-    provider: 'elevenlabs',
-    state,
-    version: 1,
-    voice: { externalVoiceId: 'voice-1' },
-  });
-  let accountVoices: { resolveSpeechVoice: ReturnType<typeof vi.fn> };
-  let connections: { resolve: ReturnType<typeof vi.fn> };
   let elevenLabs: { generateAndUploadAudio: ReturnType<typeof vi.fn> };
   let heygen: {
     generateSpeech: ReturnType<typeof vi.fn>;
@@ -108,12 +77,6 @@ describe('VoiceGenerationService', () => {
   let voices: {
     findOne: ReturnType<typeof vi.fn>;
     patchAll: ReturnType<typeof vi.fn>;
-    prisma: {
-      ingredient: {
-        findFirst: ReturnType<typeof vi.fn>;
-        updateMany: ReturnType<typeof vi.fn>;
-      };
-    };
   };
   let workflowRunner: {
     enqueueWorkflow: ReturnType<typeof vi.fn>;
@@ -130,11 +93,6 @@ describe('VoiceGenerationService', () => {
 
   function build(skillRuntime?: unknown): VoiceGenerationService {
     return new VoiceGenerationService(
-      new ElevenLabsSpeechBindingService(
-        accountVoices as unknown as ElevenLabsAccountVoicesService,
-        connections as unknown as ElevenLabsConnectionService,
-        voices as unknown as VoicesService,
-      ),
       elevenLabs as unknown as ElevenLabsService,
       heygen as unknown as HeyGenService,
       heygen as unknown as HeyGenSpeechVoicesService,
@@ -179,19 +137,6 @@ describe('VoiceGenerationService', () => {
   }
 
   beforeEach(() => {
-    accountVoices = {
-      resolveSpeechVoice: vi.fn().mockResolvedValue({
-        connectionKind: 'platform',
-        externalVoiceId: 'voice-1',
-      }),
-    };
-    connections = {
-      resolve: vi.fn(async (_organizationId: string, kind: string) =>
-        kind === 'byok'
-          ? { apiKey: 'personal-key', binding: elevenLabsPersonalBinding }
-          : { apiKey: 'platform-key', binding: elevenLabsPlatformBinding },
-      ),
-    };
     elevenLabs = {
       generateAndUploadAudio: vi.fn().mockResolvedValue({
         audioUrl: 'https://example.com/generated.mp3',
@@ -243,12 +188,6 @@ describe('VoiceGenerationService', () => {
         status: IngredientStatus.GENERATED,
       }),
       patchAll: vi.fn(),
-      prisma: {
-        ingredient: {
-          findFirst: vi.fn().mockResolvedValue(null),
-          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-        },
-      },
     };
     workflowRunner = {
       enqueueWorkflow: vi.fn(),
@@ -700,7 +639,7 @@ describe('VoiceGenerationService', () => {
       ingredientId,
       organizationId,
       userId,
-      'platform-key',
+      undefined,
       { modelId: 'eleven_flash_v2_5' },
     );
     expect(voices.patchAll).toHaveBeenCalledWith(
@@ -751,7 +690,7 @@ describe('VoiceGenerationService', () => {
       ingredientId,
       organizationId,
       userId,
-      'platform-key',
+      undefined,
       { modelId: 'eleven_v4' },
     );
   });
@@ -860,7 +799,7 @@ describe('VoiceGenerationService', () => {
       ).rejects.toBeInstanceOf(ServiceUnavailableException);
       expect(heygen.generateSpeech).not.toHaveBeenCalled();
       expect(voices.patchAll).toHaveBeenLastCalledWith(
-        { id: ingredientId, isDeleted: false, organizationId, s3Key: null },
+        { id: ingredientId, isDeleted: false, organizationId },
         { status: IngredientStatus.FAILED },
       );
       expect(credits.settleSpeechCredits).not.toHaveBeenCalled();
@@ -923,7 +862,7 @@ describe('VoiceGenerationService', () => {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
     });
     expect(voices.patchAll).toHaveBeenLastCalledWith(
-      { id: ingredientId, isDeleted: false, organizationId, s3Key: null },
+      { id: ingredientId, isDeleted: false, organizationId },
       { status: IngredientStatus.FAILED },
     );
     expect(credits.settleSpeechCredits).not.toHaveBeenCalled();
@@ -988,253 +927,5 @@ describe('VoiceGenerationService', () => {
     );
 
     expect(credits.settleSpeechCredits).not.toHaveBeenCalled();
-  });
-
-  describe('ElevenLabs account binding', () => {
-    it('binds a personal voice to the owning connection at submission', async () => {
-      accountVoices.resolveSpeechVoice.mockResolvedValue({
-        connectionKind: 'byok',
-        externalVoiceId: 'voice-1',
-        internalVoiceId: 'saved-voice-1',
-      });
-      voices.findOne.mockResolvedValue({
-        id: ingredientId,
-        status: IngredientStatus.PROCESSING,
-      });
-
-      await service.generate(user, {
-        text: 'Hello',
-        voiceId: 'saved-voice-1',
-      });
-
-      expect(accountVoices.resolveSpeechVoice).toHaveBeenCalledWith(
-        organizationId,
-        'saved-voice-1',
-      );
-      expect(voices.patchAll).toHaveBeenCalledWith(
-        { id: ingredientId, organizationId },
-        {
-          generationProvider: {
-            ...speechReceipt(elevenLabsPersonalBinding),
-            voice: {
-              externalVoiceId: 'voice-1',
-              internalVoiceId: 'saved-voice-1',
-            },
-          },
-        },
-      );
-      // The connected account pays ElevenLabs, not platform credits.
-      expect(credits.assertOrganizationCanAfford).not.toHaveBeenCalled();
-    });
-
-    it('rejects a voice it cannot bind before creating any asset', async () => {
-      accountVoices.resolveSpeechVoice.mockRejectedValue(
-        new BadRequestException('Import it first.'),
-      );
-
-      await expect(
-        service.generate(user, { text: 'Hello', voiceId: 'unknown-voice' }),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(shared.createMediaDocuments).not.toHaveBeenCalled();
-      expect(workflowRunner.enqueueWorkflow).not.toHaveBeenCalled();
-    });
-
-    it('fails without switching accounts when the personal connection is gone', async () => {
-      accountVoices.resolveSpeechVoice.mockResolvedValue({
-        connectionKind: 'byok',
-        externalVoiceId: 'voice-1',
-      });
-      connections.resolve.mockRejectedValue(
-        new BadRequestException(
-          'Reconnect your ElevenLabs account to use this voice.',
-        ),
-      );
-
-      await expect(
-        service.generate(user, { text: 'Hello', voiceId: 'voice-1' }),
-      ).rejects.toThrow('Reconnect your ElevenLabs account');
-      expect(connections.resolve).not.toHaveBeenCalledWith(
-        organizationId,
-        'platform',
-      );
-      expect(shared.createMediaDocuments).not.toHaveBeenCalled();
-    });
-
-    it('speaks through the bound personal key and never debits platform credits', async () => {
-      voices.findOne
-        .mockResolvedValueOnce({
-          generationProvider: speechReceipt(elevenLabsPersonalBinding),
-          id: ingredientId,
-          status: IngredientStatus.PROCESSING,
-        })
-        .mockResolvedValue({
-          cdnUrl: 'https://example.com/generated.mp3',
-          id: ingredientId,
-          status: IngredientStatus.GENERATED,
-        });
-
-      await service.executeQueuedGeneration(queued());
-
-      expect(voices.prisma.ingredient.updateMany).toHaveBeenCalledWith({
-        data: {
-          generationProvider: {
-            ...speechReceipt(elevenLabsPersonalBinding, 'submitted'),
-            submittedAt: expect.any(String),
-          },
-        },
-        where: {
-          generationProvider: { equals: 'accepted', path: ['state'] },
-          id: ingredientId,
-          isDeleted: false,
-          organizationId,
-        },
-      });
-      expect(elevenLabs.generateAndUploadAudio).toHaveBeenCalledWith(
-        'voice-1',
-        'Hello',
-        ingredientId,
-        organizationId,
-        userId,
-        'personal-key',
-        { modelId: 'eleven_v4' },
-      );
-      expect(voices.patchAll).toHaveBeenCalledWith(
-        { id: ingredientId, isDeleted: false, organizationId },
-        expect.objectContaining({
-          generationProvider: speechReceipt(
-            elevenLabsPersonalBinding,
-            'completed',
-          ),
-          providerData: {
-            speechBilling: expect.objectContaining({ billingMode: 'byok' }),
-          },
-        }),
-      );
-      expect(accountVoices.resolveSpeechVoice).not.toHaveBeenCalled();
-      expect(credits.settleSpeechCredits).not.toHaveBeenCalled();
-    });
-
-    it('refuses a request whose personal connection changed after submission', async () => {
-      voices.findOne.mockResolvedValue({
-        generationProvider: speechReceipt({
-          ...elevenLabsPersonalBinding,
-          credentialVersionId: 'credential-v0',
-        }),
-        id: ingredientId,
-        status: IngredientStatus.PROCESSING,
-      });
-
-      await expect(service.executeQueuedGeneration(queued())).rejects.toThrow(
-        'The ElevenLabs connection changed',
-      );
-      expect(elevenLabs.generateAndUploadAudio).not.toHaveBeenCalled();
-      expect(voices.prisma.ingredient.updateMany).not.toHaveBeenCalled();
-    });
-
-    it('does not resend a submitted request whose result is unknown', async () => {
-      voices.findOne.mockResolvedValue({
-        generationProvider: speechReceipt(
-          elevenLabsPlatformBinding,
-          'submitted',
-        ),
-        id: ingredientId,
-        status: IngredientStatus.PROCESSING,
-      });
-      voices.prisma.ingredient.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(
-        service.executeQueuedGeneration(queued()),
-      ).rejects.toMatchObject({ status: HttpStatus.CONFLICT });
-      expect(elevenLabs.generateAndUploadAudio).not.toHaveBeenCalled();
-      expect(voices.patchAll).toHaveBeenLastCalledWith(
-        { id: ingredientId, isDeleted: false, organizationId, s3Key: null },
-        { status: IngredientStatus.FAILED },
-      );
-      expect(credits.settleSpeechCredits).not.toHaveBeenCalled();
-    });
-
-    it('turns an inaccessible provider voice into an actionable failure', async () => {
-      voices.findOne.mockResolvedValue({
-        generationProvider: speechReceipt(elevenLabsPersonalBinding),
-        id: ingredientId,
-        status: IngredientStatus.PROCESSING,
-      });
-      elevenLabs.generateAndUploadAudio.mockRejectedValue(
-        new ElevenLabsError({
-          body: { detail: { status: 'voice_not_found' } },
-          message: 'Not found',
-          statusCode: 404,
-        }),
-      );
-
-      await expect(
-        service.executeQueuedGeneration(queued()),
-      ).rejects.toMatchObject({
-        message: expect.stringContaining('not available in the connected'),
-        status: HttpStatus.BAD_REQUEST,
-      });
-      expect(connections.resolve).not.toHaveBeenCalledWith(
-        organizationId,
-        'platform',
-      );
-    });
-
-    it('leaves an in-flight duplicate job to the attempt that owns the provider call', async () => {
-      let finishProvider: (value: unknown) => void = () => undefined;
-      elevenLabs.generateAndUploadAudio.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishProvider = resolve;
-          }),
-      );
-      const processing = {
-        generationProvider: speechReceipt(elevenLabsPlatformBinding),
-        id: ingredientId,
-        status: IngredientStatus.PROCESSING,
-      };
-      voices.findOne.mockResolvedValue(processing);
-      voices.prisma.ingredient.updateMany
-        .mockResolvedValueOnce({ count: 1 })
-        .mockResolvedValueOnce({ count: 0 });
-      voices.prisma.ingredient.findFirst.mockResolvedValue({
-        generationProvider: {
-          ...speechReceipt(elevenLabsPlatformBinding, 'submitted'),
-          submittedAt: new Date().toISOString(),
-        },
-        s3Key: null,
-        status: IngredientStatus.PROCESSING,
-      });
-
-      const first = service.executeQueuedGeneration(queued());
-      await vi.waitFor(() =>
-        expect(elevenLabs.generateAndUploadAudio).toHaveBeenCalledTimes(1),
-      );
-
-      await expect(
-        service.executeQueuedGeneration(queued()),
-      ).resolves.toMatchObject({ status: IngredientStatus.PROCESSING });
-      expect(elevenLabs.generateAndUploadAudio).toHaveBeenCalledTimes(1);
-      expect(voices.patchAll).not.toHaveBeenCalledWith(expect.anything(), {
-        status: IngredientStatus.FAILED,
-      });
-      expect(activities.record).not.toHaveBeenCalledWith(
-        expect.objectContaining({ key: ActivityKey.VOICE_FAILED }),
-      );
-
-      voices.findOne.mockResolvedValue({
-        cdnUrl: 'https://example.com/generated.mp3',
-        id: ingredientId,
-        status: IngredientStatus.GENERATED,
-      });
-      finishProvider({
-        audioUrl: 'https://example.com/generated.mp3',
-        duration: 90,
-        uploadResult: { s3Key: 'ingredients/musics/voice-1' },
-      });
-      await expect(first).resolves.toMatchObject({
-        status: IngredientStatus.GENERATED,
-      });
-      expect(credits.settleSpeechCredits).toHaveBeenCalledTimes(1);
-    });
   });
 });

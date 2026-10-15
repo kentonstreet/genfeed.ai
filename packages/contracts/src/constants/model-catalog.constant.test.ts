@@ -74,28 +74,6 @@ describe('UNIFIED_MODEL_CATALOG', () => {
     );
   });
 
-  it('prices the product-text fallback without offering it as agent chat', () => {
-    const row = UNIFIED_MODEL_CATALOG.find(
-      (entry) => entry.key === MODEL_KEYS.OPENROUTER_GOOGLE_GEMINI_3_8_FLASH,
-    );
-
-    // 10k prompt + 2k completion at $0.75 / $3.75 per 1M, × 1.7 / $0.01 = 3.
-    expect(row).toMatchObject({
-      category: ModelCategory.TEXT,
-      cost: 3,
-      inputCostPerMillionTokens: 0.75,
-      isActive: true,
-      isDefault: false,
-      isPublic: false,
-      lifecycle: ModelLifecycle.AVAILABLE,
-      outputCostPerMillionTokens: 3.75,
-      pricingType: PricingType.FLAT,
-      provider: ModelProvider.OPENROUTER,
-    });
-    expect(row?.capabilities ?? []).not.toContain(AGENT_CHAT_CAPABILITY);
-    expect(agentRows.some((entry) => entry.key === row?.key)).toBe(false);
-  });
-
   it('seeds self-hosted chat models inactive so operators opt in', () => {
     const selfHostedRows = agentRows.filter(
       (entry) => entry.provider === ModelProvider.GENFEED_AI,
@@ -305,7 +283,6 @@ describe('UNIFIED_MODEL_CATALOG', () => {
         AGENT_CHAT_MODEL_KEYS.GPT_5_6_SOL,
         MODEL_KEYS.ELEVENLABS_V4,
         MODEL_KEYS.FAL_LYRIA3_PRO,
-        MODEL_KEYS.HEYGEN_AVATAR_V,
         MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDANCE_2_5,
         MODEL_KEYS.REPLICATE_IDEOGRAM_AI_IDEOGRAM_4_5,
         MODEL_KEYS.REPLICATE_OPENAI_GPT_IMAGE_2_5_SUNBURST,
@@ -495,24 +472,6 @@ describe('UNIFIED_MODEL_CATALOG', () => {
     expect(genjutsu?.providerCostUsd).toBeUndefined();
   });
 
-  it('seeds HeyGen photo animation active, public and priced per second', () => {
-    expect(
-      UNIFIED_MODEL_CATALOG.find(
-        (entry) => entry.key === MODEL_KEYS.HEYGEN_AVATAR,
-      ),
-    ).toMatchObject({
-      category: ModelCategory.AVATAR,
-      cost: 65,
-      isActive: true,
-      isDefault: false,
-      isPublic: true,
-      lifecycle: ModelLifecycle.AVAILABLE,
-      pricingType: PricingType.PER_SECOND,
-      provider: ModelProvider.HEYGEN,
-      providerCostUsd: 0.0385,
-    });
-  });
-
   it('seeds curated media rows with providerCostUsd for live-margin billing', () => {
     const curatedWithUsd = UNIFIED_MODEL_CATALOG.filter(
       (entry) => entry.isActive && entry.providerCostUsd != null,
@@ -607,103 +566,5 @@ describe('brand vision catalog models (#6727)', () => {
         entry.capabilities?.includes(BRAND_DETECTION_CAPABILITY),
       ).map((entry) => entry.key),
     ).toEqual([BRAND_VISION_DETECT_MODEL_KEY]);
-  });
-});
-
-describe('model version lifecycle', () => {
-  const byKey = new Map(
-    UNIFIED_MODEL_CATALOG.map((entry) => [entry.key, entry]),
-  );
-
-  it('flags older media versions Legacy and points each at its newer model', () => {
-    for (const [key, successor] of [
-      [
-        MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_4_5,
-        MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_5_PRO,
-      ],
-      [
-        MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_3,
-        MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_4,
-      ],
-      [MODEL_KEYS.REPLICATE_GOOGLE_VEO_3, MODEL_KEYS.REPLICATE_GOOGLE_VEO_3_1],
-      [
-        MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V2_1,
-        MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_VIDEO,
-      ],
-      [
-        MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3_FAST,
-        MODEL_KEYS.REPLICATE_MINIMAX_H3,
-      ],
-    ])
-      expect(byKey.get(key), key).toMatchObject({
-        lifecycle: ModelLifecycle.LEGACY,
-        succeededBy: successor,
-      });
-  });
-
-  it('retires models the provider no longer serves onto a live successor', () => {
-    for (const key of [
-      MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V1_6_PRO,
-      MODEL_KEYS.REPLICATE_META_LLAMA_3_1_405B_INSTRUCT,
-      MODEL_KEYS.REPLICATE_DEEPSEEK_AI_DEEPSEEK_R1,
-      MODEL_KEYS.REPLICATE_GOOGLE_GEMINI_3_PRO,
-      MODEL_KEYS.OPENROUTER_XAI_GROK_4_1_FAST,
-      MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_DEV,
-      MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_FLEX,
-    ])
-      expect(byKey.get(key)?.lifecycle, key).toBe(ModelLifecycle.RETIRED);
-  });
-
-  it('moves X drafts and the retired Grok 4.1 Fast row onto priced Grok 4.3', () => {
-    expect(
-      byKey.get(MODEL_KEYS.OPENROUTER_XAI_GROK_4_1_FAST)?.succeededBy,
-    ).toBe(MODEL_KEYS.OPENROUTER_XAI_GROK_4_3);
-    expect(byKey.get(MODEL_KEYS.OPENROUTER_XAI_GROK_4_3)).toMatchObject({
-      inputCostPerMillionTokens: 1.25,
-      isPublic: false,
-      lifecycle: ModelLifecycle.AVAILABLE,
-      outputCostPerMillionTokens: 2.5,
-      provider: ModelProvider.OPENROUTER,
-    });
-  });
-
-  it('points every Legacy or Retired row at a non-retired model of its category', () => {
-    for (const catalog of [
-      UNIFIED_MODEL_CATALOG,
-      getModelCatalogForDeployment(true, { isCloud: true }),
-    ]) {
-      const keys = new Map(catalog.map((entry) => [entry.key, entry]));
-      for (const entry of catalog) {
-        if (!entry.succeededBy) continue;
-        const successor = keys.get(entry.succeededBy);
-        expect(successor, `${entry.key} -> ${entry.succeededBy}`).toBeDefined();
-        expect(successor?.category, entry.key).toBe(entry.category);
-        expect(successor?.lifecycle, entry.key).not.toBe(
-          ModelLifecycle.RETIRED,
-        );
-      }
-    }
-  });
-
-  it('retires Genfeed fleet deployments on Cloud only', () => {
-    const fleetKeys = Object.values(MODEL_KEYS).filter((key) =>
-      key.startsWith('genfeed-ai/'),
-    );
-    const mediaFleetKeys = fleetKeys.filter((key) => byKey.has(key));
-    expect(mediaFleetKeys.length).toBeGreaterThan(0);
-    const cloud = new Map(
-      getModelCatalogForDeployment(true, { isCloud: true }).map((entry) => [
-        entry.key,
-        entry,
-      ]),
-    );
-    for (const key of mediaFleetKeys) {
-      expect(cloud.get(key), key).toMatchObject({
-        isActive: false,
-        isPublic: false,
-        lifecycle: ModelLifecycle.RETIRED,
-      });
-      expect(byKey.get(key)?.lifecycle, key).not.toBe(ModelLifecycle.RETIRED);
-    }
   });
 });

@@ -6,7 +6,7 @@ export enum ModelProvider {
   GENFEED_AI = 'genfeed-ai',
   /** Direct integration (no fal/Replicate intermediary) — e.g. Mureka V9. */
   MUREKA = 'mureka',
-  /** Direct integration — HeyGen avatar video, speech and model video. */
+  /** Direct integration — HeyGen photo-avatar video (`heygen/avatar`). */
   HEYGEN = 'heygen',
   /** Direct integration — ElevenLabs text-to-speech (`elevenlabs/eleven_*`). */
   ELEVENLABS = 'elevenlabs',
@@ -41,8 +41,6 @@ export enum ModelCategory {
   VIDEO_UPSCALE = 'video-upscale',
   MUSIC = 'music',
   VOICE = 'voice',
-  /** Talking-avatar video (HeyGen Avatar IV / Avatar V). */
-  AVATAR = 'avatar',
 }
 
 export enum QualityTier {

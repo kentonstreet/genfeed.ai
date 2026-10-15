@@ -98,7 +98,6 @@ describe('Studio identity gallery data', () => {
       {
         avatarId: 'look',
         name: 'Personal avatar',
-        gender: 'male',
         preview: 'https://assets.test/portrait.jpg',
         index: 0,
         avatarRef: {
@@ -127,7 +126,6 @@ describe('Studio identity gallery data', () => {
       {
         voiceId: 'voice',
         name: 'Personal voice',
-        gender: 'female',
         preview: 'https://assets.test/sample.mp3',
         index: 0,
         ownership: 'private',
@@ -138,16 +136,11 @@ describe('Studio identity gallery data', () => {
       useStudioPlaygroundIdentities({ type: 'avatar' }),
     );
     expect(result.current.avatarOptions[0]).toMatchObject({
-      name: 'Personal avatar',
-      gender: 'male',
       preview: mocks.avatars[0].preview,
       disabled: true,
       avatarRef: mocks.avatars[0].avatarRef,
     });
     expect(result.current.voiceOptions[0]).toMatchObject({
-      name: 'Personal voice',
-      source: 'HeyGen · private',
-      gender: 'female',
       preview: mocks.voices[0].preview,
       voiceRef: { externalVoiceId: 'voice', ownership: 'private', connection },
     });
@@ -158,7 +151,6 @@ describe('Studio identity gallery data', () => {
       {
         voiceId: 'voice',
         name: 'Voice',
-        gender: null,
         preview: '',
         index: 0,
         ownership: 'public',
@@ -194,7 +186,6 @@ describe('Studio Voice identity options', () => {
       {
         voiceId: 'stock-1',
         name: 'Stock voice',
-        gender: null,
         preview: '',
         index: 0,
         ownership: 'public',
