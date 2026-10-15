@@ -11,7 +11,6 @@ import {
   buildImageGenerationResult,
   buildMediaAssetData,
 } from '@api/services/agent-orchestrator/tools/agent-image-generation-result';
-import { pickMediaGenerationOverrides } from '@api/services/agent-orchestrator/tools/agent-media-generation-overrides';
 import {
   readMediaReferenceStrings,
   resolveGenerationReferences,
@@ -293,7 +292,9 @@ export class AgentMediaAssetGenerationService {
       ...(input.params.requestedSkillSlugs
         ? { requestedSkillSlugs: input.params.requestedSkillSlugs }
         : {}),
-      ...pickMediaGenerationOverrides(input.params),
+      ...(typeof input.params.harness === 'boolean'
+        ? { harness: input.params.harness }
+        : {}),
       ...(requestedOutputs ? { outputs: requestedOutputs } : {}),
       ...(input.ctx.brandId ? { brandId: input.ctx.brandId } : {}),
       ...(input.ctx.runId ? { workflowExecutionId: input.ctx.runId } : {}),
@@ -568,7 +569,7 @@ export class AgentMediaAssetGenerationService {
     let response: Record<string, unknown>;
     if (params.requestedSkillSlugs)
       body.requestedSkillSlugs = params.requestedSkillSlugs;
-    Object.assign(body, pickMediaGenerationOverrides(params));
+    if (typeof params.harness === 'boolean') body.harness = params.harness;
     try {
       response = toMediaResponseRecord(
         await this.generationGateway.generateVideo({

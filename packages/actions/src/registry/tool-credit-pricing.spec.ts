@@ -1,10 +1,12 @@
-import { MODEL_KEYS } from '@genfeedai/contracts/constants/model-keys.constant';
-import { SELF_HOSTED_MODELS } from '@genfeedai/contracts/constants/self-hosted-models.constant';
-import { BRAND_INTERVIEW_CREDIT_COST } from '@genfeedai/contracts/constants/tool-credit.constant';
 import {
-  estimateTurboRunCredits,
-  TURBO_RUN_CAPTION_BASE_CREDITS,
-} from '@genfeedai/contracts/constants/turbo-run-pricing.constant';
+  BATCH_CAPTION_BASE_CREDITS,
+  estimateBatchGenerationCredits,
+} from '@genfeedai/contracts/constants/batch-generation-pricing.constant';
+import {
+  BRAND_INTERVIEW_CREDIT_COST,
+  CLIP_CREDIT_PER_CLIP,
+  CLIP_HIGHLIGHT_COUNT_MAXIMUM,
+} from '@genfeedai/contracts/constants/tool-credit.constant';
 import { describe, expect, it } from 'vitest';
 import {
   MCP_CREDIT_PRICING_META_KEY,
@@ -77,10 +79,10 @@ describe('tool credit pricing', () => {
     expect(offenders.map((tool) => tool.name)).toEqual([]);
   });
 
-  it('describes generate and generate_turbo_content as variable ranges', () => {
+  it('describes generate and generate_content_batch as variable ranges', () => {
     const floors = Object.values(MEDIA_GENERATION_CREDIT_FLOORS);
     const generate = getToolByName('generate');
-    const turboRun = getToolByName('generate_turbo_content');
+    const batch = getToolByName('generate_content_batch');
     expect(generate?.creditPricing).toEqual({
       maximum: Math.max(...floors),
       minimum: Math.min(...floors),
@@ -98,19 +100,19 @@ describe('tool credit pricing', () => {
     expect(generate?.description).toContain(
       'an unresolved quote never means free generation',
     );
-    expect(turboRun?.creditPricing?.mode).toBe('variable');
-    if (turboRun?.creditPricing?.mode === 'variable') {
-      expect(turboRun.creditPricing.unit).toBe('Turbo run');
-      expect(turboRun.creditPricing.minimum).toBeGreaterThan(0);
-      expect(turboRun.creditPricing.maximum).toBeGreaterThan(
-        turboRun.creditPricing.minimum,
+    expect(batch?.creditPricing?.mode).toBe('variable');
+    if (batch?.creditPricing?.mode === 'variable') {
+      expect(batch.creditPricing.unit).toBe('batch');
+      expect(batch.creditPricing.minimum).toBeGreaterThan(0);
+      expect(batch.creditPricing.maximum).toBeGreaterThan(
+        batch.creditPricing.minimum,
       );
-      expect(turboRun.description).toContain(
-        `Variable cost: ${turboRun.creditPricing.minimum}–${turboRun.creditPricing.maximum} credits per Turbo run.`,
+      expect(batch.description).toContain(
+        `Variable cost: ${batch.creditPricing.minimum}–${batch.creditPricing.maximum} credits per batch.`,
       );
     }
     const [listed] = toMcpTools(
-      [generate, turboRun].filter(
+      [generate, batch].filter(
         (tool): tool is NonNullable<typeof tool> => tool !== undefined,
       ),
     );
@@ -141,18 +143,20 @@ describe('tool credit pricing', () => {
     ).toBe(MEDIA_GENERATION_CREDIT_FLOORS.image);
     expect(
       estimateToolCreditCost(
-        'generate_turbo_content',
+        'generate_content_batch',
         { count: 4 },
-        pricingOf('generate_turbo_content'),
+        pricingOf('generate_content_batch'),
       ),
-    ).toBe(estimateTurboRunCredits({ count: 4 }, { includeMedia: false }));
+    ).toBe(
+      estimateBatchGenerationCredits({ count: 4 }, { includeMedia: false }),
+    );
     expect(
       estimateToolCreditCost(
         'repurpose_post',
         { mode: 'agent' },
         pricingOf('repurpose_post'),
       ),
-    ).toBe(TURBO_RUN_CAPTION_BASE_CREDITS);
+    ).toBe(BATCH_CAPTION_BASE_CREDITS);
     expect(
       estimateToolCreditCost(
         'repurpose_post',
@@ -221,21 +225,18 @@ describe('tool credit pricing', () => {
         getToolByName('analyze_clip_project')?.creditCost ?? 0,
       ),
     ).toBe(false);
-    // A HeyGen avatar clip is held per second; raw-cut holds nothing.
-    const avatarV = SELF_HOSTED_MODELS.find(
-      (model) => model.key === MODEL_KEYS.HEYGEN_AVATAR_V,
-    );
-    for (const name of ['generate_clips', 'create_clip_project_from_youtube']) {
-      expect(pricingOf(name)).toEqual({
-        maximum: avatarV && 'costPerUnit' in avatarV ? avatarV.costPerUnit : -1,
-        minimum: 0,
-        mode: 'variable',
-        unit: 'second of HeyGen avatar clip',
-      });
-      expect(isSpendingCreditPricing(pricingOf(name), 0)).toBe(true);
-      expect(
-        estimateToolCreditCost(name, { maxClips: 8 }, pricingOf(name)),
-      ).toBeNull();
-    }
+    expect(pricingOf('generate_clips')).toEqual({
+      maximum: CLIP_CREDIT_PER_CLIP * CLIP_HIGHLIGHT_COUNT_MAXIMUM,
+      minimum: CLIP_CREDIT_PER_CLIP,
+      mode: 'variable',
+      unit: 'clip',
+    });
+    expect(
+      estimateToolCreditCost(
+        'generate_clips',
+        { maxClips: 8 },
+        pricingOf('generate_clips'),
+      ),
+    ).toBe(8 * CLIP_CREDIT_PER_CLIP);
   });
 });

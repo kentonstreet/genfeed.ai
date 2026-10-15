@@ -105,9 +105,10 @@ describe('tool registry', () => {
     );
     expect(userTools.length).toBeLessThan(adminTools.length);
     expect(adminTools.length).toBeLessThanOrEqual(superadminTools.length);
+    expect(superadminTools).toEqual(getToolsForSurface('mcp'));
     // resolve_approval is org-admin gated: hidden from users, visible to admins.
-    expect(userTools.map((tool) => tool.name)).not.toContain(
-      'resolve_approval',
+    expect(userTools.some((tool) => tool.name === 'resolve_approval')).toBe(
+      false,
     );
     expect(
       adminTools.some(
@@ -115,13 +116,6 @@ describe('tool registry', () => {
           tool.name === 'resolve_approval' && tool.requiredRole === 'admin',
       ),
     ).toBe(true);
-    expect(superadminTools).toEqual(getToolsForSurface('mcp'));
-    expect(userTools.map((tool) => tool.name)).not.toContain(
-      'create_brand_from_url',
-    );
-    expect(adminTools.map((tool) => tool.name)).toContain(
-      'create_brand_from_url',
-    );
   });
 
   it('scopes role filtering to the requested surface', () => {

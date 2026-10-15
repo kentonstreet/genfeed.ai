@@ -116,6 +116,19 @@ export const SERIALIZER_PROJECTIONS: Record<string, readonly string[]> = {
     'performanceMetrics',
     'xArticleMetadata',
   ],
+  'batch:Batch': [
+    'completedAt',
+    'completedCount',
+    'contentMix',
+    'dateRangeEnd',
+    'dateRangeStart',
+    'failedCount',
+    'platforms',
+    'source',
+    'style',
+    'topics',
+    'totalCount',
+  ],
   'bot-activity:BotActivity': [
     'platform',
     'processingTimeMs',
@@ -337,11 +350,7 @@ export const SERIALIZER_PROJECTIONS: Record<string, readonly string[]> = {
     'platform',
     'wasApplied',
   ],
-  // Fresh deployment mode and paid eligibility are server-computed settings projections.
-  'organization-setting:OrganizationSetting': [
-    'hasOrganizationBilling',
-    'hasPaidModuleSubscription',
-  ],
+  'organization-setting:OrganizationSetting': [],
   'outreach-campaign:OutreachCampaign': [
     'lastActivityAt',
     'totalDmsSent',
@@ -421,19 +430,6 @@ export const SERIALIZER_PROJECTIONS: Record<string, readonly string[]> = {
     'trigger',
   ],
   'trend:Trend': ['growthRate', 'mentions', 'metadata'],
-  'turbo-run:TurboRun': [
-    'completedAt',
-    'completedCount',
-    'contentMix',
-    'dateRangeEnd',
-    'dateRangeStart',
-    'failedCount',
-    'platforms',
-    'source',
-    'style',
-    'topics',
-    'totalCount',
-  ],
   'voice:Ingredient': [
     'agentWorkObject',
     'imageEdit',
@@ -554,14 +550,7 @@ export const SERIALIZER_PROJECTIONS: Record<string, readonly string[]> = {
     'user',
   ],
   'mood:ElementMood': ['category', 'isFavorite', 'isPlatformDefault'],
-  // These creation controls are flattened from Preset.config by the service.
   'preset:Preset': [
-    'aspectRatio',
-    'cameraMovement',
-    'duration',
-    'lens',
-    'lighting',
-    'promptTemplate',
     'blacklists',
     'camera',
     'description',

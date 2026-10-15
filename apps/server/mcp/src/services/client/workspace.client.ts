@@ -3,9 +3,9 @@ import type { AxiosResponse } from 'axios';
 import type { BaseApiClient } from './base-api-client';
 import type {
   ApiError,
-  CreateTurboRunParams,
+  CreateBatchParams,
   JsonApiResource,
-  ListTurboRunsParams,
+  ListBatchesParams,
   PersonaResponse,
 } from './client.types';
 
@@ -77,18 +77,16 @@ export class WorkspaceClient {
     );
   }
 
-  createTurboRun(
-    params: CreateTurboRunParams,
-  ): Promise<Record<string, unknown>> {
+  createBatch(params: CreateBatchParams): Promise<Record<string, unknown>> {
     this.base.logger.debug('Creating content batch', { params });
 
     return this.base.request(
       'creating batch',
       async (http) => {
-        const response = await http.post('/turbo-runs', {
+        const response = await http.post('/batches', {
           data: {
             attributes: params,
-            type: 'turbo-runs',
+            type: 'batches',
           },
         });
 
@@ -98,17 +96,17 @@ export class WorkspaceClient {
     );
   }
 
-  listTurboRuns(
-    params: ListTurboRunsParams = {},
+  listBatches(
+    params: ListBatchesParams = {},
   ): Promise<Array<Record<string, unknown>>> {
     this.base.logger.debug('Listing content batches', { params });
 
     return this.base.request(
       'listing batches',
       async (http) => {
-        const response = await http.get('/turbo-runs', {
+        const response = await http.get('/batches', {
           params: {
-            'filter[turboRunId]': params.turboRunId,
+            'filter[batchId]': params.batchId,
             'filter[status]': params.status,
             'page[limit]': params.limit || 20,
             'page[offset]': params.offset || 0,

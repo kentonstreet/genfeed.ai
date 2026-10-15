@@ -3,11 +3,6 @@ import type {
   ToolAnnotations,
   ToolParameterSchema,
 } from '../interfaces/tool-definition.interface';
-import {
-  isMcpBrandRequiredTool,
-  MCP_BRAND_REQUIRED_NOTE,
-  withRequiredMcpBrandId,
-} from '../registry/mcp-brand-required';
 import { deriveMcpToolPresentation } from '../registry/source/tool-annotations';
 import {
   appendCreditPricingDescription,
@@ -53,10 +48,6 @@ export function toMcpTools(tools: CanonicalToolDefinition[]): McpToolOutput[] {
           : deriveMcpToolPresentation(tool.name, tool.mutationPolicy);
       const creditPricing =
         tool.creditPricing ?? fixedCreditPricing(tool.creditCost);
-      const requiresBrand = isMcpBrandRequiredTool(tool.name);
-      const parameters = requiresBrand
-        ? withRequiredMcpBrandId(tool.parameters)
-        : tool.parameters;
       return {
         _meta: {
           [MCP_CREDIT_COST_META_KEY]: tool.creditCost,
@@ -68,16 +59,14 @@ export function toMcpTools(tools: CanonicalToolDefinition[]): McpToolOutput[] {
         },
         annotations: presentation.annotations,
         description: appendCreditPricingDescription(
-          requiresBrand
-            ? `${tool.description} ${MCP_BRAND_REQUIRED_NOTE}`
-            : tool.description,
+          tool.description,
           creditPricing,
         ),
         inputSchema: {
-          ...parameters,
-          properties: parameters.properties,
-          required: parameters.required,
-          type: parameters.type,
+          ...tool.parameters,
+          properties: tool.parameters.properties,
+          required: tool.parameters.required,
+          type: tool.parameters.type,
         },
         name: tool.name,
         requiredRole: tool.requiredRole,
