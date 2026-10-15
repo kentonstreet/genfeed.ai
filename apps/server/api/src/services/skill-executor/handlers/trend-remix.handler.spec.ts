@@ -82,6 +82,8 @@ describe('TrendRemixHandler', () => {
       baseContext.organizationId,
       baseContext.brandId,
       'instagram',
+      {},
+      undefined,
     );
     expect(mockTrendsService.getTrendById).not.toHaveBeenCalled();
     expect(result.skillSlug).toBe('trend-remix');
@@ -133,6 +135,7 @@ describe('TrendRemixHandler', () => {
     expect(mockTrendsService.getTrendById).toHaveBeenCalledWith(
       'trend-id-1',
       baseContext.organizationId,
+      undefined,
     );
     expect(mockTrendsService.getTrendsWithAccessControl).not.toHaveBeenCalled();
     expect(result.metadata).toEqual(

@@ -84,7 +84,6 @@ export const HARNESS_MEMORY_MIN_RELEVANCE = 0.65;
 export type ResolveHarnessBriefParams = {
   userId?: string;
   isApiKey?: boolean;
-  apiKeyId?: string;
   scopes?: string[];
   /**
    * Extra sources (e.g. caller-supplied audience signals) folded into the
@@ -93,11 +92,6 @@ export type ResolveHarnessBriefParams = {
    */
   additionalSources?: HarnessSourceRecord[];
   brandId?: string;
-  /**
-   * Pins the brief to one brand revision (approved or the provisional draft a
-   * receipt snapshot names) instead of the brand's approved revision.
-   */
-  brandRevisionId?: string;
   contentType: ContentKind;
   /**
    * When true (default if topic is set), retrieve brand content memory from
@@ -726,16 +720,10 @@ export class HarnessGenerationService {
         this.brandOsRevisionsService,
         BrandOsRevisionsService,
       );
-      const brandOsRevision = params.brandRevisionId
-        ? await brandOsRevisionsService?.get(
-            params.organizationId,
-            params.brandId,
-            params.brandRevisionId,
-          )
-        : await brandOsRevisionsService?.findApproved(
-            params.organizationId,
-            params.brandId,
-          );
+      const brandOsRevision = await brandOsRevisionsService?.findApproved(
+        params.organizationId,
+        params.brandId,
+      );
 
       const profile = await harnessProfilesService.resolveContributionForBrand(
         params.organizationId,
@@ -752,7 +740,6 @@ export class HarnessGenerationService {
               brandId: params.brandId,
               userId: params.userId ?? '',
               isApiKey: params.isApiKey,
-              apiKeyId: params.apiKeyId,
               scopes: params.scopes,
               filters: knowledgeFilters,
               organizationId: params.organizationId,
@@ -829,7 +816,6 @@ export class HarnessGenerationService {
         userId: params.userId ?? '',
         organizationId: params.organizationId,
         isApiKey: params.isApiKey,
-        apiKeyId: params.apiKeyId,
         scopes: params.scopes,
       },
     );
@@ -838,7 +824,6 @@ export class HarnessGenerationService {
   private async loadBrandMemorySources(params: {
     userId: string;
     isApiKey?: boolean;
-    apiKeyId?: string;
     scopes?: string[];
     brandId: string;
     filters?: KnowledgeRetrievalFilters;
@@ -866,7 +851,6 @@ export class HarnessGenerationService {
           brandId: params.brandId,
           userId: params.userId,
           isApiKey: params.isApiKey,
-          apiKeyId: params.apiKeyId,
           scopes: params.scopes,
           limit,
           minRelevance,

@@ -1,4 +1,8 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import {
+  capturePublicWorkflowActorEnvelope,
+  captureWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
 import {
   CreditEstimateQueryDto,
@@ -12,7 +16,6 @@ import { WorkflowExecutionAuthorizationService } from '@api/collections/workflow
 import { WorkflowExecutorService } from '@api/collections/workflows/services/workflow-executor.service';
 import { WorkflowRunControlService } from '@api/collections/workflows/services/workflow-run-control.service';
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { RolesDecorator } from '@api/helpers/decorators/roles/roles.decorator';
@@ -54,7 +57,6 @@ import type { Request } from 'express';
  */
 @AutoSwagger()
 @FeatureFlag('automation')
-@OrganizationModule('automation')
 @Controller('workflows')
 @UseGuards(RolesGuard)
 export class WorkflowExecutionController {
@@ -83,11 +85,18 @@ export class WorkflowExecutionController {
   ): Promise<JsonApiSingleResponse> {
     return wrapError(async () => {
       const scope = await this.workflowExecutionAuthorizationService.authorize({
+        initiatingActor: captureWorkflowActor({
+          userId: user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
         expectedContextVersion: dto.expectedContextVersion,
         organizationId: user.organizationId,
         requestedBrandId: user.brandId || undefined,
         threadId: dto.threadId,
-        userId: user.userId ?? user.id,
+        userId: user.id,
         workflowId,
       });
 
@@ -101,15 +110,26 @@ export class WorkflowExecutionController {
         return serializeSingle(request, WorkflowExecutionSerializer, partial);
       }
 
-      const result = await this.workflowExecutorService.executeManualWorkflow(
-        workflowId,
-        user.userId ?? user.id,
-        user.organizationId,
+      const envelope = capturePublicWorkflowActorEnvelope(
+        {
+          userId: user.userId ?? user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        },
         dto.inputValues ?? {},
         {
           ...dto.metadata,
           ...(dto.debugMode === undefined ? {} : { debugMode: dto.debugMode }),
         },
+      );
+      const result = await this.workflowExecutorService.executeManualWorkflow(
+        workflowId,
+        user.userId ?? user.id,
+        user.organizationId,
+        envelope.inputValues,
+        envelope.metadata,
         undefined,
         scope,
       );
@@ -163,11 +183,18 @@ export class WorkflowExecutionController {
   ): Promise<{ data: { runId: string; status: string; message: string } }> {
     return wrapError(async () => {
       await this.workflowExecutionAuthorizationService.authorize({
+        initiatingActor: captureWorkflowActor({
+          userId: user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
         expectedContextVersion: dto.expectedContextVersion,
         organizationId: user.organizationId,
         requestedBrandId: user.brandId || undefined,
         threadId: dto.threadId,
-        userId: user.userId ?? user.id,
+        userId: user.id,
         workflowId,
       });
       const result = await this.workflowRunControlService.resumeFromFailed(
@@ -213,6 +240,13 @@ export class WorkflowExecutionController {
         workflowId,
         runId,
         resolveTenantReadScope(user).organizationId,
+        captureWorkflowActor({
+          userId: user.id,
+          organizationId: resolveTenantReadScope(user).organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
       );
 
       return { data: logs };
@@ -239,11 +273,18 @@ export class WorkflowExecutionController {
   }> {
     return wrapError(async () => {
       await this.workflowExecutionAuthorizationService.authorize({
+        initiatingActor: captureWorkflowActor({
+          userId: user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
         expectedContextVersion: dto.expectedContextVersion,
         organizationId: user.organizationId,
         requestedBrandId: user.brandId || undefined,
         threadId: dto.threadId,
-        userId: user.userId ?? user.id,
+        userId: user.id,
         workflowId,
       });
       const result =

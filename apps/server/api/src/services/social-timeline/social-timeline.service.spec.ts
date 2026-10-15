@@ -1,3 +1,8 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  buildHiddenSystemWorkflowMetadata,
+  SYSTEM_WORKFLOW_PRINCIPAL_ID,
+} from '@api/collections/workflows/system-workflow.contract';
 import type {
   RunSystemWorkflowInput,
   SystemWorkflowActionExecutor,
@@ -6,7 +11,13 @@ import type {
 import { SocialTimelineService } from '@api/services/social-timeline/social-timeline.service';
 import type { SocialTimelineProviderService } from '@api/services/social-timeline/social-timeline-provider.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole } from '@genfeedai/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => true,
+}));
 
 const scope = { organizationId: 'org-a', brandId: 'brand-a', userId: 'user-a' };
 const input = {
@@ -19,6 +30,11 @@ const post = { id: 'post-a', platform: 'twitter', externalId: 'tweet-a' };
 
 describe('connected timeline isolation and action delivery', () => {
   const prisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: 'actor' }) },
+    member: { findFirst: vi.fn() },
+    brand: { findFirst: vi.fn() },
+    apiKey: { findFirst: vi.fn() },
+    workflowExecution: { findFirst: vi.fn() },
     credential: { findFirst: vi.fn(), findMany: vi.fn() },
     socialSource: {
       findMany: vi.fn(),
@@ -49,6 +65,7 @@ describe('connected timeline isolation and action delivery', () => {
     prisma as unknown as PrismaService,
     provider as unknown as SocialTimelineProviderService,
     workflows as unknown as SystemWorkflowRunnerService,
+    new BrandAccessService(prisma as unknown as PrismaService),
   );
   beforeEach(() => {
     vi.resetAllMocks();
@@ -59,24 +76,69 @@ describe('connected timeline isolation and action delivery', () => {
     );
     service.onModuleInit();
     workflows.runWorkflow.mockImplementation(
-      async (request: RunSystemWorkflowInput) => ({
-        result: await executor({
-          input: request.inputValues ?? {},
-          context: {
-            organizationId: request.organizationId,
-            userId: request.userId ?? '',
-            workflowId: 'workflow',
-            workflowVersionId: 'version',
-            runId: 'run',
+      async (request: RunSystemWorkflowInput) => {
+        prisma.workflowExecution.findFirst.mockResolvedValue({
+          userId: request.userId,
+          workflowId: 'workflow',
+          workflowVersionId: 'version',
+          workflow: {
+            isDeleted: false,
+            organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            metadata: {
+              sourceType: 'hidden-system-workflow',
+              systemWorkflow: buildHiddenSystemWorkflowMetadata({
+                canonicalId: request.canonicalId,
+              }),
+            },
           },
-          provenance: {
-            executionId: 'run',
+          workflowVersion: {
             workflowId: 'workflow',
-            workflowLabel: 'Following',
+            organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
+            userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
           },
-        }),
-      }),
+          result: {
+            inputValues: structuredClone(request.inputValues),
+            metadata: {
+              ...request.metadata,
+              canonicalId: request.canonicalId,
+              source: request.source,
+            },
+          },
+        });
+        return {
+          result: await executor({
+            input: request.inputValues ?? {},
+            context: {
+              organizationId: request.organizationId,
+              userId: request.userId ?? '',
+              workflowId: 'workflow',
+              workflowVersionId: 'version',
+              runId: 'run',
+            },
+            provenance: {
+              executionId: 'run',
+              workflowId: 'workflow',
+              workflowLabel: 'Following',
+            },
+          }),
+        };
+      },
     );
+    prisma.user.findFirst.mockResolvedValue({ id: scope.userId });
+    prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [{ id: scope.brandId }],
+    });
+    prisma.brand.findFirst.mockImplementation(async (query) => {
+      const clauses = query.where.AND;
+      const allowed = clauses[0].id?.in;
+      return clauses[1].id === scope.brandId &&
+        (allowed === undefined || allowed.includes(scope.brandId))
+        ? { id: scope.brandId }
+        : null;
+    });
+    prisma.$transaction.mockImplementation(async (run) => run(prisma));
     prisma.credential.findMany.mockResolvedValue([]);
     prisma.socialSource.findMany.mockResolvedValue([]);
     prisma.sourcePost.findFirst.mockResolvedValue(post);
@@ -303,5 +365,196 @@ describe('connected timeline isolation and action delivery', () => {
       'does not support',
     );
     expect(prisma.sourcePostNativeAction.create).not.toHaveBeenCalled();
+  });
+  it.each(['read', 'refresh', 'act'] as const)(
+    'denies zero assignments before %s private reads or provider dispatch',
+    async (method) => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [],
+      });
+      const result =
+        method === 'act'
+          ? service.act(scope, post.id, input)
+          : service[method](scope);
+      await expect(result).rejects.toThrow('Brand access denied');
+      expect(prisma.credential.findMany).not.toHaveBeenCalled();
+      expect(prisma.socialSource.findMany).not.toHaveBeenCalled();
+      expect(prisma.sourcePost.findFirst).not.toHaveBeenCalled();
+      expect(workflows.runWorkflow).not.toHaveBeenCalled();
+      expect(provider.collect).not.toHaveBeenCalled();
+      expect(provider.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('denies foreign brands before reading credentials or nested timeline posts', async () => {
+    await expect(
+      service.read({ ...scope, brandId: 'foreign-brand' }),
+    ).rejects.toThrow('Brand access denied');
+    expect(prisma.credential.findMany).not.toHaveBeenCalled();
+    expect(prisma.socialSource.findMany).not.toHaveBeenCalled();
+  });
+
+  it('reauthorizes a previously read timeline immediately after assignment revocation', async () => {
+    await expect(service.read(scope)).resolves.toEqual({ accounts: [] });
+    prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [],
+    });
+    await expect(service.read(scope)).rejects.toThrow('Brand access denied');
+    expect(prisma.credential.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.socialSource.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps an owner API key against fresh scopes before any private read', async () => {
+    prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [],
+    });
+    prisma.apiKey.findFirst.mockResolvedValue({ scopes: [] });
+    await expect(
+      service.read({
+        ...scope,
+        isApiKey: true,
+        apiKeyId: 'key',
+        scopes: ['admin'],
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(prisma.credential.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a revoked reservation into success or provider uncertainty', async () => {
+    prisma.$transaction.mockImplementationOnce(async (run) => {
+      const receipt = await run(prisma);
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [],
+      });
+      return receipt;
+    });
+    await expect(service.act(scope, post.id, input)).rejects.toThrow(
+      'Brand access denied',
+    );
+    expect(prisma.sourcePostNativeAction.create).toHaveBeenCalledTimes(1);
+    expect(prisma.sourcePostNativeAction.updateMany).not.toHaveBeenCalled();
+    expect(provider.execute).not.toHaveBeenCalled();
+  });
+
+  it('picks only native receipt fields and captures no bearer, secret or auth state in Prisma data', async () => {
+    await service.act(scope, post.id, input);
+    expect(
+      Object.keys(
+        prisma.sourcePostNativeAction.create.mock.calls[0][0].data,
+      ).sort(),
+    ).toEqual([
+      'action',
+      'brandId',
+      'credentialId',
+      'idempotencyKey',
+      'organizationId',
+      'postId',
+      'requestHash',
+      'userId',
+    ]);
+    const queued = workflows.runWorkflow.mock.calls[0][0];
+    expect(queued.inputValues.request.initiatingActor).toEqual({
+      organizationId: scope.organizationId,
+      userId: scope.userId,
+      isApiKey: false,
+      scopes: [],
+    });
+    expect(queued.metadata.initiatingActorKey).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it.each([MemberRole.OWNER, MemberRole.ADMIN])(
+    'retains all-brand timeline admission for the current canonical %s with no assignments',
+    async (role) => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: role },
+        brands: [],
+      });
+      await expect(service.read(scope)).resolves.toEqual({ accounts: [] });
+      expect(prisma.credential.findMany).toHaveBeenCalledOnce();
+      expect(prisma.socialSource.findMany).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(['user', 'apiKey', 'member'] as const)(
+    'denies a removed current %s before any timeline resource query',
+    async (delegate) => {
+      prisma.apiKey.findFirst.mockResolvedValue({ scopes: ['admin'] });
+      prisma[delegate].findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.read({
+          ...scope,
+          isApiKey: true,
+          apiKeyId: 'key',
+          scopes: ['admin'],
+        }),
+      ).rejects.toThrow('Brand access denied');
+      expect(prisma.credential.findMany).not.toHaveBeenCalled();
+      expect(prisma.socialSource.findMany).not.toHaveBeenCalled();
+      expect(provider.collect).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not gain owner privileges from an admin scope added after key capture', async () => {
+    prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [],
+    });
+    prisma.apiKey.findFirst.mockResolvedValue({ scopes: ['admin', 'read'] });
+    await expect(
+      service.read({
+        ...scope,
+        isApiKey: true,
+        apiKeyId: 'key',
+        scopes: ['read'],
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(prisma.credential.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not acknowledge or rewrite a native receipt after authority is revoked during provider dispatch', async () => {
+    provider.execute.mockImplementationOnce(async () => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [],
+      });
+      return 'submitted-reply';
+    });
+    await expect(service.act(scope, post.id, input)).rejects.toThrow(
+      'Brand access denied',
+    );
+    expect(provider.execute).toHaveBeenCalledOnce();
+    expect(prisma.sourcePostNativeAction.create).toHaveBeenCalledOnce();
+    expect(prisma.sourcePostNativeAction.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('retains all-brand admission for a current owner key with explicit live admin scope', async () => {
+    prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [],
+    });
+    prisma.apiKey.findFirst.mockResolvedValue({ scopes: ['admin'] });
+    await expect(
+      service.read({
+        ...scope,
+        isApiKey: true,
+        apiKeyId: 'key',
+        scopes: ['admin'],
+      }),
+    ).resolves.toEqual({ accounts: [] });
+    expect(prisma.apiKey.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'key',
+          organizationId: scope.organizationId,
+          userId: scope.userId,
+          isRevoked: false,
+        }),
+      }),
+    );
+    expect(prisma.credential.findMany).toHaveBeenCalledOnce();
   });
 });

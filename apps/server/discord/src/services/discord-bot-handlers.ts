@@ -1,10 +1,12 @@
 import {
+  type BotAccountLinkEvent,
   isBotUserAuthorized,
   type OrgIntegration,
   type WorkflowSession,
 } from '@genfeedai/integrations';
 import {
   type ButtonInteraction,
+  ChannelType,
   type ChatInputCommandInteraction,
   type Client,
   Events,
@@ -19,6 +21,7 @@ interface DiscordBotHandlers {
     orgId: string,
   ): Promise<void>;
   handleCancelCommand(interaction: ChatInputCommandInteraction): Promise<void>;
+  handleLink(event: BotAccountLinkEvent, message: Message): Promise<void>;
   handleSettingsCommand(
     interaction: ChatInputCommandInteraction,
   ): Promise<void>;
@@ -88,6 +91,28 @@ export function registerDiscordBotHandlers(
     }
 
     if (!isBotUserAuthorized(accessConfig, message.author.id)) {
+      return;
+    }
+
+    if (/^\/?link$/i.test(message.content.trim())) {
+      if (message.channel.type !== ChannelType.DM) {
+        await message.reply(
+          'Start account linking in a private conversation with this bot.',
+        );
+        return;
+      }
+      await handlers.handleLink(
+        {
+          integrationId: integration.id,
+          organizationId: orgId,
+          platform: 'DISCORD',
+          remoteUserId: message.author.id,
+          channelId: message.channelId,
+          sourceEventId: message.id,
+          isPrivate: true,
+        },
+        message,
+      );
       return;
     }
 

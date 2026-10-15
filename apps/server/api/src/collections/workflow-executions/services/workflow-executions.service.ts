@@ -82,11 +82,7 @@ type WorkflowExecutionRuntimeStateRow = {
 type WorkflowExecutionCreateInput = CreateWorkflowExecutionDto & {
   admission?: Pick<
     WorkflowGenerationAdmissionCaptureInput,
-    | 'selection'
-    | 'trigger'
-    | 'apiKeyId'
-    | 'actorScopes'
-    | 'systemWorkflowCanonicalId'
+    'selection' | 'trigger'
   >;
   costEstimate?: WorkflowCostEstimate;
   estimatedDurationMs?: number;
@@ -977,18 +973,32 @@ export class WorkflowExecutionsService extends BaseService<
     query: WorkflowExecutionQueryDto,
     dayStart: Date,
     dayEnd: Date,
+    readerWhere: Prisma.WorkflowExecutionWhereInput,
   ) {
     return readWorkflowExecutionSummary(
       this.prisma,
       organizationId,
-      buildCustomerExecutionWhere(organizationId, query),
+      {
+        organizationId,
+        isDeleted: false,
+        AND: [buildCustomerExecutionWhere(organizationId, query), readerWhere],
+      },
       dayStart,
       dayEnd,
     );
   }
 
   @HandleErrors('get execution stats', 'workflow-executions')
-  getExecutionStats(workflowId: string, organizationId: string) {
-    return readWorkflowExecutionStats(this.prisma, organizationId, workflowId);
+  getExecutionStats(
+    workflowId: string,
+    organizationId: string,
+    readerWhere: Prisma.WorkflowExecutionWhereInput,
+  ) {
+    return readWorkflowExecutionStats(
+      this.prisma,
+      organizationId,
+      workflowId,
+      readerWhere,
+    );
   }
 }

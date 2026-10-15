@@ -4,6 +4,8 @@
 import { useCallback, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { useTranslations } from 'next-intl';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { AgentThreadMode } from '@genfeedai/contracts';
 import {
   type AppLocale,
@@ -70,6 +72,8 @@ function isAgentThreadMode(value: string): value is AgentThreadMode {
 
 export default function SettingsProfilePage() {
   const translate = useTranslations('common');
+  const translateBotLinks = useTranslations('pages.botAccountLinks');
+  const { orgSlug } = useParams<{ orgSlug: string }>();
   const { user, isLoaded } = useAuthUser();
   const { currentUser, mutateUser } = useCurrentUser();
   const { setTheme, theme } = useTheme();
@@ -198,7 +202,6 @@ export default function SettingsProfilePage() {
           value={locale}
         >
           <SelectTrigger
-            aria-label="Language"
             id="personal-locale"
             className="w-full"
             data-testid="personal-locale-trigger"
@@ -227,7 +230,7 @@ export default function SettingsProfilePage() {
           value={selectedTheme}
         >
           <SelectTrigger
-            aria-label={translate('settings.profile.appearanceAriaLabel')}
+            aria-label="Appearance"
             id="personal-appearance"
             className="w-full"
             data-testid="personal-appearance-trigger"
@@ -279,6 +282,19 @@ export default function SettingsProfilePage() {
         <p className="text-xs text-muted-foreground">
           {AGENT_MODE_DESCRIPTIONS[agentMode]}
         </p>
+      </Card>
+
+      <Card
+        label={translateBotLinks('title')}
+        description={translateBotLinks('description')}
+        bodyClassName="gap-3 p-4"
+      >
+        <Link
+          href={`/${encodeURIComponent(orgSlug)}/~/settings/account/bot-links`}
+          className="text-sm text-primary underline underline-offset-4"
+        >
+          {translateBotLinks('manage')}
+        </Link>
       </Card>
     </div>
   );

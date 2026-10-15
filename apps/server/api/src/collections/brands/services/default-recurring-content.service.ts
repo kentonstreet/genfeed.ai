@@ -1,20 +1,24 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowScheduleActor,
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import type { BrandDocument } from '@api/collections/brands/schemas/brand.schema';
 import type { WorkflowSchedulerService } from '@api/collections/workflows/services/workflow-scheduler.service';
 import {
   computeNextRunAtOrThrow,
   isSchedulableTimezone,
 } from '@api/collections/workflows/utils/cron-schedule.util';
-import {
-  resolveScheduleInitiatingActor,
-  toScheduleInitiatingActorWrite,
-  type WorkflowSchedulePrincipal,
-} from '@api/collections/workflows/utils/workflow-schedule-actor.util';
 import { createVersionedWorkflow } from '@api/collections/workflows/workflow-version-definition';
 import type { PrismaTransactionClient } from '@api/helpers/utils/transaction/transaction.util';
 import { scopedWhere } from '@api/index';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { GENFEED_ACTION_NODE_TYPE } from '@genfeedai/actions';
+import { isCloudDeployment } from '@genfeedai/config';
 import { WorkflowStatus } from '@genfeedai/contracts';
+import type { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { Injectable } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
@@ -59,24 +63,17 @@ type DefaultRecurringScheduleConfig = {
 };
 
 type EnsureDefaultRecurringContentParams = {
+  initiatingActor?: WorkflowInitiatingActor;
   brandId: string;
   includeStatus?: boolean;
   organizationId: string;
   origin: 'brand-create' | 'empty-state' | 'manual' | 'onboarding' | 'system';
-  /**
-   * The authenticated user or API key that triggered the bundle. An enabled
-   * schedule is bound to it. Leave it out for a system path with no
-   * authenticated caller: the schedules are then saved unbound, which Cloud
-   * holds until a person re-enables them.
-   */
-  principal?: WorkflowSchedulePrincipal;
   userId: string;
 };
 
 type UpdateDefaultRecurringScheduleOptions = {
+  initiatingActor?: WorkflowInitiatingActor;
   isSchedulerRequired?: boolean;
-  /** See `EnsureDefaultRecurringContentParams.principal`. */
-  principal?: WorkflowSchedulePrincipal;
 };
 
 const DEFAULT_RECURRING_SCHEDULE = '0 8 * * *';
@@ -95,12 +92,34 @@ export class DefaultRecurringContentService {
     private readonly prisma: PrismaService,
     private readonly logger: LoggerService,
     private readonly moduleRef: ModuleRef,
+    private readonly brandAccess: BrandAccessService,
   ) {}
+
+  private async admit(
+    organizationId: string,
+    brandId: string,
+    actor?: WorkflowInitiatingActor,
+    tx: Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
+    if (!actor) {
+      if (isCloudDeployment()) denyWorkflowActor();
+      return;
+    }
+    const current = await refreshWorkflowActor(
+      tx,
+      this.brandAccess,
+      actor,
+      organizationId,
+    );
+    await this.brandAccess.assert(current, brandId, tx);
+  }
 
   async getStatus(
     organizationId: string,
     brandId: string,
+    actor?: WorkflowInitiatingActor,
   ): Promise<DefaultRecurringContentStatus> {
+    await this.admit(organizationId, brandId, actor);
     const workflows = await this.prisma.workflow.findMany({
       orderBy: { createdAt: 'desc' },
       where: scopedWhere(organizationId, { brandId, isScheduleEnabled: true }),
@@ -177,6 +196,7 @@ export class DefaultRecurringContentService {
       ];
     });
 
+    await this.admit(organizationId, brandId, actor);
     return {
       isConfigured: items.length === DEFAULT_RECURRING_TYPES.length,
       items,
@@ -186,6 +206,11 @@ export class DefaultRecurringContentService {
   async ensureDefaultBundle(
     params: EnsureDefaultRecurringContentParams,
   ): Promise<DefaultRecurringContentStatus> {
+    await this.admit(
+      params.organizationId,
+      params.brandId,
+      params.initiatingActor,
+    );
     const brand = await this.prisma.brand.findFirst({
       where: scopedWhere(params.organizationId, { id: params.brandId }),
     });
@@ -227,11 +252,11 @@ export class DefaultRecurringContentService {
       // racing callers and at most one workflow per contentType is created.
       await this.ensureRecurringWorkflowForType({
         brand: brand as unknown as BrandDocument,
+        initiatingActor: params.initiatingActor,
         brandId: params.brandId,
         contentType,
         organizationId: params.organizationId,
         origin: params.origin,
-        principal: params.principal,
         userId: params.userId,
       });
     }
@@ -240,7 +265,7 @@ export class DefaultRecurringContentService {
       params.organizationId,
       params.brandId,
       (brand as unknown as Record<string, unknown>).agentConfig,
-      { isSchedulerRequired: false, principal: params.principal },
+      { isSchedulerRequired: false, initiatingActor: params.initiatingActor },
     );
 
     if (params.includeStatus === false) {
@@ -250,7 +275,11 @@ export class DefaultRecurringContentService {
       };
     }
 
-    return await this.getStatus(params.organizationId, params.brandId);
+    return await this.getStatus(
+      params.organizationId,
+      params.brandId,
+      params.initiatingActor,
+    );
   }
 
   async updateScheduleFromAgentConfig(
@@ -259,6 +288,7 @@ export class DefaultRecurringContentService {
     agentConfig: unknown,
     options: UpdateDefaultRecurringScheduleOptions = {},
   ): Promise<void> {
+    await this.admit(organizationId, brandId, options.initiatingActor);
     const scheduleConfig = this.resolveScheduleConfig(agentConfig);
     const workflowSchedulerService =
       await this.resolveWorkflowSchedulerService();
@@ -293,7 +323,7 @@ export class DefaultRecurringContentService {
           scheduleConfig.cronExpression,
           scheduleConfig.timezone,
           scheduleConfig.isEnabled,
-          options.principal,
+          options.initiatingActor,
         );
       } else {
         // Degraded path: schedule columns are written without BullMQ
@@ -302,22 +332,40 @@ export class DefaultRecurringContentService {
         this.logger.warn(
           `${this.logContext} scheduler unavailable; wrote schedule columns for workflow ${workflow.id} without BullMQ registration`,
         );
-        await this.prisma.workflow.update({
-          data: {
-            isScheduleEnabled: scheduleConfig.isEnabled,
-            schedule: scheduleConfig.cronExpression,
-            scheduleInitiatingActor: toScheduleInitiatingActorWrite(
-              resolveScheduleInitiatingActor({
-                isEnabled: scheduleConfig.isEnabled,
+        const persist = async (tx: Prisma.TransactionClient) => {
+          await this.admit(
+            organizationId,
+            brandId,
+            options.initiatingActor,
+            tx,
+          );
+          const capture = options.initiatingActor
+            ? captureWorkflowScheduleActor(options.initiatingActor, {
+                workflowId: workflow.id,
                 organizationId,
-                principal: options.principal,
+                isScheduleEnabled: scheduleConfig.isEnabled,
                 schedule: scheduleConfig.cronExpression,
-              }),
-            ),
-            timezone: scheduleConfig.timezone,
-          },
-          where: scopedWhere(organizationId, { id: workflow.id }),
-        });
+                timezone: scheduleConfig.timezone,
+              })
+            : undefined;
+          await tx.workflow.update({
+            data: {
+              isScheduleEnabled: scheduleConfig.isEnabled,
+              schedule: scheduleConfig.cronExpression,
+              timezone: scheduleConfig.timezone,
+              ...(capture ? { scheduleInitiatingActor: capture } : {}),
+            },
+            where: scopedWhere(organizationId, { id: workflow.id }),
+          });
+          await this.admit(
+            organizationId,
+            brandId,
+            options.initiatingActor,
+            tx,
+          );
+        };
+        if (isCloudDeployment()) await this.prisma.$transaction(persist);
+        else await persist(this.prisma);
       }
     }
   }
@@ -339,12 +387,12 @@ export class DefaultRecurringContentService {
    * committed the row" signal and is treated as success immediately.
    */
   private async ensureRecurringWorkflowForType(params: {
+    initiatingActor?: WorkflowInitiatingActor;
     brand: BrandDocument;
     brandId: string;
     contentType: DefaultRecurringContentType;
     organizationId: string;
     origin: EnsureDefaultRecurringContentParams['origin'];
-    principal?: WorkflowSchedulePrincipal;
     userId: string;
   }): Promise<void> {
     // Best-effort credential lookup for the post node config. Deliberately read
@@ -357,6 +405,11 @@ export class DefaultRecurringContentService {
     // names one deliberately — the brand's oldest connected account — instead of
     // taking whatever row the database returns first. The operator retargets the
     // node, or duplicates the workflow per account, from the workflow editor.
+    await this.admit(
+      params.organizationId,
+      params.brandId,
+      params.initiatingActor,
+    );
     const credentialId =
       params.contentType === 'post'
         ? ((
@@ -384,6 +437,12 @@ export class DefaultRecurringContentService {
       try {
         await this.prisma.$transaction(
           async (tx) => {
+            await this.admit(
+              params.organizationId,
+              params.brandId,
+              params.initiatingActor,
+              tx,
+            );
             // Re-check inside the transaction. With the new (organizationId,
             // isDeleted) index, Postgres can take a page-level predicate lock
             // instead of a relation-level one, so concurrent writes to
@@ -405,16 +464,22 @@ export class DefaultRecurringContentService {
 
             await this.createDefaultRecurringWorkflow({
               brand: params.brand,
+              initiatingActor: params.initiatingActor,
               contentType: params.contentType,
               credentialId,
               organizationId: params.organizationId,
               origin: params.origin,
-              principal: params.principal,
               // The transaction.util cast idiom: the interactive-transaction
               // client is structurally a PrismaTransactionClient.
               tx: tx as unknown as PrismaTransactionClient,
               userId: params.userId,
             });
+            await this.admit(
+              params.organizationId,
+              params.brandId,
+              params.initiatingActor,
+              tx,
+            );
           },
           { isolationLevel: 'Serializable' },
         );
@@ -467,6 +532,7 @@ export class DefaultRecurringContentService {
   }
 
   private async createDefaultRecurringWorkflow(params: {
+    initiatingActor?: WorkflowInitiatingActor;
     brand: BrandDocument;
     contentType: DefaultRecurringContentType;
     // Pre-resolved outside the Serializable transaction; see
@@ -474,7 +540,6 @@ export class DefaultRecurringContentService {
     credentialId: string | null;
     organizationId: string;
     origin: EnsureDefaultRecurringContentParams['origin'];
-    principal?: WorkflowSchedulePrincipal;
     tx: PrismaTransactionClient;
     userId: string;
   }): Promise<void> {
@@ -490,12 +555,6 @@ export class DefaultRecurringContentService {
       scheduleConfig.cronExpression,
       scheduleConfig.timezone,
     );
-    const initiatingActor = resolveScheduleInitiatingActor({
-      isEnabled: scheduleConfig.isEnabled,
-      organizationId: params.organizationId,
-      principal: params.principal,
-      schedule: scheduleConfig.cronExpression,
-    });
     const workflow = await createVersionedWorkflow(
       params.tx,
       {
@@ -524,12 +583,6 @@ export class DefaultRecurringContentService {
         organizationId: params.organizationId,
         progress: 0,
         schedule: scheduleConfig.cronExpression,
-        ...(initiatingActor
-          ? {
-              scheduleInitiatingActor:
-                toScheduleInitiatingActorWrite(initiatingActor),
-            }
-          : {}),
         status: WorkflowStatus.ACTIVE,
         timezone: scheduleConfig.timezone,
         userId: params.userId,
@@ -561,6 +614,19 @@ export class DefaultRecurringContentService {
     );
 
     const workflowId = String((workflow as Record<string, unknown>).id);
+    if (params.initiatingActor) {
+      const capture = captureWorkflowScheduleActor(params.initiatingActor, {
+        workflowId,
+        organizationId: params.organizationId,
+        schedule: scheduleConfig.cronExpression,
+        timezone: scheduleConfig.timezone,
+        isScheduleEnabled: scheduleConfig.isEnabled,
+      });
+      await params.tx.workflow.update({
+        where: scopedWhere(params.organizationId, { id: workflowId }),
+        data: { scheduleInitiatingActor: capture },
+      });
+    }
 
     this.logger.log(`${this.logContext} created default recurring workflow`, {
       brandId,

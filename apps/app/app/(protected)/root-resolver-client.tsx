@@ -197,15 +197,13 @@ export default function ProtectedRootResolver() {
       <main className="mx-auto flex min-h-[60vh] w-full max-w-3xl items-center px-4 py-10 sm:px-6">
         <Alert>
           <AlertTitle aria-level={1} role="heading">
-            {translate('workspaceSetupTitle')}
+            Workspace setup needs attention
           </AlertTitle>
           <AlertDescription>
             <p>
-              {translate(
-                workspaceActionOrgSlug
-                  ? 'workspaceSetupWithBrand'
-                  : 'workspaceSetupDescription',
-              )}
+              Genfeed could not resolve an active organization yet. Retry the
+              workspace bootstrap
+              {workspaceActionOrgSlug ? ' or continue brand setup.' : '.'}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
@@ -217,13 +215,11 @@ export default function ProtectedRootResolver() {
                 variant={ButtonVariant.SECONDARY}
                 withWrapper={false}
               >
-                {translate('retryWorkspace')}
+                Retry workspace
               </Button>
               {workspaceActionOrgSlug ? (
                 <Button asChild variant={ButtonVariant.GHOST}>
-                  <Link href={APP_ROUTES.ONBOARDING.BRAND}>
-                    {translate('continueSetup')}
-                  </Link>
+                  <Link href={APP_ROUTES.ONBOARDING.BRAND}>Continue setup</Link>
                 </Button>
               ) : null}
             </div>

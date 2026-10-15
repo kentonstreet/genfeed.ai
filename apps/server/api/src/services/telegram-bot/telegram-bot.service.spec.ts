@@ -1,3 +1,4 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import { ApiKeysService } from '@api/collections/api-keys/services/api-keys.service';
 import type { SystemWorkflowRunnerService } from '@api/collections/workflows/system-workflow-runner.service';
 import { TelegramBotService } from '@api/services/telegram-bot/telegram-bot.service';
@@ -51,6 +52,7 @@ describe('TelegramBotService', () => {
       logger,
       systemWorkflowRunner,
       prisma,
+      new BrandAccessService(prisma),
       apiKeysService,
     );
   });
@@ -81,6 +83,7 @@ describe('TelegramBotService', () => {
         logger,
         systemWorkflowRunner,
         prisma,
+        new BrandAccessService(prisma),
       );
       expect(serviceWithoutOptionals).toBeDefined();
     });
@@ -146,6 +149,7 @@ describe('TelegramBotService', () => {
         logger,
         systemWorkflowRunner,
         prisma,
+        new BrandAccessService(prisma),
       );
       expect(newService).toBeDefined();
     });

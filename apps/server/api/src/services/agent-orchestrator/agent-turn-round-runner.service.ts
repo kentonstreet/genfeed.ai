@@ -937,7 +937,6 @@ export class AgentTurnRoundRunnerService {
     return {
       isProactive: params.source === 'proactive',
       apiKeyContext: context.apiKeyContext,
-      initiatingPrincipal: context.initiatingPrincipal,
       attachmentUrls,
       autonomyMode: context.autonomyMode ?? policy.autonomyMode,
       ...(context.creditBudget !== undefined

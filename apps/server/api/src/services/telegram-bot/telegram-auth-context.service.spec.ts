@@ -1,7 +1,7 @@
 import type { ApiKeysService } from '@api/collections/api-keys/services/api-keys.service';
 import { TelegramAuthContextService } from '@api/services/telegram-bot/telegram-auth-context.service';
 import type { Context } from 'grammy';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 function createContext(text: string): {
   ctx: Context;
@@ -111,4 +111,88 @@ describe('TelegramAuthContextService', () => {
       userId: 'user-1',
     });
   });
+});
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
+beforeEach(() => {
+  runtime.cloud = false;
+});
+
+describe('Cloud Telegram verified identity', () => {
+  it('denies environment default identity while preserving selfhost default', async () => {
+    const service = new TelegramAuthContextService();
+    service.setDefaultAuthContext({
+      authType: 'better_auth',
+      organizationId: 'org',
+      userId: 'configured',
+    });
+    expect(service.resolveAuthContext(42)?.userId).toBe('configured');
+    runtime.cloud = true;
+    expect(service.resolveAuthContext(42)).toBeNull();
+    await expect(service.resolveLiveAuthContext(42)).resolves.toBeNull();
+    const { ctx, reply } = createContext('/connect default');
+    await service.handleConnect(ctx);
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining('verified API key'),
+    );
+  });
+  it('intersects original captured and current scopes monotonically', async () => {
+    runtime.cloud = true;
+    const findActiveById = vi.fn().mockResolvedValue({
+      id: 'key',
+      organizationId: 'org',
+      userId: 'user',
+      scopes: ['read', 'write'],
+    });
+    const service = new TelegramAuthContextService({
+      findByKey: vi.fn().mockResolvedValue({
+        id: 'key',
+        organizationId: 'org',
+        userId: 'user',
+        scopes: ['read', 'admin'],
+      }),
+      findActiveById,
+    } as unknown as ApiKeysService);
+    await service.handleConnect(createContext('/connect gf_secret').ctx);
+    expect((await service.resolveLiveAuthContext(42))?.scopes).toEqual([
+      'read',
+    ]);
+    findActiveById.mockResolvedValue({
+      id: 'key',
+      organizationId: 'org',
+      userId: 'user',
+      scopes: ['read', 'admin'],
+    });
+    expect((await service.resolveLiveAuthContext(42))?.scopes).toEqual([
+      'read',
+    ]);
+  });
+  it.each(['organizationId', 'userId'] as const)(
+    'rejects live key %s rebinding',
+    async (field) => {
+      runtime.cloud = true;
+      const service = new TelegramAuthContextService({
+        findByKey: vi.fn().mockResolvedValue({
+          id: 'key',
+          organizationId: 'org',
+          userId: 'user',
+          scopes: ['read'],
+        }),
+        findActiveById: vi.fn().mockResolvedValue({
+          id: 'key',
+          organizationId: 'org',
+          userId: 'user',
+          scopes: ['read'],
+          [field]: 'other',
+        }),
+      } as unknown as ApiKeysService);
+      await service.handleConnect(createContext('/connect gf_secret').ctx);
+      await expect(service.resolveLiveAuthContext(42)).resolves.toBeNull();
+      expect(service.resolveAuthContext(42)).toBeNull();
+    },
+  );
 });

@@ -1,7 +1,9 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import type { CreateWorkflowDto } from '@api/collections/workflows/dto/create-workflow.dto';
 import { hashTemplateInstantiationRequest } from '@api/collections/workflows/services/workflow-create-payload.util';
 import { WorkflowExecutionQueueService } from '@api/collections/workflows/services/workflow-execution-queue.service';
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const logger = { debug: vi.fn(), error: vi.fn(), log: vi.fn(), warn: vi.fn() };
@@ -51,6 +53,11 @@ describe('Seeded template instantiation identity', () => {
             ? { syncWorkflowScheduler }
             : undefined,
       } as never,
+
+      new BrandAccessService({
+        brand: { findFirst: brandFindFirst },
+        workflow: { findFirst },
+      } as never as unknown as PrismaService),
     );
     vi.spyOn(service, 'create').mockResolvedValue({
       id: 'created',

@@ -5,6 +5,8 @@ import type {
 } from '@api/collections/trends/interfaces/trend.interfaces';
 import type { TrendDocument } from '@api/collections/trends/schemas/trend.schema';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { scopedWhere } from '@api/tenancy/scoped-where';
+import type { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { withPlatformTenantArm } from '@libs/prisma/platform-scope';
 import { Injectable } from '@nestjs/common';
@@ -271,6 +273,7 @@ export class TrendFilteringService {
     excludePlatform: string,
     organizationId?: string,
     limit: number = 10,
+    authorizedBrandWhere?: Prisma.BrandWhereInput,
   ): Promise<TrendEntity[]> {
     // Extract keywords from topic for matching
     const keywords = topic
@@ -291,11 +294,17 @@ export class TrendFilteringService {
     };
 
     if (organizationId) {
+      // Fetch both org-scoped and global trends then merge
       const [orgTrends, globalTrends] = await Promise.all([
         this.prisma.trend.findMany({
           orderBy: { createdAt: 'desc' },
           take: limit * 5,
-          where: { ...where, organizationId },
+          where: scopedWhere(organizationId, {
+            ...where,
+            ...(authorizedBrandWhere
+              ? { OR: [{ brandId: null }, { brand: authorizedBrandWhere }] }
+              : {}),
+          }),
         }),
         // tenant-scope-ignore: platform trends: organizationId null with the tenant proof from withPlatformTenantArm; isDeleted is false
         this.prisma.trend.findMany({

@@ -1,3 +1,4 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { CredentialsService } from '@api/collections/credentials/services/credentials.service';
 import { ModelsService } from '@api/collections/models/services/models.service';
@@ -115,6 +116,7 @@ describe('TrendsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TrendsService,
+        BrandAccessService,
         TrendAnalysisService,
         TrendContentIdeasService,
         {

@@ -1,4 +1,11 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  refreshWorkflowActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { ContentPlanItemsService } from '@api/collections/content-plan-items/services/content-plan-items.service';
 import { GenerateContentPlanDto } from '@api/collections/content-plans/dto/generate-content-plan.dto';
 import { UpdateContentPlanDto } from '@api/collections/content-plans/dto/update-content-plan.dto';
@@ -14,6 +21,7 @@ import {
 } from '@api/helpers/utils/response/response.util';
 import { ContentPlanSeedsService } from '@api/services/content-engine/content-plan-seeds.service';
 import { ContentPlannerService } from '@api/services/content-engine/content-planner.service';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { WorkflowExecutionTrigger } from '@genfeedai/contracts';
 import {
   ContentPlanItemSerializer,
@@ -42,12 +50,31 @@ export class ContentEngineController {
     private readonly contentPlanItemsService: ContentPlanItemsService,
     private readonly contentPlanSeedsService: ContentPlanSeedsService,
     private readonly moduleRef: ModuleRef,
+    private readonly brandAccess: BrandAccessService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // WorkflowsModule already imports the content-engine graph, so resolve the
   // runner lazily instead of creating a module cycle here.
   private get systemWorkflowRunner(): SystemWorkflowRunnerService {
     return this.moduleRef.get(SystemWorkflowRunnerService, { strict: false });
+  }
+
+  private async initiatingActor(user: User, brandId: string) {
+    const actor = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      captureWorkflowActor({
+        organizationId: user.organizationId,
+        userId: user.userId ?? user.id,
+        isApiKey: user.isApiKey,
+        scopes: user.scopes,
+        apiKeyId: user.apiKeyId,
+      }),
+      user.organizationId,
+    );
+    await this.brandAccess.assert(actor, brandId);
+    return actor;
   }
 
   // ── Plans ──────────────────────────────────────────────────────────
@@ -165,12 +192,20 @@ export class ContentEngineController {
   ) {
     const organization = user.organizationId;
     const userId = user.userId ?? user.id;
+    const actor = await this.initiatingActor(user, brandId);
+    const inputValues = {
+      request: { brandId, planId, userId, initiatingActor: actor },
+    };
     const { result } = await this.systemWorkflowRunner.runWorkflow<
       Record<string, unknown>
     >({
       actionType: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_PLAN,
       canonicalId: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_PLAN,
-      inputValues: { request: { brandId, planId, userId } },
+      inputValues,
+      metadata: {
+        initiatingActorKey: workflowActorKey(actor),
+        initiatingRequestKey: workflowRequestKey(inputValues),
+      },
       organizationId: organization,
       source: 'api:content-engine.execute-plan',
       trigger: WorkflowExecutionTrigger.API,
@@ -191,12 +226,23 @@ export class ContentEngineController {
   ) {
     const organization = user.organizationId;
     const userId = user.userId ?? user.id;
+    const actor = await this.initiatingActor(user, brandId);
+    const inputValues = {
+      brandId,
+      item: { id: itemId },
+      userId,
+      initiatingActor: actor,
+    };
     const { result } = await this.systemWorkflowRunner.runWorkflow<
       Record<string, unknown>
     >({
       actionType: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
       canonicalId: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
-      inputValues: { brandId, item: { id: itemId }, userId },
+      inputValues,
+      metadata: {
+        initiatingActorKey: workflowActorKey(actor),
+        initiatingRequestKey: workflowRequestKey(inputValues),
+      },
       organizationId: organization,
       source: 'api:content-engine.execute-plan-item',
       trigger: WorkflowExecutionTrigger.API,

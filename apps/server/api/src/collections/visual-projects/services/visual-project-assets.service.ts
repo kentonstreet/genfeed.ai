@@ -6,11 +6,6 @@ import type { AuthenticatedUser } from '@api/auth/interfaces/authenticated-user.
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { stampIngredientGenerationEntry } from '@api/collections/ingredients/utils/ingredient-generation-entry.util';
 import { VisualProjectAuthorizationService } from '@api/collections/visual-projects/services/visual-project-authorization.service';
-import {
-  BrandRenderEvidenceService,
-  RENDER_EVIDENCE_KEY,
-} from '@api/services/brand-render-evidence/brand-render-evidence.service';
-import { BrandRenderFontStagingService } from '@api/services/brand-render-evidence/brand-render-font-staging.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   IngredientCategory,
@@ -24,7 +19,6 @@ import type {
   IVisualSandboxAsset,
   IVisualSandboxMedia,
 } from '@genfeedai/contracts/interfaces';
-import type { BrandRenderEvidenceManifestV1 } from '@genfeedai/contracts/interfaces/content/brand-render-evidence.interface';
 import { toPrismaJson, type VisualRevision } from '@genfeedai/prisma';
 import { createStorageProvider } from '@genfeedai/storage';
 import {
@@ -42,8 +36,6 @@ const mimeByExtension: Record<string, string> = {
   MP3: 'audio/mpeg',
   WAV: 'audio/wav',
 };
-/** What the renderer takes in staged media and fonts together, before base64. */
-const VISUAL_CODE_STAGED_BYTES = 48 * 1024 * 1024;
 const allowedCategories = new Set<string>([
   IngredientCategory.IMAGE,
   IngredientCategory.VIDEO,
@@ -75,8 +67,6 @@ export class VisualProjectAssetsService {
     private readonly prisma: PrismaService,
     private readonly authorization: VisualProjectAuthorizationService,
     private readonly ingredients: IngredientsService,
-    private readonly renderEvidence: BrandRenderEvidenceService,
-    private readonly brandFonts: BrandRenderFontStagingService,
   ) {}
   async authorize(user: AuthenticatedUser, brandId: string, ids: string[]) {
     await this.authorization.authorizeBrand(user, brandId);
@@ -133,7 +123,7 @@ export class VisualProjectAssetsService {
         const target = join(directory, id);
         await storage.download(row.s3Key, target, directory);
         total += (await stat(target)).size;
-        if (total > VISUAL_CODE_STAGED_BYTES)
+        if (total > 48 * 1024 * 1024)
           throw new UnprocessableEntityException(
             'visual_source_assets_too_large',
           );
@@ -143,20 +133,7 @@ export class VisualProjectAssetsService {
           bytes: (await readFile(target)).toString('base64'),
         });
       }
-      // The approved brand fonts travel beside the media, so a composition can use
-      // a brand family by name and the render evidence can credit it to its asset.
-      const fonts = await this.brandFonts.stage({
-        organizationId: user.organizationId,
-        brandId: revision.brandId,
-        userId: user.userId,
-      });
-      if (fonts.assets.some((font) => ids.includes(font.id)))
-        throw new ConflictException('visual_brand_font_id_collision');
-      if (total + fonts.totalBytes > VISUAL_CODE_STAGED_BYTES)
-        throw new UnprocessableEntityException(
-          'visual_source_assets_too_large',
-        );
-      return [...results, ...fonts.assets];
+      return results;
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -192,7 +169,6 @@ export class VisualProjectAssetsService {
     item: IVisualSandboxMedia,
     index: number,
     bytes: Buffer,
-    manifest: BrandRenderEvidenceManifestV1 | null,
   ) {
     return {
       id: visualOutputId('ingredient', revision, index),
@@ -221,7 +197,6 @@ export class VisualProjectAssetsService {
           outputHash: createHash('sha256').update(bytes).digest('hex'),
           authoringModel: revision.prompt ? revision.modelKey : null,
           inspectionModel: revision.modelKey,
-          ...(manifest ? { [RENDER_EVIDENCE_KEY]: manifest } : {}),
         }),
       ),
       metadata: {
@@ -252,24 +227,6 @@ export class VisualProjectAssetsService {
       },
     };
   }
-  /**
-   * Fonts are only credited to an asset when this render's brand was allowed to
-   * stage them, so the IDs are resolved again from the approved revision. Output
-   * the renderer did not observe needs none.
-   */
-  private async brandFontAssetIds(
-    user: AuthenticatedUser,
-    revision: VisualRevision,
-    media: IVisualSandboxMedia[],
-  ): Promise<string[]> {
-    if (media.every((item) => item.evidence === undefined)) return [];
-    const fonts = await this.brandFonts.approvedFonts({
-      organizationId: revision.organizationId,
-      brandId: revision.brandId,
-      userId: user.userId,
-    });
-    return fonts.map((font) => font.assetId);
-  }
   async commit(
     user: AuthenticatedUser,
     revision: VisualRevision,
@@ -285,10 +242,6 @@ export class VisualProjectAssetsService {
     );
     const storage = createStorageProvider();
     const outputs: IVisualCodeMedia[] = [];
-    const evidence = this.renderEvidence.forRender({
-      ...revision,
-      brandFontAssetIds: await this.brandFontAssetIds(user, revision, media),
-    });
     for (const [index, item] of media.entries()) {
       const bytes = Buffer.from(item.bytes, 'base64');
       if (bytes.length > VISUAL_CODE_LIMITS.resultBytes)
@@ -328,12 +281,6 @@ export class VisualProjectAssetsService {
       await assertOwnership();
       await this.authorization.authorizeBrand(user, revision.brandId);
       await assertOwnership();
-      const manifest = await evidence.manifestFor({
-        artifactId: id,
-        storageKey: key,
-        bytes,
-        media: item,
-      });
       const admitted = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM visual_revisions WHERE id=${revision.id} AND "organizationId"=${revision.organizationId} AND "brandId"=${revision.brandId} AND "isDeleted"=false FOR UPDATE`;
         const current = await tx.visualRevision.findFirstOrThrow({
@@ -356,7 +303,7 @@ export class VisualProjectAssetsService {
         }
         return tx.ingredient.create({
           include: { metadata: true },
-          data: this.outputRecord(revision, item, index, bytes, manifest),
+          data: this.outputRecord(revision, item, index, bytes),
         });
       });
       verify(admitted);

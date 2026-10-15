@@ -63,7 +63,6 @@ function contentGenerationDefinition(
 ): SystemWorkflowGraphDefinition {
   return {
     canonicalId,
-    organizationModule: 'playground',
     definition: {
       edges: [
         {
@@ -200,7 +199,6 @@ function contentGenerationChildDefinition(
 ): SystemWorkflowGraphDefinition {
   return {
     canonicalId,
-    organizationModule: 'playground',
     definition: {
       edges: [
         {
@@ -386,29 +384,6 @@ export class ContentGeneratorService implements OnModuleInit {
         },
       }),
     );
-  }
-
-  async getSocialGenerationContext(
-    organizationId: string,
-    dto: GenerateContentDto,
-  ): Promise<string[]> {
-    const [patterns, performance] = await Promise.all([
-      this.patternStoreService.findByOrganization(organizationId, {
-        platform: dto.platform,
-        limit: 3,
-      }),
-      this.buildTopPerformerSystemPrompt(organizationId, dto),
-    ]);
-    const observations = patterns.flatMap((pattern) => {
-      const formula = pattern.extractedFormula ?? pattern.description;
-      return formula
-        ? [
-            `Historical content pattern: ${SecurityUtil.sanitizePromptInput(formula, 1000)}`,
-          ]
-        : [];
-    });
-    if (performance) observations.push(performance);
-    return observations;
   }
 
   async generateContentWorkflow(

@@ -1,4 +1,4 @@
-import { isSystemBrandPrincipal } from '@api/authorization/brand-access/system-brand-principal.util';
+import { recordWorkflowExecutionBrand } from '@api/authorization/brand-access/workflow-execution-read-scope-context.util';
 import { resolveApiKeyEffectiveMemberRole } from '@api/helpers/utils/auth/api-key-role.util';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { isCloudDeployment } from '@genfeedai/config';
@@ -28,9 +28,6 @@ export class BrandAccessService {
     };
     if (!actor.organizationId || (isCloudDeployment() && !actor.userId)) {
       throw new ForbiddenException('Brand access denied');
-    }
-    if (isSystemBrandPrincipal(actor)) {
-      return { where: base, role: MemberRole.OWNER, brandIds: undefined };
     }
     if (!isCloudDeployment()) {
       return { where: base, role: null, brandIds: undefined };
@@ -64,8 +61,9 @@ export class BrandAccessService {
         organizationId: actor.organizationId,
         isActive: true,
         isDeleted: false,
-        organization: { is: { isDeleted: false } },
-        role: { is: { isDeleted: false } },
+        organization: { isDeleted: false },
+        user: { isDeleted: false, banned: false },
+        role: { isDeleted: false },
       },
       select: {
         role: { select: { key: true } },
@@ -85,7 +83,7 @@ export class BrandAccessService {
     const privileged = role === MemberRole.OWNER || role === MemberRole.ADMIN;
     const brandIds = privileged
       ? undefined
-      : member.brands.map((brand) => brand.id);
+      : member.brands.map((brand) => brand.id).sort();
     return {
       where: {
         ...base,
@@ -118,5 +116,10 @@ export class BrandAccessService {
       select: { id: true },
     });
     if (!brand) throw new ForbiddenException('Brand access denied');
+    await recordWorkflowExecutionBrand(
+      actor.organizationId,
+      brandId,
+      tx === this.prisma ? undefined : tx,
+    );
   }
 }

@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { ApiKeysService } from '@api/collections/api-keys/services/api-keys.service';
 import { resolveGenerationBrandIdForCaller } from '@api/collections/api-keys/utils/resolve-generation-brand-for-caller.util';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
@@ -9,7 +10,6 @@ import { GenerateTrendIdeasDto } from '@api/collections/trends/dto/trend-ideas.d
 import { SaveTrendPreferencesDto } from '@api/collections/trends/dto/trend-preferences.dto';
 import { TrendPreferencesService } from '@api/collections/trends/services/trend-preferences.service';
 import { TrendsService } from '@api/collections/trends/services/trends.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import {
@@ -21,6 +21,7 @@ import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decora
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import type { CreditsGuardRequest } from '@api/helpers/guards/credits/credits.guard';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
@@ -52,7 +53,6 @@ import type { Request } from 'express';
 
 @AutoSwagger()
 @FeatureFlag('discovery')
-@OrganizationModule('discovery')
 @Controller('trends')
 @UseInterceptors(CreditsInterceptor)
 export class TrendsController {
@@ -65,6 +65,16 @@ export class TrendsController {
     private readonly membersService: MembersService,
     private readonly apiKeysService: ApiKeysService,
   ) {}
+
+  private actor(user: User) {
+    return captureWorkflowActor({
+      organizationId: user.organizationId,
+      userId: user.userId ?? user.id,
+      isApiKey: user.isApiKey,
+      scopes: user.scopes,
+      apiKeyId: user.apiKeyId,
+    });
+  }
 
   @TenantReadPolicy('selected')
   @Get()
@@ -85,17 +95,20 @@ export class TrendsController {
       );
     }
 
+    // Get trends with access control
     const result = await this.trendsService.getTrendsWithAccessControl(
       organizationId,
       brandId,
       platform,
+      {},
+      this.actor(user),
     );
 
     return serializeCollection(req, TrendSerializer, { docs: result.trends });
   }
 
   @Get('ideas')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @Credits({
     allowByokBypass: true,
     description: 'Trend content ideas generation (text model)',
@@ -135,6 +148,11 @@ export class TrendsController {
       },
       user,
     });
+    await this.trendsService.assertBrandRead(
+      organizationId,
+      brandId,
+      this.actor(user),
+    );
     // Re-fetch the resolved brand's fields (description/label/text) for the
     // idea-generation prompt context below — the resolver above only proves
     // the id, not the full row.
@@ -151,6 +169,7 @@ export class TrendsController {
       );
     }
 
+    // Get trends
     const trends = await this.trendsService.getTrends(
       organizationId,
       brandId,
@@ -159,6 +178,11 @@ export class TrendsController {
     );
 
     // Generate ideas
+    await this.trendsService.assertBrandRead(
+      organizationId,
+      brandId,
+      this.actor(user),
+    );
     let billedCredits = 0;
     const ideasMap = await this.trendsService.generateContentIdeas(
       trends,
@@ -178,6 +202,7 @@ export class TrendsController {
     );
     finalizeDeferredTextCredits(req, billedCredits);
 
+    // Format response
     const result = Array.from(ideasMap.entries()).map(([platform, ideas]) => {
       const platformTrends = trends.filter((t) => t.platform === platform);
       const avgVirality =
@@ -217,6 +242,11 @@ export class TrendsController {
     const organizationId = user.organizationId;
     const brandId = user.brandId;
 
+    await this.trendsService.assertBrandRead(
+      organizationId,
+      brandId,
+      this.actor(user),
+    );
     const refreshedTrends = await this.trendsService.refreshTrends(
       organizationId,
       brandId,
@@ -239,6 +269,11 @@ export class TrendsController {
       return { preferences: null };
     }
 
+    await this.trendsService.assertBrandRead(
+      organizationId,
+      brandId,
+      this.actor(user),
+    );
     const preferences = await this.trendPreferencesService.getPreferences(
       organizationId,
       brandId,
@@ -269,6 +304,11 @@ export class TrendsController {
       throw new Error('Organization ID is required');
     }
 
+    await this.trendsService.assertBrandRead(
+      organizationId,
+      dto.brandId || user.brandId,
+      this.actor(user),
+    );
     const preferences = await this.trendPreferencesService.savePreferences(
       organizationId,
       {
@@ -340,6 +380,7 @@ export class TrendsController {
       id,
       organizationId,
       limit,
+      this.actor(user),
     );
 
     return { items };
@@ -356,7 +397,12 @@ export class TrendsController {
     const readScope = resolveTenantReadScope(user);
     const organizationId = readScope.organizationId;
 
-    const trend = await this.trendsService.getTrendById(id, organizationId);
+    // Get the trend
+    const trend = await this.trendsService.getTrendById(
+      id,
+      organizationId,
+      this.actor(user),
+    );
 
     if (!trend) {
       throw new NotFoundException('Trend not found');
@@ -368,6 +414,7 @@ export class TrendsController {
       trend.platform,
       organizationId,
       10,
+      this.actor(user),
     );
 
     // Get trend analysis for historical data

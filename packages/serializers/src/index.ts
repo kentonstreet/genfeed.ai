@@ -8,10 +8,9 @@ export * from '@serializers/attributes';
 export * from '@serializers/builders';
 export * from '@serializers/configs';
 export * from '@serializers/helpers';
+export { publicWorkflowExecutionValue } from '@serializers/helpers/workflow-authorization-proof.helper';
 export * from '@serializers/interfaces';
 export * from '@serializers/server';
-
 export { CrunGenerationQuoteSerializer } from '@serializers/server/billing/crun-generation-quote.serializer';
-
 export { ImportedSourceSerializer } from '@serializers/server/content/imported-source.serializer';
 export { ImportedSourceMediaSerializer } from '@serializers/server/content/imported-source-media.serializer';

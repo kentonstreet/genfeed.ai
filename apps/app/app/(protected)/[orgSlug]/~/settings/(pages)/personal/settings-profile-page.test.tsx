@@ -6,6 +6,8 @@ import '@testing-library/jest-dom/vitest';
 
 // Resolve against the real catalog so these assertions stay on the copy a user
 // reads without requiring a NextIntlClientProvider in this focused unit suite.
+vi.mock('next/navigation', () => ({ useParams: () => ({ orgSlug: 'org-1' }) }));
+
 vi.mock('next-intl', async () => {
   const { translateFromCatalog } = await import(
     '../../../../../../../tests/next-intl.stub'
@@ -110,9 +112,7 @@ describe('SettingsProfilePage', () => {
     render(<SettingsProfilePage />);
 
     expect(screen.getByText('Language')).toBeInTheDocument();
-    expect(
-      screen.getByRole('combobox', { name: 'Language' }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId('personal-locale-trigger')).toBeInTheDocument();
   });
 
   it('offers System, Light, and Dark appearance preferences', async () => {
@@ -168,4 +168,11 @@ describe('SettingsProfilePage', () => {
       );
     });
   });
+});
+
+it('keeps bot account confirmation reachable from personal settings as navigation', async () => {
+  render(<SettingsProfilePage />);
+  expect(
+    await screen.findByRole('link', { name: 'Manage bot account links' }),
+  ).toHaveAttribute('href', '/org-1/~/settings/account/bot-links');
 });

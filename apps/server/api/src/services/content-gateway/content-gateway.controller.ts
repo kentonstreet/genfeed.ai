@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { serializeCollection } from '@api/helpers/utils/response/response.util';
 import { ContentGatewayService } from '@api/services/content-gateway/content-gateway.service';
@@ -35,6 +36,13 @@ export class ContentGatewayController {
       payload: dto.payload,
       type: dto.type,
       userId,
+      initiatingActor: captureWorkflowActor({
+        organizationId: organization,
+        userId,
+        isApiKey: user.isApiKey,
+        scopes: user.scopes,
+        apiKeyId: user.apiKeyId,
+      }),
     });
     return this.serializeResult(request, result);
   }
@@ -54,6 +62,13 @@ export class ContentGatewayController {
       dto.skillSlug,
       dto.params,
       userId,
+      captureWorkflowActor({
+        organizationId: organization,
+        userId,
+        isApiKey: user.isApiKey,
+        scopes: user.scopes,
+        apiKeyId: user.apiKeyId,
+      }),
     );
     return this.serializeResult(request, result);
   }

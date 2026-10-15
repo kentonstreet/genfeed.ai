@@ -1,4 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowScheduleActor,
+  refreshWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import type { KnowledgeActor } from '@api/collections/contexts/interfaces/knowledge-actor.interface';
 import { hashKnowledgeContent } from '@api/collections/contexts/services/knowledge-capture.service';
 import { KnowledgeRecordsService } from '@api/collections/contexts/services/knowledge-records.service';
@@ -8,18 +13,12 @@ import {
   extractKnowledgeRefreshSourceText,
   KnowledgeSourceUnavailableException,
 } from '@api/collections/contexts/utils/knowledge-refresh-source-error.util';
-import {
-  toKnowledgeSchedulePrincipal,
-  toKnowledgeWorkflowActor,
-} from '@api/collections/contexts/utils/knowledge-workflow-actor.util';
+import { toKnowledgeWorkflowActor } from '@api/collections/contexts/utils/knowledge-workflow-actor.util';
 import { WorkflowExecutionQueueService } from '@api/collections/workflows/services/workflow-execution-queue.service';
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
-import {
-  resolveScheduleInitiatingActor,
-  toScheduleInitiatingActorWrite,
-} from '@api/collections/workflows/utils/workflow-schedule-actor.util';
 import { scopedWhere } from '@api/index';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import {
   KNOWLEDGE_REFRESH_GRACE_MAX,
   KNOWLEDGE_REFRESH_GRACE_MIN,
@@ -40,6 +39,7 @@ import {
   WorkflowStatus,
 } from '@genfeedai/contracts';
 import type { KnowledgeSourceRefreshPolicyRequest } from '@genfeedai/contracts/interfaces';
+import type { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 
@@ -69,9 +69,27 @@ export class KnowledgeRefreshService {
     private readonly records: KnowledgeRecordsService,
     private readonly ingestWorkflow: KnowledgeSourceIngestWorkflowService,
     private readonly logger: LoggerService,
+    private readonly brandAccess: BrandAccessService,
     @Optional() private readonly workflows?: WorkflowsService,
     @Optional() private readonly workflowQueue?: WorkflowExecutionQueueService,
   ) {}
+
+  private async admitSchedule(
+    actor: KnowledgeActor,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const captured = toKnowledgeWorkflowActor(actor);
+    if (!isCloudDeployment()) return captured;
+    const current = await refreshWorkflowActor(
+      tx,
+      this.brandAccess,
+      captured,
+      actor.organizationId,
+    );
+    if (actor.brandId)
+      await this.brandAccess.assert(current, actor.brandId, tx);
+    return captured;
+  }
 
   defaultPolicy(kind: KnowledgeSourceKind): {
     intervalMinutes: number;
@@ -143,6 +161,7 @@ export class KnowledgeRefreshService {
       policy.isEnabled,
     );
     const written = await this.prisma.$transaction(async (tx) => {
+      await this.admitSchedule(actor, tx);
       const lockKey = JSON.stringify([
         'knowledge-refresh-policy',
         actor.organizationId,
@@ -173,6 +192,7 @@ export class KnowledgeRefreshService {
           refreshWorkflowId: locked?.refreshWorkflowId ?? refreshWorkflowId,
         },
       });
+      await this.admitSchedule(actor, tx);
       return {
         count: result.count,
         winnerId: locked?.refreshWorkflowId ?? refreshWorkflowId,
@@ -678,27 +698,47 @@ export class KnowledgeRefreshService {
         where: scopedWhere(actor.organizationId, { id: existingWorkflowId }),
       });
       if (existing) {
-        // Bind the schedule to the authenticated configuring actor on every
-        // enabled save and clear it when paused, so no earlier owner's
-        // authority survives. Resolved before the write: a foreign-org actor
-        // is rejected without persisting anything.
-        const scheduleInitiatingActor = toScheduleInitiatingActorWrite(
-          resolveScheduleInitiatingActor({
-            isEnabled,
-            organizationId: existing.organizationId,
-            principal: toKnowledgeSchedulePrincipal(actor),
-            schedule: KNOWLEDGE_REFRESH_SCHEDULE_CRON,
-          }),
-        );
-        await this.prisma.workflow.updateMany({
-          where: scopedWhere(actor.organizationId, { id: existing.id }),
-          data: {
-            isScheduleEnabled: isEnabled,
-            schedule: KNOWLEDGE_REFRESH_SCHEDULE_CRON,
-            scheduleInitiatingActor,
-            timezone: 'UTC',
-          },
-        });
+        const captured = await this.admitSchedule(actor);
+        const configuration = {
+          workflowId: existing.id,
+          organizationId: actor.organizationId,
+          isScheduleEnabled: isEnabled,
+          schedule: KNOWLEDGE_REFRESH_SCHEDULE_CRON,
+          timezone: 'UTC',
+        };
+        const persist = async (tx: Prisma.TransactionClient) => {
+          await this.admitSchedule(actor, tx);
+          if (isCloudDeployment() && existing.brandId)
+            await this.brandAccess.assert(
+              await refreshWorkflowActor(
+                tx,
+                this.brandAccess,
+                captured,
+                actor.organizationId,
+              ),
+              existing.brandId,
+              tx,
+            );
+          await tx.workflow.updateMany({
+            where: scopedWhere(actor.organizationId, { id: existing.id }),
+            data: {
+              isScheduleEnabled: isEnabled,
+              schedule: KNOWLEDGE_REFRESH_SCHEDULE_CRON,
+              timezone: 'UTC',
+              ...(isCloudDeployment()
+                ? {
+                    scheduleInitiatingActor: captureWorkflowScheduleActor(
+                      captured,
+                      configuration,
+                    ),
+                  }
+                : {}),
+            },
+          });
+          await this.admitSchedule(actor, tx);
+        };
+        if (isCloudDeployment()) await this.prisma.$transaction(persist);
+        else await persist(this.prisma);
         await this.workflowQueue?.syncWorkflowScheduler({
           id: existing.id,
           isDeleted: false,
@@ -738,8 +778,8 @@ export class KnowledgeRefreshService {
         templateId: 'source-maintenance',
         timezone: 'UTC',
       },
-      actor.brandId,
-      toKnowledgeSchedulePrincipal(actor),
+      undefined,
+      toKnowledgeWorkflowActor(actor),
     );
     return created.id;
   }

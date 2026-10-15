@@ -1,4 +1,6 @@
+import type { WorkflowInitiatingActor } from '@api/authorization/brand-access/workflow-actor.util';
 export interface SkillExecutionContext {
+  initiatingActor?: WorkflowInitiatingActor;
   organizationId: string;
   brandId: string;
   brandVoice: string;
@@ -36,5 +38,6 @@ export interface SkillHandler {
   execute(
     context: SkillExecutionContext,
     params: Record<string, unknown>,
+    admission?: () => Promise<void>,
   ): Promise<GeneratedContent>;
 }

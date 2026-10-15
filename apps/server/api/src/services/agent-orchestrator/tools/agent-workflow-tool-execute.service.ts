@@ -1,3 +1,8 @@
+import {
+  captureWorkflowActor,
+  captureWorkflowInvocationActor,
+  denyWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
 import type { WorkflowInputVariable } from '@api/collections/workflows/schemas/workflow.schema';
 import { WorkflowExecutorService } from '@api/collections/workflows/services/workflow-executor.service';
@@ -13,7 +18,7 @@ import {
   readOptionalNumber,
   readOptionalString,
 } from '@api/services/agent-orchestrator/tools/agent-tool-parameter-readers';
-import { resolveToolSchedulePrincipal } from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
+import { isCloudDeployment } from '@genfeedai/config';
 import {
   WorkflowExecutionStatus,
   WorkflowExecutionTrigger,
@@ -129,9 +134,11 @@ export class AgentWorkflowToolExecuteService {
       ctx.organizationId,
       ctx.brandId,
       undefined,
-      // An enabled schedule on the copy is bound to the authenticated caller,
-      // never to the source workflow's owner; a system turn stays unbound.
-      resolveToolSchedulePrincipal(ctx),
+      captureWorkflowInvocationActor(
+        ctx.userId,
+        ctx.organizationId,
+        ctx.apiKeyContext,
+      ),
     );
 
     return {
@@ -197,15 +204,23 @@ export class AgentWorkflowToolExecuteService {
       }
     }
 
+    if (isCloudDeployment() && !ctx.apiKeyContext) denyWorkflowActor();
+    const configuringActor = ctx.apiKeyContext
+      ? captureWorkflowActor({
+          userId: ctx.userId,
+          organizationId: ctx.organizationId,
+          isApiKey: ctx.apiKeyContext.isApiKey,
+          apiKeyId: ctx.apiKeyContext.apiKeyId,
+          scopes: ctx.apiKeyContext.scopes,
+        })
+      : undefined;
     const updatedWorkflow = await this.workflowSchedulerService.updateSchedule(
       workflowId,
       ctx.organizationId,
       effectiveSchedule,
       effectiveTimezone,
       enabled,
-      // The authenticated user or API key this turn acts for. A system turn has
-      // none, so its enabled schedule is saved unbound (held in Cloud).
-      resolveToolSchedulePrincipal(ctx),
+      configuringActor,
     );
 
     if (!updatedWorkflow) {

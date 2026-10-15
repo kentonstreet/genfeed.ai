@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { captureWorkflowInvocationActor } from '@api/authorization/brand-access/workflow-actor.util';
+import type { SystemWorkflowCatalogListItem } from '@api/collections/workflows/services/system-workflow-catalog.service';
 import { SystemWorkflowCatalogService } from '@api/collections/workflows/services/system-workflow-catalog.service';
-import { WorkflowSchedulerService } from '@api/collections/workflows/services/workflow-scheduler.service';
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
 import { computeNextRunAtOrThrow } from '@api/collections/workflows/utils/cron-schedule.util';
 import { MarketplaceApiClient } from '@api/marketplace-integration/marketplace-api-client';
@@ -11,10 +12,7 @@ import {
   persistPendingToolConfirmation,
   verifyPendingToolConfirmation,
 } from '@api/services/agent-orchestrator/tools/agent-tool-pending-confirmation.util';
-import {
-  mapSystemCatalogEntryForTool,
-  resolveWorkflowBrand,
-} from '@api/services/agent-orchestrator/tools/agent-workflow-tool.helpers';
+import { resolveWorkflowBrand } from '@api/services/agent-orchestrator/tools/agent-workflow-tool.helpers';
 import type {
   AgentBrandsServiceLike,
   AgentMembersServiceLike,
@@ -22,7 +20,6 @@ import type {
 } from '@api/services/agent-orchestrator/tools/agent-workflow-tool.types';
 import { AgentWorkflowToolCreateService } from '@api/services/agent-orchestrator/tools/agent-workflow-tool-create.service';
 import { AgentWorkflowToolOfficialResolverService } from '@api/services/agent-orchestrator/tools/agent-workflow-tool-official-resolver.service';
-import { resolveToolSchedulePrincipal } from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import { CacheService } from '@api/services/cache/cache.service';
 import { WorkflowTrigger } from '@genfeedai/contracts';
 import { APP_ROUTES } from '@genfeedai/contracts/constants';
@@ -53,7 +50,6 @@ export class AgentWorkflowToolInstallService {
     private readonly systemWorkflowCatalogService: SystemWorkflowCatalogService,
     private readonly createService: AgentWorkflowToolCreateService,
     private readonly officialResolverService: AgentWorkflowToolOfficialResolverService,
-    private readonly workflowSchedulerService: WorkflowSchedulerService,
     @Optional()
     private readonly marketplaceApiClient?: MarketplaceApiClient,
     @Optional()
@@ -84,7 +80,7 @@ export class AgentWorkflowToolInstallService {
       .filter((entry) => includeNonInstallable || entry.installable)
       .filter((entry) => !family || entry.family === family)
       .filter((entry) => !installedOnly || entry.installed)
-      .map((entry) => mapSystemCatalogEntryForTool(entry));
+      .map((entry) => this.mapSystemCatalogEntryForTool(entry));
 
     return {
       creditsUsed: 0,
@@ -120,7 +116,6 @@ export class AgentWorkflowToolInstallService {
         brandId,
         canonicalId,
         organizationId: ctx.organizationId,
-        schedulePrincipal: resolveToolSchedulePrincipal(ctx),
         userId: ctx.userId,
       })) as unknown as Record<string, unknown>;
 
@@ -581,7 +576,11 @@ export class AgentWorkflowToolInstallService {
         trigger: WorkflowTrigger.MANUAL,
       },
       undefined,
-      resolveToolSchedulePrincipal(ctx),
+      captureWorkflowInvocationActor(
+        ctx.userId,
+        ctx.organizationId,
+        ctx.apiKeyContext,
+      ),
     );
 
     const workflowId = String(workflow.id);
@@ -784,21 +783,14 @@ export class AgentWorkflowToolInstallService {
         sourceId: source.id,
         sourceType: source.kind,
       }),
+      ...(schedule
+        ? {
+            isScheduleEnabled: true,
+            schedule,
+            timezone,
+          }
+        : {}),
     });
-
-    if (schedule) {
-      // The shared schedule-mutation contract: validates the cadence, registers
-      // the job and binds the schedule to the authenticated caller. A plain
-      // `patch` of the schedule columns would enable it with no actor.
-      await this.workflowSchedulerService.updateSchedule(
-        workflowId,
-        ctx.organizationId,
-        schedule,
-        timezone,
-        true,
-        resolveToolSchedulePrincipal(ctx),
-      );
-    }
   }
 
   private buildMarketplaceListingUrl(slug?: string): string | null {
@@ -809,5 +801,23 @@ export class AgentWorkflowToolInstallService {
     const appUrl =
       this.configService.get('GENFEEDAI_APP_URL') || 'https://app.genfeed.ai';
     return `${appUrl.replace('app.', 'marketplace.')}/${slug}`;
+  }
+
+  private mapSystemCatalogEntryForTool(
+    entry: SystemWorkflowCatalogListItem,
+  ): Record<string, unknown> {
+    return {
+      canonicalId: entry.canonicalId,
+      description: entry.description,
+      family: entry.family,
+      installable: entry.installable,
+      installed: entry.installed,
+      installedWorkflowId: entry.installedWorkflowId,
+      isScheduleEnabled: entry.isScheduleEnabled,
+      label: entry.label,
+      schedule: entry.schedule,
+      timezone: entry.timezone,
+      version: entry.version,
+    };
   }
 }

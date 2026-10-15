@@ -1,3 +1,9 @@
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@genfeedai/prisma', async () => {
@@ -7,9 +13,11 @@ vi.mock('@genfeedai/prisma', async () => {
   return canonicalPrismaMock();
 });
 
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import { BrandMemoryService } from '@api/collections/brand-memory/services/brand-memory.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { expectCloudGuardPasses } from '@api/shared/testing/cloud-guard-assertions';
+import { MemberRole } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
 import { runWithTenantContext } from '@libs/prisma/tenant-context';
 
@@ -20,7 +28,17 @@ describe('BrandMemoryService typed entries', () => {
     findMany: vi.fn().mockResolvedValue([]),
     update: vi.fn(),
   };
-  const prisma = { brandMemory } as unknown as PrismaService;
+  const transaction = vi.fn(
+    async (work: (tx: PrismaService) => Promise<unknown>) => work(prisma),
+  );
+  const member = { findFirst: vi.fn() };
+  const brand = { findFirst: vi.fn() };
+  const prisma = {
+    brandMemory,
+    member,
+    brand,
+    $transaction: transaction,
+  } as unknown as PrismaService;
   const logger = {
     debug: vi.fn(),
     error: vi.fn(),
@@ -31,6 +49,15 @@ describe('BrandMemoryService typed entries', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    runtime.cloud = false;
+    member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [{ id: 'brand-1' }],
+    });
+    brand.findFirst.mockImplementation(async ({ where }) => {
+      const predicate = where.AND?.[0];
+      return predicate?.id?.in?.length === 0 ? null : { id: 'brand-1' };
+    });
     brandMemory.findMany.mockResolvedValue([]);
     service = new BrandMemoryService(prisma, logger);
   });
@@ -148,5 +175,76 @@ describe('BrandMemoryService typed entries', () => {
     expect(brandMemory.update).toHaveBeenCalledTimes(2);
     expectCloudGuardPasses('BrandMemory', 'findFirst', brandMemory.findFirst);
     expectCloudGuardPasses('BrandMemory', 'update', brandMemory.update);
+  });
+  it('denies a Cloud typed write without server admission before any private lookup', async () => {
+    runtime.cloud = true;
+    await expect(
+      service.upsertTypedEntry('org-1', 'brand-1', {
+        type: 'positioning.originStory',
+        content: 'private',
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(brandMemory.findFirst).not.toHaveBeenCalled();
+    expect(brandMemory.create).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([null, { id: 'memory-1' }])(
+    'denies revocation during the typed lookup before the %s write',
+    async (existing) => {
+      runtime.cloud = true;
+      const policy = new BrandAccessService(prisma);
+      brandMemory.findFirst.mockImplementation(async () => {
+        member.findFirst.mockResolvedValue({
+          role: { key: MemberRole.USER },
+          brands: [],
+        });
+        return existing;
+      });
+      await expect(
+        service.upsertTypedEntry(
+          'org-1',
+          'brand-1',
+          {
+            type: 'positioning.originStory',
+            content: 'private',
+          },
+          (tx) =>
+            policy.assert(
+              { organizationId: 'org-1', userId: 'user-1' },
+              'brand-1',
+              tx,
+            ),
+        ),
+      ).rejects.toThrow('Brand access denied');
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(brandMemory.findFirst).toHaveBeenCalledTimes(1);
+      expect(brandMemory.update).not.toHaveBeenCalled();
+      expect(brandMemory.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('writes an assigned Cloud brand using the transaction for fresh admission and persistence', async () => {
+    runtime.cloud = true;
+    const policy = new BrandAccessService(prisma);
+    brandMemory.findFirst.mockResolvedValue(null);
+    brandMemory.create.mockResolvedValue({ id: 'memory-1' });
+    await service.upsertTypedEntry(
+      'org-1',
+      'brand-1',
+      {
+        type: 'positioning.originStory',
+        content: 'private',
+      },
+      (tx) =>
+        policy.assert(
+          { organizationId: 'org-1', userId: 'user-1' },
+          'brand-1',
+          tx,
+        ),
+    );
+    expect(member.findFirst).toHaveBeenCalledTimes(2);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(brandMemory.create).toHaveBeenCalledTimes(1);
   });
 });

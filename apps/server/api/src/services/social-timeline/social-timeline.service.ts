@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { workflowRequestKey } from '@api/authorization/brand-access/workflow-actor.util';
 import {
   type SystemWorkflowActionRequest,
   SystemWorkflowRunnerService,
@@ -14,6 +16,12 @@ import {
   SocialTimelineProviderService,
   timelineCapability,
 } from '@api/services/social-timeline/social-timeline-provider.service';
+import {
+  captureTimelineActor,
+  refreshTimelineScope,
+  timelineActorKey,
+  validateTimelineWorkflowAction,
+} from '@api/services/social-timeline/social-timeline-workflow-actor.util';
 import {
   buildSocialTimelineActionWorkflow,
   SOCIAL_TIMELINE_ACTION_ID,
@@ -40,6 +48,7 @@ import { readRecord } from '@genfeedai/utils/data/extract.util';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   type OnModuleInit,
 } from '@nestjs/common';
@@ -50,6 +59,7 @@ export class SocialTimelineService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly provider: SocialTimelineProviderService,
     private readonly workflows: SystemWorkflowRunnerService,
+    private readonly brandAccess: BrandAccessService,
   ) {}
 
   onModuleInit(): void {
@@ -59,44 +69,26 @@ export class SocialTimelineService implements OnModuleInit {
     );
   }
 
-  private runNativeAction(
+  private async runNativeAction(
     request: SystemWorkflowActionRequest,
   ): Promise<SourcePostNativeActionResult> {
-    const input = readRecord(request.input.request);
-    const required = (key: string): string => {
-      const value = input[key];
-      if (typeof value !== 'string' || !value)
-        throw new BadRequestException(`Missing ${key}.`);
-      return value;
-    };
-    if (
-      required('organizationId') !== request.context.organizationId ||
-      required('userId') !== request.context.userId
-    )
-      throw new BadRequestException(
-        'The action scope does not match this workflow.',
-      );
-    const action = (
-      ['like', 'reply', 'repost', 'quote', 'comment'] as const
-    ).find((value) => value === input.action);
-    if (!action) throw new BadRequestException('Invalid native action.');
-    return this.actNative(
-      {
-        organizationId: request.context.organizationId,
-        userId: request.context.userId,
-        brandId: required('brandId'),
-      },
-      required('postId'),
-      {
-        action,
-        credentialId: required('credentialId'),
-        idempotencyKey: required('idempotencyKey'),
-        text: typeof input.text === 'string' ? input.text : undefined,
-      },
+    const admitted = await validateTimelineWorkflowAction(
+      this.prisma,
+      this.brandAccess,
+      request,
     );
+    return this.actNative(admitted.scope, admitted.postId, admitted.input);
+  }
+
+  private admit(
+    scope: TimelineScope,
+    tx: Prisma.TransactionClient = this.prisma,
+  ): Promise<TimelineScope> {
+    return refreshTimelineScope(tx, this.brandAccess, scope);
   }
 
   async read(scope: TimelineScope): Promise<SocialTimelineResponse> {
+    scope = await this.admit(scope);
     const credentials = await this.prisma.credential.findMany({
       where: scopedWhere(scope.organizationId, {
         brandId: scope.brandId,
@@ -211,6 +203,7 @@ export class SocialTimelineService implements OnModuleInit {
     scope: TimelineScope,
     credentialId?: string,
   ): Promise<SocialTimelineResponse> {
+    scope = await this.admit(scope);
     const credentials = await this.prisma.credential.findMany({
       where: scopedWhere(scope.organizationId, {
         brandId: scope.brandId,
@@ -248,19 +241,27 @@ export class SocialTimelineService implements OnModuleInit {
       let source = existing;
       if (!source) {
         try {
-          source = await this.prisma.socialSource.create({
-            data: {
-              ...scope,
-              credentialId: credential.id,
-              platform,
-              sourceType: SocialSourceType.TIMELINE,
-              handle,
-              displayName: credential.externalName || credential.externalHandle,
-              metadata: { provenance: 'native-following' },
-            },
+          await this.admit(scope);
+          source = await this.prisma.$transaction(async (tx) => {
+            await this.admit(scope, tx);
+            return tx.socialSource.create({
+              data: {
+                organizationId: scope.organizationId,
+                brandId: scope.brandId,
+                userId: scope.userId,
+                credentialId: credential.id,
+                platform,
+                sourceType: SocialSourceType.TIMELINE,
+                handle,
+                displayName:
+                  credential.externalName || credential.externalHandle,
+                metadata: { provenance: 'native-following' },
+              },
+            });
           });
         } catch (error: unknown) {
           if (readRecord(error).code !== 'P2002') throw error;
+          await this.admit(scope);
           source = await this.prisma.socialSource.findFirst({
             where: scopedWhere(scope.organizationId, {
               brandId: scope.brandId,
@@ -273,19 +274,26 @@ export class SocialTimelineService implements OnModuleInit {
       }
       const resolvedSource = source;
       // Reserve a single refresh per account; concurrent refreshes return saved data.
-      const claimed = await this.prisma.socialSource.updateMany({
-        where: scopedWhere(scope.organizationId, {
-          id: resolvedSource.id,
-          brandId: scope.brandId,
-          OR: [
-            { lastSyncStatus: null },
-            { lastSyncStatus: { not: ConnectedTimelineSyncStatus.REFRESHING } },
-            { updatedAt: { lt: new Date(Date.now() - 10 * 60000) } },
-          ],
-        }),
-        data: { lastSyncStatus: ConnectedTimelineSyncStatus.REFRESHING },
+      await this.admit(scope);
+      const claimed = await this.prisma.$transaction(async (tx) => {
+        await this.admit(scope, tx);
+        return tx.socialSource.updateMany({
+          where: scopedWhere(scope.organizationId, {
+            id: resolvedSource.id,
+            brandId: scope.brandId,
+            OR: [
+              { lastSyncStatus: null },
+              {
+                lastSyncStatus: { not: ConnectedTimelineSyncStatus.REFRESHING },
+              },
+              { updatedAt: { lt: new Date(Date.now() - 10 * 60000) } },
+            ],
+          }),
+          data: { lastSyncStatus: ConnectedTimelineSyncStatus.REFRESHING },
+        });
       });
       if (!claimed.count) continue;
+      scope = await this.admit(scope);
       try {
         const posts = await this.provider.collect(
           scope,
@@ -294,7 +302,9 @@ export class SocialTimelineService implements OnModuleInit {
         );
         await this.saveSnapshot(scope, resolvedSource.id, credential.id, posts);
       } catch (error: unknown) {
+        if (error instanceof ForbiddenException) throw error;
         const failure = classifyTimelineError(error);
+        await this.admit(scope);
         await this.prisma.socialSource.updateMany({
           where: scopedWhere(scope.organizationId, {
             brandId: scope.brandId,
@@ -318,6 +328,7 @@ export class SocialTimelineService implements OnModuleInit {
   ): Promise<void> {
     await this.prisma.$transaction(
       async (tx) => {
+        await this.admit(scope, tx);
         for (const post of posts) {
           const data = {
             ...post,
@@ -378,6 +389,18 @@ export class SocialTimelineService implements OnModuleInit {
     postId: string,
     input: SourcePostNativeActionInput,
   ): Promise<SourcePostNativeActionResult> {
+    scope = await this.admit(scope);
+    const request = {
+      organizationId: scope.organizationId,
+      brandId: scope.brandId,
+      userId: scope.userId,
+      initiatingActor: captureTimelineActor(scope),
+      postId,
+      action: input.action,
+      credentialId: input.credentialId,
+      idempotencyKey: input.idempotencyKey,
+      ...(input.text !== undefined ? { text: input.text } : {}),
+    };
     const { result } =
       await this.workflows.runWorkflow<SourcePostNativeActionResult>({
         canonicalId: SOCIAL_TIMELINE_WORKFLOW_ID,
@@ -385,17 +408,12 @@ export class SocialTimelineService implements OnModuleInit {
         organizationId: scope.organizationId,
         userId: scope.userId,
         source: 'SocialTimelineService.act',
-        trigger: WorkflowExecutionTrigger.API,
-        inputValues: {
-          request: {
-            ...scope,
-            postId,
-            action: input.action,
-            credentialId: input.credentialId,
-            idempotencyKey: input.idempotencyKey,
-            ...(input.text !== undefined ? { text: input.text } : {}),
-          },
+        metadata: {
+          initiatingActorKey: timelineActorKey(captureTimelineActor(scope)),
+          initiatingRequestKey: workflowRequestKey(request),
         },
+        trigger: WorkflowExecutionTrigger.API,
+        inputValues: { request },
       });
     return result;
   }
@@ -423,6 +441,7 @@ export class SocialTimelineService implements OnModuleInit {
     postId: string,
     input: SourcePostNativeActionInput,
   ): Promise<SourcePostNativeActionResult> {
+    scope = await this.admit(scope);
     const text = input.text?.trim();
     const requestHash = createHash('sha256')
       .update(
@@ -487,18 +506,25 @@ export class SocialTimelineService implements OnModuleInit {
       ReturnType<PrismaService['sourcePostNativeAction']['create']>
     >;
     try {
-      receipt = await this.prisma.sourcePostNativeAction.create({
-        data: {
-          ...scope,
-          postId,
-          credentialId: input.credentialId,
-          action: input.action,
-          requestHash,
-          idempotencyKey: input.idempotencyKey,
-        },
+      await this.admit(scope);
+      receipt = await this.prisma.$transaction(async (tx) => {
+        await this.admit(scope, tx);
+        return tx.sourcePostNativeAction.create({
+          data: {
+            organizationId: scope.organizationId,
+            brandId: scope.brandId,
+            userId: scope.userId,
+            postId,
+            credentialId: input.credentialId,
+            action: input.action,
+            requestHash,
+            idempotencyKey: input.idempotencyKey,
+          },
+        });
       });
     } catch (error: unknown) {
       if (readRecord(error).code !== 'P2002') throw error;
+      await this.admit(scope);
       const existing = await this.prisma.sourcePostNativeAction.findFirst({
         where: scopedWhere(scope.organizationId, {
           brandId: scope.brandId,
@@ -511,6 +537,7 @@ export class SocialTimelineService implements OnModuleInit {
         );
       return this.actionReceipt(existing);
     }
+    scope = await this.admit(scope);
     try {
       const externalId = await this.provider.execute(
         scope,
@@ -518,6 +545,7 @@ export class SocialTimelineService implements OnModuleInit {
         post.platform,
         { action: input.action, text, externalId: post.externalId },
       );
+      await this.admit(scope);
       await this.prisma.sourcePostNativeAction.updateMany({
         where: scopedWhere(scope.organizationId, {
           brandId: scope.brandId,
@@ -531,6 +559,7 @@ export class SocialTimelineService implements OnModuleInit {
         externalId,
       };
     } catch (error: unknown) {
+      if (error instanceof ForbiddenException) throw error;
       const failure = classifyTimelineError(error);
       const rejected = [
         'reconnect',
@@ -544,6 +573,7 @@ export class SocialTimelineService implements OnModuleInit {
       const message = rejected
         ? failure.message
         : `${failure.message} Delivery could not be confirmed. Check the source before sending again.`;
+      await this.admit(scope);
       await this.prisma.sourcePostNativeAction.updateMany({
         where: scopedWhere(scope.organizationId, {
           brandId: scope.brandId,

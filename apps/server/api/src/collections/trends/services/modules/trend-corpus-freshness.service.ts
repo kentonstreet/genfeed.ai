@@ -1,3 +1,10 @@
+import { isPlatformSuperAdmin } from '@api/auth/better-auth/better-auth-access.util';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  denyWorkflowActor,
+  parseWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import type {
   TrendCorpusFreshnessResult,
   TrendCorpusFreshnessSegment,
@@ -12,19 +19,34 @@ import {
   DEFAULT_SOURCE_FRESHNESS_WINDOW_DAYS_BY_KIND as DEFAULT_FRESHNESS_WINDOW_DAYS_BY_SOURCE_KIND,
   normalizeTrendSourceClassification,
 } from '@api/collections/trends/utils/trend-source-classification.util';
+import { resolveApiKeyEffectiveMemberRole } from '@api/helpers/utils/auth/api-key-role.util';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
+import { MemberRole } from '@genfeedai/contracts';
 import type { Prisma } from '@genfeedai/prisma';
-import { platformOrTenantScope } from '@libs/prisma/platform-scope';
+import {
+  platformOrTenantScope,
+  withPlatformTenantArm,
+} from '@libs/prisma/platform-scope';
 import { crossOrgUnsafe } from '@libs/prisma/tenant-context';
 import { Injectable } from '@nestjs/common';
 
 export interface TrendCorpusFreshnessHealthOptions {
   isPlatformAdmin?: boolean;
+  initiatingActor?: WorkflowInitiatingActor;
   now?: Date;
   organizationId?: string;
   platform?: string;
   sourcePreviewStaleAfterDays?: number;
 }
+
+type HealthAdmission = {
+  actor?: WorkflowInitiatingActor;
+  platformAdmin: boolean;
+  globalOnly: boolean;
+  brandIds?: string[];
+  brandWhere?: Prisma.BrandWhereInput;
+};
 
 interface ReferenceHealthData {
   authorHandle?: string;
@@ -90,11 +112,13 @@ export class TrendCorpusFreshnessService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly refreshHealth: TrendRefreshHealthService,
+    private readonly brandAccess: BrandAccessService,
   ) {}
 
   async getCorpusFreshnessHealth(
     options: TrendCorpusFreshnessHealthOptions = {},
   ): Promise<TrendCorpusFreshnessResult> {
+    const admission = await this.admitHealth(options);
     const now = options.now ?? new Date();
     const sourcePreviewStaleAfterDays =
       options.sourcePreviewStaleAfterDays ??
@@ -117,7 +141,7 @@ export class TrendCorpusFreshnessService {
           isDeleted: false,
         },
       }) as Promise<ReferenceHealthDoc[]>,
-      this.readFreshnessTrends(options),
+      this.readFreshnessTrends(options, admission),
       this.refreshHealth.getHealth(options),
     ]);
 
@@ -165,6 +189,26 @@ export class TrendCorpusFreshnessService {
       ),
     ).sort();
 
+    const current = await this.admitHealth({
+      ...options,
+      initiatingActor: admission.actor,
+    });
+    if (
+      (admission.platformAdmin && !current.platformAdmin) ||
+      (!admission.globalOnly &&
+        !admission.platformAdmin &&
+        (admission.brandIds === undefined
+          ? current.brandIds !== undefined
+          : current.brandIds !== undefined &&
+            admission.brandIds.some(
+              (id) => !current.brandIds?.includes(id),
+            ))) ||
+      (admission.actor?.isApiKey &&
+        admission.actor.scopes.some(
+          (scope) => !current.actor?.scopes.includes(scope),
+        ))
+    )
+      denyWorkflowActor();
     return {
       generatedAt: now.toISOString(),
       providerFailures,
@@ -199,6 +243,7 @@ export class TrendCorpusFreshnessService {
 
   private readFreshnessTrends(
     options: TrendCorpusFreshnessHealthOptions,
+    admission: HealthAdmission,
   ): Promise<TrendHealthDoc[]> {
     const readTrends = async (): Promise<TrendHealthDoc[]> =>
       // tenant-scope-ignore: buildFreshnessTrendWhere excludes deleted rows and limits non-admin reads to the current organization plus the public corpus; platform admins inspect all organizations
@@ -214,11 +259,11 @@ export class TrendCorpusFreshnessService {
           updatedAt: true,
         },
         take: MAX_CORPUS_FRESHNESS_TREND_RECORDS,
-        where: this.buildFreshnessTrendWhere(options),
+        where: this.buildFreshnessTrendWhere(options, admission),
       })) as TrendHealthDoc[];
 
     // Platform admins inspect every organization's trend corpus.
-    return options.isPlatformAdmin
+    return admission.platformAdmin
       ? crossOrgUnsafe(async () => await readTrends())
       : readTrends();
   }
@@ -230,17 +275,92 @@ export class TrendCorpusFreshnessService {
    */
   private buildFreshnessTrendWhere(
     options: TrendCorpusFreshnessHealthOptions,
+    admission: HealthAdmission,
   ): Prisma.TrendWhereInput {
     const where: Prisma.TrendWhereInput = {
       ...(options.platform ? { platform: options.platform } : {}),
       isDeleted: false,
     };
 
-    if (options.isPlatformAdmin) {
+    if (admission.platformAdmin) {
       return where;
     }
 
-    return { ...where, ...platformOrTenantScope(options.organizationId) };
+    if (admission.globalOnly)
+      return withPlatformTenantArm({ ...where, organizationId: null });
+    return {
+      ...where,
+      ...platformOrTenantScope(options.organizationId),
+      ...(admission.brandWhere
+        ? {
+            AND: [
+              {
+                OR: [
+                  { organizationId: null },
+                  { organizationId: options.organizationId, brandId: null },
+                  {
+                    organizationId: options.organizationId,
+                    brand: admission.brandWhere,
+                  },
+                ],
+              },
+            ],
+          }
+        : {}),
+    };
+  }
+
+  private async admitHealth(
+    options: TrendCorpusFreshnessHealthOptions,
+  ): Promise<HealthAdmission> {
+    if (!isCloudDeployment())
+      return {
+        platformAdmin: options.isPlatformAdmin === true,
+        globalOnly: false,
+      };
+    if (!options.initiatingActor) {
+      if (options.organizationId || options.isPlatformAdmin)
+        denyWorkflowActor();
+      return { platformAdmin: false, globalOnly: true };
+    }
+    const actor = parseWorkflowActor(
+      options.initiatingActor,
+      options.initiatingActor.organizationId,
+    );
+    if (options.organizationId !== actor.organizationId) denyWorkflowActor();
+    const user = await this.prisma.user.findFirst({
+      where: { id: actor.userId, isDeleted: false, banned: false },
+      select: { platformRole: true },
+    });
+    if (!user) denyWorkflowActor();
+    if (actor.isApiKey) {
+      const key = await this.prisma.apiKey.findFirst({
+        where: {
+          id: actor.apiKeyId,
+          userId: actor.userId,
+          organizationId: actor.organizationId,
+          isRevoked: false,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { scopes: true },
+      });
+      if (!key) denyWorkflowActor();
+      actor.scopes = actor.scopes.filter((scope) => key.scopes.includes(scope));
+    }
+    const platformAdmin =
+      options.isPlatformAdmin === true &&
+      isPlatformSuperAdmin(user.platformRole) &&
+      resolveApiKeyEffectiveMemberRole(actor, MemberRole.ADMIN) ===
+        MemberRole.ADMIN;
+    if (platformAdmin) return { actor, platformAdmin: true, globalOnly: false };
+    const access = await this.brandAccess.resolve(actor);
+    return {
+      actor,
+      platformAdmin: false,
+      globalOnly: false,
+      brandIds: access.brandIds,
+      brandWhere: access.where,
+    };
   }
 
   private buildFreshnessSegments(

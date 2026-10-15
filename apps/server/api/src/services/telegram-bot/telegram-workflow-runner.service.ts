@@ -1,3 +1,11 @@
+import type { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  refreshWorkflowActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
+import { isCloudDeployment } from '@genfeedai/config';
 /**
  * Executes Telegram recipes through the same immutable system-workflow path as
  * every other Genfeed entry surface. Telegram owns presentation only.
@@ -25,6 +33,7 @@ export class TelegramWorkflowRunnerService {
     private readonly loggerService: LoggerService,
     private readonly systemWorkflowRunner: SystemWorkflowRunnerService,
     private readonly prisma: PrismaService,
+    private readonly brandAccess: BrandAccessService,
     private readonly resolveAuthContext: (
       chatId: number,
     ) => ChatAuthContext | null | Promise<ChatAuthContext | null>,
@@ -42,7 +51,11 @@ export class TelegramWorkflowRunnerService {
     }
 
     const authContext = await this.resolveAuthContext(chatId);
-    if (!authContext) {
+    if (
+      !authContext ||
+      (isCloudDeployment() &&
+        (authContext.authType !== 'api_key' || !authContext.apiKeyId))
+    ) {
       await ctx.reply(
         '🔐 Connect first with `/connect <api_key>` or configure default org/user context.',
         { parse_mode: ParseMode.MARKDOWN },
@@ -60,19 +73,65 @@ export class TelegramWorkflowRunnerService {
     const startedAt = Date.now();
 
     try {
+      if (
+        isCloudDeployment() &&
+        ![
+          'single-image',
+          'image-series',
+          'image-to-video',
+          'single-video',
+          'full-pipeline',
+        ].includes(workflowId)
+      ) {
+        throw new Error('Telegram workflow is not authorized.');
+      }
+      const actor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        captureWorkflowActor({
+          organizationId: authContext.organizationId,
+          userId: authContext.userId,
+          isApiKey: authContext.authType === 'api_key',
+          apiKeyId: authContext.apiKeyId,
+          scopes: authContext.scopes ?? [],
+        }),
+        authContext.organizationId,
+      );
       const brandId = await this.resolveExecutionBrand(
         authContext.organizationId,
         authContext,
       );
+      await this.brandAccess.assert(actor, brandId);
+      const inputValues = {
+        ...Object.fromEntries(
+          [...state.collectedInputs].filter(
+            ([key]) =>
+              ![
+                'initiatingActor',
+                'initiatingActorKey',
+                'initiatingRequestKey',
+              ].includes(key),
+          ),
+        ),
+        brandId,
+        initiatingActor: actor,
+      };
+      const admittedActor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        actor,
+        actor.organizationId,
+      );
+      await this.brandAccess.assert(admittedActor, brandId);
+      inputValues.initiatingActor = admittedActor;
       const { provenance, result } =
         await this.systemWorkflowRunner.runWorkflow<unknown>({
           actionType: 'telegram-media-workflow',
           canonicalId: `${TELEGRAM_SYSTEM_WORKFLOW_PREFIX}${workflowId}`,
-          inputValues: {
-            ...Object.fromEntries(state.collectedInputs),
-            brandId,
-          },
+          inputValues,
           metadata: {
+            initiatingActorKey: workflowActorKey(admittedActor),
+            initiatingRequestKey: workflowRequestKey(inputValues),
             chatId,
             telegramUserId: ctx.from?.id,
             username: ctx.from?.username,
@@ -83,6 +142,13 @@ export class TelegramWorkflowRunnerService {
           userId: authContext.userId,
         });
 
+      const responseActor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        admittedActor,
+        admittedActor.organizationId,
+      );
+      await this.brandAccess.assert(responseActor, brandId);
       await this.sendResults(
         ctx,
         result,
@@ -117,7 +183,17 @@ export class TelegramWorkflowRunnerService {
     if (authContext.authType === 'api_key' && authContext.apiKeyId) {
       const apiKey = await this.prisma.apiKey.findFirst({
         select: { defaultBrandId: true },
-        where: { id: authContext.apiKeyId, isRevoked: false, organizationId },
+        where: {
+          id: authContext.apiKeyId,
+          isRevoked: false,
+          organizationId,
+          ...(isCloudDeployment()
+            ? {
+                userId: authContext.userId,
+                OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+              }
+            : {}),
+        },
       });
       const brand = apiKey?.defaultBrandId
         ? await this.prisma.brand.findFirst({

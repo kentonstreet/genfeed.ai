@@ -62,6 +62,7 @@ export async function readWorkflowExecutionStats(
   prisma: PrismaService,
   organizationId: string,
   workflowId: string,
+  readerWhere: Prisma.WorkflowExecutionWhereInput,
 ): Promise<{
   total: number;
   completed: number;
@@ -70,10 +71,14 @@ export async function readWorkflowExecutionStats(
 }> {
   const executions = await prisma.workflowExecution.findMany({
     select: { durationMs: true, status: true },
-    where: scopedWhere(
+    where: scopedWhere(organizationId, {
       organizationId,
-      buildCustomerExecutionWhere(organizationId, { workflowId }),
-    ),
+      isDeleted: false,
+      AND: [
+        buildCustomerExecutionWhere(organizationId, { workflowId }),
+        readerWhere,
+      ],
+    }),
   });
   const total = executions.length;
   const completed = executions.filter(

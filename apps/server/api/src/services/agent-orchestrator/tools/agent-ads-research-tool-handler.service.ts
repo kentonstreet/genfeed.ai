@@ -1,3 +1,7 @@
+import {
+  captureWorkflowInvocationActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { resolveGenerationBrand } from '@api/collections/brands/utils/resolve-generation-brand.util';
 import { MembersService } from '@api/collections/members/services/members.service';
@@ -428,6 +432,7 @@ export class AgentAdsResearchToolHandler {
   ): Promise<
     | {
         userId: string;
+        initiatingActor?: WorkflowInitiatingActor;
         organizationId: string;
         brandId?: string;
         brandName?: string;
@@ -462,6 +467,11 @@ export class AgentAdsResearchToolHandler {
       industry: readOptionalString(params.industry) ?? brandContext.industry,
       loginCustomerId: readOptionalString(params.loginCustomerId),
       objective: readOptionalString(params.objective),
+      initiatingActor: captureWorkflowInvocationActor(
+        ctx.userId,
+        ctx.organizationId,
+        ctx.apiKeyContext,
+      ),
       organizationId: ctx.organizationId,
       platform: readAdsPlatform(params.platform),
       source,

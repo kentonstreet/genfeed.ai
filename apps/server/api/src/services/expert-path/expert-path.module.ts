@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { BrandMemoryModule } from '@api/collections/brand-memory/brand-memory.module';
 import { ContentPlanItemsModule } from '@api/collections/content-plan-items/content-plan-items.module';
 import { ContentPlansModule } from '@api/collections/content-plans/content-plans.module';
@@ -22,6 +23,7 @@ import { Module } from '@nestjs/common';
   controllers: [ExpertPathController],
   exports: [ExpertPathService],
   imports: [
+    BrandAccessModule,
     BrandMemoryModule,
     ContentEngineModule,
     ContentHarnessModule,

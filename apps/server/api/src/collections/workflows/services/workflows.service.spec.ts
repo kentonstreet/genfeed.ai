@@ -1,3 +1,4 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import { WorkflowEntity } from '@api/collections/workflows/entities/workflow.entity';
 import { FeaturedWorkflowsService } from '@api/collections/workflows/services/featured-workflows.service';
 import { WorkflowExecutionQueueService } from '@api/collections/workflows/services/workflow-execution-queue.service';
@@ -7,23 +8,9 @@ import { buildSystemWorkflowMetadata } from '@api/collections/workflows/system-w
 import { EXCLUDE_SYSTEM_WORKFLOW } from '@api/collections/workflows/utils/workflow-list-where.util';
 import { SYSTEM_WORKFLOW_CATALOG } from '@api/collections/workflows/workflows.tokens';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { WorkflowExecutionTrigger, WorkflowStatus } from '@genfeedai/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const schedulePrincipal = {
-  apiKeyId: 'key-1',
-  isApiKey: true,
-  organizationId: 'org-1',
-  scopes: ['workflows:write', 'brands:read'],
-  userId: 'user-1',
-};
-const expectedScheduleActor = {
-  apiKeyId: 'key-1',
-  isApiKey: true,
-  organizationId: 'org-1',
-  scopes: ['brands:read', 'workflows:write'],
-  userId: 'user-1',
-};
 
 const emptyModuleRef = { get: vi.fn(() => undefined) };
 
@@ -45,6 +32,10 @@ describe('WorkflowsService template creation', () => {
       { brand: { findFirst: brandFindFirst } } as never,
       logger as never,
       emptyModuleRef as never,
+
+      new BrandAccessService({
+        brand: { findFirst: brandFindFirst },
+      } as never as unknown as PrismaService),
     );
     vi.spyOn(service, 'create').mockResolvedValue({
       id: 'workflow-1',
@@ -151,137 +142,6 @@ describe('WorkflowsService template creation', () => {
       schedule: '30 10 * * *',
       timezone: 'Europe/Malta',
     });
-  });
-
-  it('binds a created enabled schedule to the authenticated principal', async () => {
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      {
-        edges: [],
-        isScheduleEnabled: true,
-        nodes: [],
-        schedule: '30 10 * * *',
-      } as never,
-      'brand-1',
-      schedulePrincipal,
-    );
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).toMatchObject({
-      scheduleInitiatingActor: expectedScheduleActor,
-    });
-  });
-
-  it('binds template-defaulted schedules to the authenticated principal', async () => {
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      { edges: [], nodes: [], templateId: 'release-loop' } as never,
-      'brand-1',
-      schedulePrincipal,
-    );
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).toMatchObject({
-      isScheduleEnabled: true,
-      scheduleInitiatingActor: expectedScheduleActor,
-    });
-  });
-
-  it('never binds a disabled or absent schedule', async () => {
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      {
-        edges: [],
-        isScheduleEnabled: false,
-        nodes: [],
-        schedule: '30 10 * * *',
-      } as never,
-      'brand-1',
-      schedulePrincipal,
-    );
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      { edges: [], label: 'Manual', nodes: [] } as never,
-      'brand-1',
-      schedulePrincipal,
-    );
-
-    for (const call of vi.mocked(service.create).mock.calls) {
-      expect(call[0]).not.toHaveProperty('scheduleInitiatingActor');
-    }
-  });
-
-  it('leaves an enabled schedule unbound when no principal is supplied', async () => {
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      {
-        edges: [],
-        isScheduleEnabled: true,
-        nodes: [],
-        schedule: '30 10 * * *',
-      } as never,
-      'brand-1',
-    );
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).not.toHaveProperty(
-      'scheduleInitiatingActor',
-    );
-  });
-
-  it('ignores an actor smuggled in request input', async () => {
-    await service.createWorkflow(
-      'user-1',
-      'org-1',
-      {
-        config: { scheduleInitiatingActor: { userId: 'attacker' } },
-        edges: [],
-        isScheduleEnabled: true,
-        metadata: { scheduleInitiatingActor: { userId: 'attacker' } },
-        nodes: [],
-        schedule: '30 10 * * *',
-        scheduleInitiatingActor: {
-          isApiKey: false,
-          organizationId: 'org-1',
-          scopes: [],
-          userId: 'attacker',
-        },
-      } as never,
-      'brand-1',
-      schedulePrincipal,
-    );
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).toMatchObject({
-      scheduleInitiatingActor: expectedScheduleActor,
-    });
-  });
-
-  it('refuses to patch the actor through the generic update path', async () => {
-    await expect(
-      service.patch('workflow-1', {
-        scheduleInitiatingActor: { userId: 'attacker' },
-      }),
-    ).rejects.toThrow('server-owned');
-  });
-
-  it('rejects a principal from another organization on create', async () => {
-    await expect(
-      service.createWorkflow(
-        'user-1',
-        'org-1',
-        {
-          edges: [],
-          isScheduleEnabled: true,
-          nodes: [],
-          schedule: '30 10 * * *',
-        } as never,
-        'brand-1',
-        { ...schedulePrincipal, organizationId: 'org-2' },
-      ),
-    ).rejects.toThrow();
-    expect(service.create).not.toHaveBeenCalled();
   });
 
   it('drops non-column create fields while preserving persisted trigger data', async () => {
@@ -417,6 +277,10 @@ describe('WorkflowsService executeWorkflow ModuleRef', () => {
       { brand: { findFirst: vi.fn() } } as never,
       logger as never,
       moduleRef as never,
+
+      new BrandAccessService({
+        brand: { findFirst: vi.fn() },
+      } as never as unknown as PrismaService),
     );
     vi.spyOn(service, 'findOne').mockResolvedValue({
       id: 'wf-1',
@@ -441,6 +305,10 @@ describe('WorkflowsService executeWorkflow ModuleRef', () => {
       { brand: { findFirst: vi.fn() } } as never,
       logger as never,
       { get: vi.fn(() => undefined) } as never,
+
+      new BrandAccessService({
+        brand: { findFirst: vi.fn() },
+      } as never as unknown as PrismaService),
     );
     vi.spyOn(service, 'findOne').mockResolvedValue({
       id: 'wf-1',
@@ -474,6 +342,10 @@ describe('WorkflowsService executeWorkflow ModuleRef', () => {
       } as never,
       logger as never,
       moduleRef as never,
+
+      new BrandAccessService({
+        brand: { findFirst: vi.fn().mockResolvedValue({ id: 'brand-1' }) },
+      } as never as unknown as PrismaService),
     );
 
     const created = await service.createWorkflow(
@@ -490,7 +362,6 @@ describe('WorkflowsService executeWorkflow ModuleRef', () => {
       brandId: 'brand-1',
       canonicalId: 'release-loop',
       organizationId: 'org-1',
-      schedulePrincipal: undefined,
       userId: 'user-1',
     });
     expect(created.id).toBe('installed-1');
@@ -515,6 +386,10 @@ describe('WorkflowsService system workflow guardrails', () => {
       { brand: { findFirst: brandFindFirst } } as never,
       logger as never,
       emptyModuleRef as never,
+
+      new BrandAccessService({
+        brand: { findFirst: brandFindFirst },
+      } as never as unknown as PrismaService),
     );
   });
 
@@ -569,6 +444,8 @@ describe('WorkflowsService system workflow guardrails', () => {
             : undefined,
         ),
       } as never,
+
+      new BrandAccessService(prisma as never as unknown as PrismaService),
     );
 
     await expect(guardedService.remove('system-workflow-1')).rejects.toThrow(
@@ -725,7 +602,6 @@ describe('WorkflowsService system workflow guardrails', () => {
       'org-1',
       'body-brand',
       'session-brand',
-      undefined,
     );
   });
 
@@ -753,7 +629,6 @@ describe('WorkflowsService system workflow guardrails', () => {
       'org-1',
       undefined,
       'session-brand',
-      undefined,
     );
   });
 
@@ -796,71 +671,6 @@ describe('WorkflowsService system workflow guardrails', () => {
       select: { id: true },
       where: expect.objectContaining({ id: 'source-brand' }),
     });
-  });
-
-  it('binds a cloned enabled schedule to the cloning principal, not the source owner', async () => {
-    vi.spyOn(service, 'findVisibleOrThrow').mockResolvedValue({
-      brandId: 'source-brand',
-      edges: [],
-      id: 'workflow-1',
-      inputVariables: [],
-      isScheduleEnabled: true,
-      label: 'Launch Workflow',
-      lockedNodeIds: [],
-      metadata: {},
-      nodes: [],
-      organizationId: 'org-1',
-      schedule: '0 9 * * *',
-      scheduleInitiatingActor: { userId: 'owner-user' },
-      userId: 'owner-user',
-    } as never);
-    vi.spyOn(service, 'create').mockResolvedValue({
-      id: 'copy-workflow-1',
-      metadata: {},
-      nodes: [],
-    } as never);
-
-    await service.cloneWorkflow(
-      'workflow-1',
-      'user-1',
-      'org-1',
-      undefined,
-      undefined,
-      schedulePrincipal,
-    );
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).toMatchObject({
-      scheduleInitiatingActor: expectedScheduleActor,
-    });
-  });
-
-  it('does not carry the source actor onto a clone made without a principal', async () => {
-    vi.spyOn(service, 'findVisibleOrThrow').mockResolvedValue({
-      brandId: 'source-brand',
-      edges: [],
-      id: 'workflow-1',
-      inputVariables: [],
-      isScheduleEnabled: true,
-      label: 'Launch Workflow',
-      lockedNodeIds: [],
-      metadata: {},
-      nodes: [],
-      organizationId: 'org-1',
-      schedule: '0 9 * * *',
-      scheduleInitiatingActor: { userId: 'owner-user' },
-      userId: 'owner-user',
-    } as never);
-    vi.spyOn(service, 'create').mockResolvedValue({
-      id: 'copy-workflow-1',
-      metadata: {},
-      nodes: [],
-    } as never);
-
-    await service.cloneWorkflow('workflow-1', 'user-1', 'org-1');
-
-    expect(vi.mocked(service.create).mock.calls[0]?.[0]).not.toHaveProperty(
-      'scheduleInitiatingActor',
-    );
   });
 
   it('rejects clone target brands outside the authenticated organization', async () => {
@@ -975,6 +785,8 @@ describe('WorkflowsService.publishToMarketplace', () => {
       {} as never,
       logger as never,
       emptyModuleRef as never,
+
+      new BrandAccessService({} as never as unknown as PrismaService),
     );
   });
 
@@ -1060,6 +872,12 @@ describe('WorkflowsService versioned edge style patches', () => {
         emptyModuleRef as unknown as ConstructorParameters<
           typeof WorkflowsService
         >[2],
+
+        new BrandAccessService(
+          prisma as unknown as ConstructorParameters<
+            typeof WorkflowsService
+          >[0] as unknown as PrismaService,
+        ),
       );
       vi.spyOn(service, 'findOne').mockResolvedValue(
         Object.assign(new WorkflowEntity({}), {
@@ -1082,7 +900,7 @@ describe('WorkflowsService versioned edge style patches', () => {
         }),
       });
       expect(updateMany).toHaveBeenCalledWith({
-        data: { currentVersionId: 'version-2', platformSeedKey: null },
+        data: { currentVersionId: 'version-2' },
         where: {
           currentVersionId: 'version-1',
           id: 'workflow-1',
@@ -1125,6 +943,10 @@ describe('WorkflowsService.findMostUsed', () => {
         warn: vi.fn(),
       } as never,
       emptyModuleRef as never,
+
+      new BrandAccessService({
+        workflow: { findMany },
+      } as never as unknown as PrismaService),
     );
   }
 
@@ -1235,6 +1057,10 @@ describe('WorkflowsService featured workflow use (#5511)', () => {
       { brand: { findFirst: brandFindFirst } } as never,
       logger as never,
       moduleRef as never,
+
+      new BrandAccessService({
+        brand: { findFirst: brandFindFirst },
+      } as never as unknown as PrismaService),
     );
     vi.spyOn(service, 'create').mockResolvedValue({
       id: 'wf-copy',

@@ -41,7 +41,10 @@ vi.mock('@genfeedai/contracts', async (importOriginal) => ({
   ParseMode: { MARKDOWN: 'Markdown' },
 }));
 
-vi.mock('@genfeedai/integrations', () => ({
+vi.mock('@genfeedai/integrations', async (importOriginal) => ({
+  BotAccountLinkClient: (
+    await importOriginal<typeof import('@genfeedai/integrations')>()
+  ).BotAccountLinkClient,
   BaseBotManager: class {
     protected readonly logger: unknown;
     protected readonly bots = new Map();
@@ -349,5 +352,108 @@ describe('Telegram agent report reviews', () => {
     expect(ctx.reply).toHaveBeenCalledWith(
       'Cancelled. Use /workflows to start again.',
     );
+  });
+});
+
+describe('Telegram native private account linking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  async function linkCallback() {
+    const instance = await createManager().createBotInstance(
+      mockIntegration as never,
+    );
+    const callback = vi
+      .mocked(instance.bot.command)
+      .mock.calls.find(([name]) => name === 'link')?.[1];
+    if (!callback) throw new Error('Link handler missing');
+    return callback as unknown as (ctx: {
+      chat: { id: number; type: string };
+      from?: { id: number };
+      message?: { message_id: number };
+      reply: ReturnType<typeof vi.fn>;
+    }) => Promise<void>;
+  }
+  it('uses the native private sender/event and signs an actual installation request', async () => {
+    const callback = await linkCallback();
+    (firstValueFrom as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: {
+        data: {
+          id: 'a'.repeat(43),
+          attributes: {
+            confirmationUrl: 'https://app.example/confirm',
+            expiresAt: '2030-01-01T00:00:00Z',
+          },
+        },
+      },
+    });
+    const ctx = {
+      chat: { id: 42, type: 'private' },
+      from: { id: 42 },
+      message: { message_id: 12 },
+      reply: vi.fn(),
+    };
+    await callback(ctx);
+    expect(mockHttpService.post).toHaveBeenCalledWith(
+      'http://localhost:3010/v1/internal/orgs/org-1/bot-links/challenges',
+      {
+        event: {
+          integrationId: 'int-1',
+          organizationId: 'org-1',
+          platform: 'TELEGRAM',
+          remoteUserId: '42',
+          channelId: '42',
+          sourceEventId: '12',
+          isPrivate: true,
+        },
+      },
+      {
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-key',
+          'x-genfeed-bot-signature': expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      },
+    );
+    expect(ctx.reply).toHaveBeenCalledWith(
+      'Confirm your Genfeed account: https://app.example/confirm',
+    );
+    expect(JSON.stringify(ctx.reply.mock.calls)).not.toContain('test-token');
+    expect(JSON.stringify(ctx.reply.mock.calls)).not.toContain('test-key');
+  });
+  it('does not issue a link in group chats or infer a sender from chat ID', async () => {
+    const callback = await linkCallback();
+    const reply = vi.fn();
+    await callback({
+      chat: { id: 42, type: 'group' },
+      from: { id: 42 },
+      message: { message_id: 12 },
+      reply,
+    });
+    await callback({
+      chat: { id: 42, type: 'private' },
+      message: { message_id: 12 },
+      reply,
+    });
+    expect(mockHttpService.post).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(
+      'Start account linking in a private conversation with this bot.',
+    );
+  });
+  it('reports installation/API denial without a confirmation URL or raw error', async () => {
+    const callback = await linkCallback();
+    (firstValueFrom as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('private credential detail'),
+    );
+    const reply = vi.fn();
+    await callback({
+      chat: { id: 42, type: 'private' },
+      from: { id: 42 },
+      message: { message_id: 12 },
+      reply,
+    });
+    expect(reply).toHaveBeenCalledWith(
+      'Account linking is unavailable. Send a new private link request.',
+    );
+    expect(JSON.stringify(reply.mock.calls)).not.toContain('credential detail');
   });
 });

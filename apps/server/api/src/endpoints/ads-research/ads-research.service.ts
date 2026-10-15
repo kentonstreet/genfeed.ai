@@ -1,3 +1,4 @@
+import type { WorkflowInitiatingActor } from '@api/authorization/brand-access/workflow-actor.util';
 import type { AdPerformanceDocument } from '@api/collections/ad-performance/schemas/ad-performance.schema';
 import { AdPerformanceService } from '@api/collections/ad-performance/services/ad-performance.service';
 import { CreativePatternsService } from '@api/collections/creative-patterns/creative-patterns.service';
@@ -8,7 +9,6 @@ import {
   resolveAdsLaunchObjectives,
   toPlatformLabel,
 } from '@api/endpoints/ads-research/ads-launch-goals.util';
-import { parseAdsResearchNumber } from '@api/endpoints/ads-research/ads-research-metrics.util';
 import { resolveOptionalProvider } from '@api/helpers/utils/module-ref/resolve-optional-provider.util';
 import { isEntityId } from '@api/helpers/validation/entity-id.validator';
 import { mapAdsCredentialPlatform } from '@api/services/ads-gateway/ads-credential-platform.util';
@@ -62,6 +62,7 @@ interface DetailContext {
 }
 
 interface RemixWorkflowInput {
+  initiatingActor?: WorkflowInitiatingActor;
   userId: string;
   organizationId: string;
   brandId?: string;
@@ -277,6 +278,8 @@ export class AdsResearchService {
         templateId: 'ad-remix-review',
         trigger: WorkflowTrigger.SCHEDULED,
       },
+      undefined,
+      input.initiatingActor,
     );
 
     return {
@@ -685,11 +688,11 @@ export class AdsResearchService {
       channel: AdsChannel.ALL,
       cta: item.ctaText as string | undefined,
       explanation: this.buildExplanation({
-        ctr: parseAdsResearchNumber(item.ctr),
+        ctr: this.toNumber(item.ctr),
         industry: item.industry as string | undefined,
         patterns,
         platform,
-        roas: parseAdsResearchNumber(item.roas),
+        roas: this.toNumber(item.roas),
       }),
       headline: item.headlineText as string | undefined,
       firstSeenAt: item.presentationStartDate as string | undefined,
@@ -700,19 +703,19 @@ export class AdsResearchService {
       lastSeenAt: item.presentationEndDate as string | undefined,
       metricLabel: 'Performance score',
       metrics: {
-        clicks: parseAdsResearchNumber(item.clicks),
-        conversionRate: parseAdsResearchNumber(item.conversionRate),
-        conversions: parseAdsResearchNumber(item.conversions),
-        cpc: parseAdsResearchNumber(item.cpc),
-        cpm: parseAdsResearchNumber(item.cpm),
-        ctr: parseAdsResearchNumber(item.ctr),
-        impressions: parseAdsResearchNumber(item.impressions),
-        performanceScore: parseAdsResearchNumber(item.performanceScore),
-        revenue: parseAdsResearchNumber(item.revenue),
-        roas: parseAdsResearchNumber(item.roas),
-        spend: parseAdsResearchNumber(item.spend),
+        clicks: this.toNumber(item.clicks),
+        conversionRate: this.toNumber(item.conversionRate),
+        conversions: this.toNumber(item.conversions),
+        cpc: this.toNumber(item.cpc),
+        cpm: this.toNumber(item.cpm),
+        ctr: this.toNumber(item.ctr),
+        impressions: this.toNumber(item.impressions),
+        performanceScore: this.toNumber(item.performanceScore),
+        revenue: this.toNumber(item.revenue),
+        roas: this.toNumber(item.roas),
+        spend: this.toNumber(item.spend),
       },
-      metricValue: parseAdsResearchNumber(item.performanceScore),
+      metricValue: this.toNumber(item.performanceScore),
       patternSummary: patterns,
       platform,
       previewUrl: imageUrls[0] || videoUrls[0],
@@ -731,11 +734,9 @@ export class AdsResearchService {
     };
   }
 
-  /**
-   * Turn the run dates an archive published into a persistence score. This is
-   * the only performance-shaped number a competitor row ever carries: archives
-   * disclose how long an advertiser kept paying for a creative, never how it
-   * performed, and a long-lived ad is the honest proxy for a winning one.
+  /** Archive run dates measure creative persistence, a proxy for performance;
+   * archives disclose how long ads ran, never their delivery performance.
+   * This proxy never implies measured clicks or conversions.
    */
   private resolveItemLongevity(
     item: AdPerformanceDocument,
@@ -827,7 +828,7 @@ export class AdsResearchService {
       lastSeenAt: item.presentationEndDate as string | undefined,
       longevity,
       metricLabel: 'Estimated reach',
-      metricValue: parseAdsResearchNumber(item.estimatedReach),
+      metricValue: this.toNumber(item.estimatedReach),
       metrics: {},
       patternSummary,
       platform,
@@ -945,9 +946,7 @@ export class AdsResearchService {
     platform: string | undefined,
   ): Promise<string | undefined> {
     const harnessGenerationService = this.resolveHarnessGenerationService();
-    if (!brandId || !harnessGenerationService) {
-      return undefined;
-    }
+    if (!brandId || !harnessGenerationService) return undefined;
     const brief = await harnessGenerationService.resolveBrief({
       userId,
       brandId,
@@ -956,8 +955,7 @@ export class AdsResearchService {
       organizationId,
       platform,
     });
-    const formatted = harnessGenerationService.formatBrief(brief);
-    return formatted || undefined;
+    return harnessGenerationService.formatBrief(brief) || undefined;
   }
 
   private assertRemixAllowed(ad: AdsResearchDetail): void {
@@ -1170,5 +1168,18 @@ export class AdsResearchService {
       loginCustomerId: params.loginCustomerId,
       organizationId,
     };
+  }
+
+  private toNumber(value: unknown): number | undefined {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : undefined;
+    }
+
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+
+    return undefined;
   }
 }

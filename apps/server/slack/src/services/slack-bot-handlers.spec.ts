@@ -20,7 +20,13 @@ interface TestPayload {
   command?: { user_id: string };
   context?: Record<string, unknown>;
   event?: { file_id: string };
-  message?: { user?: string; text?: string };
+  message?: {
+    user?: string;
+    text?: string;
+    channel?: string;
+    channel_type?: string;
+    ts?: string;
+  };
   next?: Mock;
   respond?: Mock;
   say?: Mock;
@@ -47,6 +53,7 @@ function createHandlerMocks() {
     getUserSettings: vi.fn(),
     handleCancelCommand: vi.fn().mockResolvedValue(undefined),
     handleEdit: vi.fn().mockResolvedValue(undefined),
+    handleLink: vi.fn().mockResolvedValue(undefined),
     handleRun: vi.fn().mockResolvedValue(undefined),
     handleSettingsCommand: vi.fn().mockResolvedValue(undefined),
     handleStatusCommand: vi.fn().mockResolvedValue(undefined),
@@ -135,6 +142,79 @@ describe('registerSlackBotHandlers', () => {
     expect(app.action).toHaveBeenCalledTimes(6);
     expect(app.message).toHaveBeenCalledTimes(1);
     expect(app.event).toHaveBeenCalledWith('file_shared', expect.any(Function));
+  });
+
+  describe('private account linking', () => {
+    it('captures the actual SDK sender and private channel before forwarding', async () => {
+      register();
+      const say = vi.fn();
+      await (app.message.mock.calls[0][0] as CapturedHandler)({
+        message: {
+          user: 'U-allowed',
+          text: '/link',
+          channel: 'D-private',
+          channel_type: 'im',
+          ts: '123.456',
+        },
+        say,
+      });
+      expect(handlers.handleLink).toHaveBeenCalledWith(
+        {
+          integrationId: 'integration-1',
+          organizationId: 'org-1',
+          platform: 'SLACK',
+          remoteUserId: 'U-allowed',
+          channelId: 'D-private',
+          sourceEventId: '123.456',
+          isPrivate: true,
+        },
+        say,
+      );
+      expect(handlers.getSession).not.toHaveBeenCalled();
+    });
+    it('never creates a challenge or confirmation link in a public channel', async () => {
+      register();
+      const say = vi.fn();
+      await (app.message.mock.calls[0][0] as CapturedHandler)({
+        message: {
+          user: 'U-allowed',
+          text: 'link',
+          channel: 'C-public',
+          channel_type: 'channel',
+          ts: '123.456',
+        },
+        say,
+      });
+      expect(handlers.handleLink).not.toHaveBeenCalled();
+      expect(say).toHaveBeenCalledWith(
+        'Start account linking in a private conversation with this bot.',
+      );
+      expect(handlers.getSession).not.toHaveBeenCalled();
+    });
+    it('does not guess private sender proof from a channel prefix or absent native event', async () => {
+      register();
+      const say = vi.fn();
+      const callback = app.message.mock.calls[0][0] as CapturedHandler;
+      await callback({
+        message: {
+          user: 'U-allowed',
+          text: 'link',
+          channel: 'D-private',
+          ts: '123.456',
+        },
+        say,
+      });
+      await callback({
+        message: {
+          user: 'U-allowed',
+          text: 'link',
+          channel: 'D-private',
+          channel_type: 'im',
+        },
+        say,
+      });
+      expect(handlers.handleLink).not.toHaveBeenCalled();
+    });
   });
 
   describe('authorization middleware', () => {

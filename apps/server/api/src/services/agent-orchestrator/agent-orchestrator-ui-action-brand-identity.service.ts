@@ -239,7 +239,6 @@ export class AgentOrchestratorUiActionBrandIdentityService {
           threadId: input.params.threadId,
           userId: input.params.context.userId,
           isApiKey: input.params.context.apiKeyContext?.isApiKey,
-          apiKeyId: input.params.context.apiKeyContext?.apiKeyId,
           scopes: input.params.context.apiKeyContext?.scopes,
         });
     if (typeof updatedThread.contextVersion !== 'number') {
@@ -254,7 +253,6 @@ export class AgentOrchestratorUiActionBrandIdentityService {
       threadId: input.params.threadId,
       userId: input.params.context.userId,
       isApiKey: input.params.context.apiKeyContext?.isApiKey,
-      apiKeyId: input.params.context.apiKeyContext?.apiKeyId,
       scopes: input.params.context.apiKeyContext?.scopes,
     });
     if (!refreshed.existingScope) {

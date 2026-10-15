@@ -7,7 +7,10 @@ import {
   WorkflowExecutorService,
 } from '@api/collections/workflows/services/workflow-executor.service';
 import { WorkflowSchedulerService } from '@api/collections/workflows/services/workflow-scheduler.service';
-import { SystemWorkflowRunnerService } from '@api/collections/workflows/system-workflow-runner.service';
+import {
+  SystemWorkflowRunnerService,
+  type SystemWorkflowStartedExecution,
+} from '@api/collections/workflows/system-workflow-runner.service';
 import { runWithActionOrigin } from '@api/index';
 import { ActionOrigin, WorkflowExecutionStatus } from '@genfeedai/contracts';
 import { WORKFLOW_EXECUTION_QUEUE } from '@genfeedai/contracts/queue';
@@ -82,22 +85,13 @@ export class WorkflowExecutionProcessor extends WorkerHost {
     try {
       switch (data.type) {
         case 'trigger':
-          return await this.queueService.runWithQueuedOrganizationModule(
-            job.data,
-            () => this.processTrigger(job),
-          );
+          return await this.processTrigger(job);
 
         case 'delay-resume':
-          return await this.queueService.runWithQueuedOrganizationModule(
-            job.data,
-            () => this.processDelayResume(job),
-          );
+          return await this.processDelayResume(job);
 
         case 'scheduled-fire':
-          return await this.queueService.runWithQueuedOrganizationModule(
-            job.data,
-            () => this.processScheduledFire(job),
-          );
+          return await this.processScheduledFire(job);
 
         case 'system-run':
           return await this.processSystemRun(job);
@@ -121,15 +115,19 @@ export class WorkflowExecutionProcessor extends WorkerHost {
     if (!systemRun) {
       throw new Error('System workflow job missing registered workflow input');
     }
+    let failedParent: SystemWorkflowStartedExecution | undefined;
     try {
-      return await this.queueService.runWithQueuedOrganizationModule(
-        job.data,
-        () =>
-          this.systemWorkflowRunner.runWithRegisteredWorkflowModule(
-            systemRun.input,
-            () => this.executeSystemRun(job, systemRun),
-          ),
-      );
+      return await this.executeSystemRun(job, systemRun, async (proof) => {
+        if (
+          proof.organizationId !== systemRun.input.organizationId ||
+          (systemRun.input.userId && proof.userId !== systemRun.input.userId)
+        ) {
+          throw new Error(
+            'Started system workflow principal does not match queued input',
+          );
+        }
+        failedParent = proof;
+      });
     } catch (failure: unknown) {
       // Only a transient failure is worth another attempt; anything else fails
       // once instead of multiplying load on a shared queue (#5633).
@@ -142,100 +140,67 @@ export class WorkflowExecutionProcessor extends WorkerHost {
       const isTerminalAttempt =
         error instanceof UnrecoverableError ||
         (job.attemptsMade ?? 0) + 1 >= attempts;
-      if (!isTerminalAttempt) {
+      if (!systemRun.failureWorkflow || !isTerminalAttempt) {
         throw error;
       }
-      // Old jobs may predate a fixed failure payload. Registered code-owned
-      // compensation also takes precedence over an editable queued payload.
-      const failureWorkflow =
-        this.systemWorkflowRunner.getRegisteredFailureWorkflow(
-          systemRun.input,
-        ) ?? systemRun.failureWorkflow;
-      if (!failureWorkflow) throw error;
       try {
+        const failureInputs = { ...systemRun.failureWorkflow.inputValues };
+        // A queued JSON value cannot supply a parent. This pointer is only a
+        // lineage reference; the failure action must verify the persisted row.
+        delete failureInputs.failedParent;
+        const lineage = failedParent
+          ? {
+              executionId: failedParent.executionId,
+              workflowId: failedParent.workflowId,
+              workflowVersionId: failedParent.workflowVersionId,
+            }
+          : undefined;
         await this.systemWorkflowRunner.runWorkflow({
-          actionType: failureWorkflow.canonicalId,
-          canonicalId: failureWorkflow.canonicalId,
+          actionType: systemRun.failureWorkflow.canonicalId,
+          canonicalId: systemRun.failureWorkflow.canonicalId,
           inputValues: {
-            ...failureWorkflow.inputValues,
-            // Terminal compensation receives the actual server error, never a queued override.
-            workflowError:
-              error instanceof Error ? error.message : String(error),
+            ...failureInputs,
+            ...(lineage ? { failedParent: lineage } : {}),
           },
           metadata: {
             failedCanonicalId: systemRun.input.canonicalId,
             failedJobId: job.id,
+            ...(lineage ? { failedParent: lineage } : {}),
           },
           organizationId: systemRun.input.organizationId,
           source: `workflow-failure:${systemRun.input.canonicalId}`,
           userId: systemRun.input.userId,
         });
       } catch (compensationError: unknown) {
-        const doubleFailure = new AggregateError(
+        throw new AggregateError(
           [error, compensationError],
-          `System workflow ${systemRun.input.canonicalId} and registered failure workflow ${failureWorkflow.canonicalId} both failed`,
+          `System workflow ${systemRun.input.canonicalId} and registered failure workflow ${systemRun.failureWorkflow.canonicalId} both failed`,
         );
-        await this.settleAfterCompensationFailure(
-          job,
-          systemRun.input,
-          failureWorkflow.canonicalId,
-          error,
-          doubleFailure,
-        );
-        throw toTerminalSystemRunError(doubleFailure);
       }
       throw error;
     }
   }
 
-  /**
-   * The workflow and its compensation both failed, so nothing marked the owned
-   * record terminal. The registered last resort does, and the double failure
-   * is reported once whatever happens (#6655).
-   */
-  private async settleAfterCompensationFailure(
-    job: Job<WorkflowExecutionJobData>,
-    input: NonNullable<WorkflowExecutionJobData['systemRun']>['input'],
-    failureCanonicalId: string,
-    workflowError: unknown,
-    doubleFailure: AggregateError,
-  ): Promise<void> {
-    let isSettled = false;
-    try {
-      isSettled = await this.systemWorkflowRunner.terminalFailures.settle(
-        input,
-        workflowError instanceof Error
-          ? workflowError.message
-          : String(workflowError),
-      );
-    } catch (settleError: unknown) {
-      this.logger.error(
-        `${this.logContext} terminal failure settlement failed`,
-        settleError,
-        { canonicalId: input.canonicalId, jobId: job.id },
-      );
-    }
-    this.logger.error(
-      `${this.logContext} workflow and failure workflow both failed`,
-      doubleFailure,
-      {
-        canonicalId: input.canonicalId,
-        failureCanonicalId,
-        isSettled,
-        jobId: job.id,
-        organizationId: input.organizationId,
-      },
-    );
-  }
-
   private async executeSystemRun(
     job: Job<WorkflowExecutionJobData>,
     systemRun: NonNullable<WorkflowExecutionJobData['systemRun']>,
+    onStarted: (proof: SystemWorkflowStartedExecution) => Promise<void>,
   ): Promise<unknown> {
     const prior = systemRun.priorExecution;
+    if (prior) {
+      const proof = await this.systemWorkflowRunner.readStartedExecution(
+        prior.executionId,
+        systemRun.input.organizationId,
+        prior.userId,
+      );
+      await onStarted(proof);
+    }
     const result = prior
       ? await this.continuePriorSystemRun(systemRun, prior)
-      : await this.systemWorkflowRunner.startWorkflow(systemRun.input);
+      : await this.systemWorkflowRunner.startWorkflow(
+          systemRun.input,
+          onStarted,
+        );
     try {
       await job.updateData({
         ...job.data,
@@ -494,16 +459,6 @@ export class WorkflowExecutionProcessor extends WorkerHost {
       throw new Error('Delay resume job missing delayResumeData');
     }
 
-    return this.systemWorkflowRunner.runWithStoredWorkflowModule(
-      delayResumeData,
-      () => this.resumeAdmittedDelay(job, delayResumeData),
-    );
-  }
-
-  private async resumeAdmittedDelay(
-    job: Job<WorkflowExecutionJobData>,
-    delayResumeData: DelayResumeJobData,
-  ): Promise<unknown> {
     const result = await this.executorService.resumeAfterDelay(delayResumeData);
 
     if (result._delayJobData) {

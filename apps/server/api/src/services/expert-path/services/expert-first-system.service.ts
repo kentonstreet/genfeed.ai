@@ -1,3 +1,12 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { BrandMemoryService } from '@api/collections/brand-memory/services/brand-memory.service';
 import type { ContentPlanItemDocument } from '@api/collections/content-plan-items/schemas/content-plan-item.schema';
 import { ContentPlanItemsService } from '@api/collections/content-plan-items/services/content-plan-items.service';
@@ -16,6 +25,7 @@ import { formatHarnessBrief } from '@api/services/harness/harness-brief.util';
 import { collectKnowledgeReceipts } from '@api/services/harness/harness-context-sources.util';
 import { HarnessGenerationService } from '@api/services/harness/harness-generation.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import {
   ActivitySource,
   ContentPlanItemStatus,
@@ -37,7 +47,11 @@ import type {
 } from '@genfeedai/contracts/interfaces';
 import { readRecord } from '@genfeedai/utils/data/extract.util';
 import { LoggerService } from '@libs/logger/logger.service';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 
 const FIRST_SYSTEM_PERIOD_DAYS = 7;
@@ -109,6 +123,7 @@ export class ExpertFirstSystemService {
     private readonly harnessProfilesService: HarnessProfilesService,
     private readonly logger: LoggerService,
     private readonly moduleRef: ModuleRef,
+    private readonly brandAccess: BrandAccessService,
   ) {}
 
   // WorkflowsModule already imports the content-engine graph, so resolve the
@@ -120,11 +135,16 @@ export class ExpertFirstSystemService {
   async getReadiness(
     organizationId: string,
     brandId: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<IExpertFirstSystemReadiness> {
     const [profile, corpus, platforms] = await Promise.all([
-      this.harnessProfilesService.getActiveForBrand(organizationId, brandId),
-      this.expertCorpusService.summarize(organizationId, brandId),
-      this.resolvePlatforms(organizationId, brandId),
+      this.readAuthorized(organizationId, brandId, initiatingActor, () =>
+        this.harnessProfilesService.getActiveForBrand(organizationId, brandId),
+      ),
+      this.readAuthorized(organizationId, brandId, initiatingActor, () =>
+        this.expertCorpusService.summarize(organizationId, brandId),
+      ),
+      this.resolvePlatforms(organizationId, brandId, initiatingActor),
     ]);
 
     const missing: IExpertFirstSystemReadiness['missing'] = [];
@@ -147,11 +167,18 @@ export class ExpertFirstSystemService {
   async readRecord(
     organizationId: string,
     brandId: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<ExpertFirstSystemRecord> {
-    const [entry] = await this.brandMemoryService.listTypedEntries(
+    const [entry] = await this.readAuthorized(
       organizationId,
       brandId,
-      EXPERT_FIRST_SYSTEM_MEMORY_TYPE,
+      initiatingActor,
+      () =>
+        this.brandMemoryService.listTypedEntries(
+          organizationId,
+          brandId,
+          EXPERT_FIRST_SYSTEM_MEMORY_TYPE,
+        ),
     );
     const metadata = readRecord(entry?.metadata);
     const planId =
@@ -170,28 +197,52 @@ export class ExpertFirstSystemService {
   async getCurrentPlan(
     organizationId: string,
     brandId: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<{
     items: ContentPlanItemDocument[];
     plan: ContentPlanDocument;
   } | null> {
-    const record = await this.readRecord(organizationId, brandId);
+    const admit = async () => {
+      if (!initiatingActor) {
+        if (isCloudDeployment()) denyWorkflowActor();
+        return;
+      }
+      const actor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        initiatingActor,
+        organizationId,
+      );
+      await this.brandAccess.assert(actor, brandId);
+    };
+    await admit();
+    const record = await this.readRecord(
+      organizationId,
+      brandId,
+      initiatingActor,
+    );
     if (!record.planId) {
+      await admit();
       return null;
     }
 
     try {
+      await admit();
       const plan = await this.contentPlansService.getByIdOrFail(
         organizationId,
         record.planId,
         brandId,
       );
+      await admit();
       const items = await this.contentPlanItemsService.listByPlan(
         organizationId,
         record.planId,
       );
+      await admit();
       return { items, plan };
     } catch (error: unknown) {
       if (error instanceof NotFoundException) {
+        await admit();
         return null;
       }
       throw error;
@@ -199,6 +250,7 @@ export class ExpertFirstSystemService {
   }
 
   async generate(params: {
+    initiatingActor?: WorkflowInitiatingActor;
     brandId: string;
     organizationId: string;
     userId: string;
@@ -208,7 +260,11 @@ export class ExpertFirstSystemService {
     // Generation outlives the client's request ceiling, so a retry after a
     // timed-out success must return the plan that already exists instead of
     // billing a second one.
-    const existing = await this.getCurrentPlan(organizationId, brandId);
+    const existing = await this.getCurrentPlan(
+      organizationId,
+      brandId,
+      params.initiatingActor,
+    );
     if (existing) {
       return {
         ...existing,
@@ -216,7 +272,11 @@ export class ExpertFirstSystemService {
       };
     }
 
-    const readiness = await this.getReadiness(organizationId, brandId);
+    const readiness = await this.getReadiness(
+      organizationId,
+      brandId,
+      params.initiatingActor,
+    );
     if (!readiness.isReady) {
       throw new BadRequestException({
         detail: `The first content system needs: ${readiness.missing.join(', ')}.`,
@@ -253,13 +313,19 @@ export class ExpertFirstSystemService {
         ActivitySource.EXPERT_FIRST_SYSTEM,
         { brandId },
       );
-      await this.writeRecord(organizationId, brandId, {
-        planId: String(result.plan.id),
-        status: 'generated',
-      });
+      await this.writeRecord(
+        organizationId,
+        brandId,
+        {
+          planId: String(result.plan.id),
+          status: 'generated',
+        },
+        params.initiatingActor,
+      );
 
       return result;
     } catch (error: unknown) {
+      if (error instanceof ForbiddenException) throw error;
       const message =
         error instanceof Error ? error.message : 'First system failed';
       this.logger.error('Expert first content system generation failed', {
@@ -267,16 +333,22 @@ export class ExpertFirstSystemService {
         error: message,
         organizationId,
       });
-      await this.writeRecord(organizationId, brandId, {
-        error: message,
-        status: 'failed',
-      });
+      await this.writeRecord(
+        organizationId,
+        brandId,
+        {
+          error: message,
+          status: 'failed',
+        },
+        params.initiatingActor,
+      );
       throw error;
     }
   }
 
   async applyItemAction(params: {
     action: ExpertFirstSystemItemAction;
+    initiatingActor?: WorkflowInitiatingActor;
     brandId: string;
     itemId: string;
     organizationId: string;
@@ -286,6 +358,22 @@ export class ExpertFirstSystemService {
     userId: string;
   }): Promise<{ item: ContentPlanItemDocument }> {
     const { organizationId } = params;
+    const admit = async () => {
+      if (!params.initiatingActor) {
+        if (isCloudDeployment()) denyWorkflowActor();
+        return;
+      }
+      if (params.initiatingActor.userId !== params.userId) denyWorkflowActor();
+      const actor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        params.initiatingActor,
+        organizationId,
+      );
+      await this.brandAccess.assert(actor, params.brandId);
+      return actor;
+    };
+    await admit();
     const plan = await this.contentPlansService.getByIdOrFail(
       organizationId,
       params.planId,
@@ -298,6 +386,7 @@ export class ExpertFirstSystemService {
       );
     }
 
+    await admit();
     const item = await this.contentPlanItemsService.getByIdOrFail(
       organizationId,
       params.itemId,
@@ -315,6 +404,7 @@ export class ExpertFirstSystemService {
     if (params.action === 'edit' && !hasEdits) {
       throw new BadRequestException('Provide a topic or prompt to edit.');
     }
+    await admit();
     const edited = hasEdits
       ? await this.contentPlanItemsService.updateContent(
           organizationId,
@@ -340,19 +430,31 @@ export class ExpertFirstSystemService {
       };
     }
 
+    const actor = await admit();
+    const inputValues = {
+      brandId: params.brandId,
+      item: { id: params.itemId },
+      userId: params.userId,
+      ...(actor ? { initiatingActor: captureWorkflowActor(actor) } : {}),
+    };
     await this.systemWorkflowRunner.runWorkflow<Record<string, unknown>>({
       actionType: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
       canonicalId: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
-      inputValues: {
-        brandId: params.brandId,
-        item: { id: params.itemId },
-        userId: params.userId,
-      },
+      inputValues,
+      ...(actor
+        ? {
+            metadata: {
+              initiatingActorKey: workflowActorKey(actor),
+              initiatingRequestKey: workflowRequestKey(inputValues),
+            },
+          }
+        : {}),
       organizationId,
       source: 'api:expert-path.first-system.approve-item',
       trigger: WorkflowExecutionTrigger.API,
       userId: params.userId,
     });
+    await admit();
 
     return {
       item: await this.contentPlanItemsService.getByIdOrFail(
@@ -438,14 +540,46 @@ export class ExpertFirstSystemService {
    * Connected credentials win; with none connected the plan uses the
    * platforms named in the interview and marks them "connect to schedule".
    */
+  private async readAuthorized<T>(
+    organizationId: string,
+    brandId: string,
+    initiatingActor: WorkflowInitiatingActor | undefined,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const admit = async () => {
+      if (!initiatingActor) {
+        if (isCloudDeployment()) denyWorkflowActor();
+        return;
+      }
+      const actor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        initiatingActor,
+        organizationId,
+      );
+      await this.brandAccess.assert(actor, brandId);
+    };
+    await admit();
+    const value = await work();
+    await admit();
+    return value;
+  }
+
   private async resolvePlatforms(
     organizationId: string,
     brandId: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<{ isUsingInterviewPlatforms: boolean; platforms: string[] }> {
-    const credentials = await this.prisma.credential.findMany({
-      select: { platform: true },
-      where: scopedWhere(organizationId, { brandId, isConnected: true }),
-    });
+    const credentials = await this.readAuthorized(
+      organizationId,
+      brandId,
+      initiatingActor,
+      () =>
+        this.prisma.credential.findMany({
+          select: { platform: true },
+          where: scopedWhere(organizationId, { brandId, isConnected: true }),
+        }),
+    );
     const connected = Array.from(
       new Set(
         credentials
@@ -462,10 +596,16 @@ export class ExpertFirstSystemService {
       return { isUsingInterviewPlatforms: false, platforms: connected };
     }
 
-    const brand = await this.prisma.brand.findFirst({
-      select: { agentConfig: true },
-      where: scopedWhere(organizationId, { id: brandId }),
-    });
+    const brand = await this.readAuthorized(
+      organizationId,
+      brandId,
+      initiatingActor,
+      () =>
+        this.prisma.brand.findFirst({
+          select: { agentConfig: true },
+          where: scopedWhere(organizationId, { id: brandId }),
+        }),
+    );
     const strategy = readRecord(readRecord(brand?.agentConfig).strategy);
     return {
       isUsingInterviewPlatforms: true,
@@ -477,14 +617,35 @@ export class ExpertFirstSystemService {
     organizationId: string,
     brandId: string,
     record: ExpertFirstSystemRecord,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<void> {
-    await this.brandMemoryService.upsertTypedEntry(organizationId, brandId, {
+    const entry = {
       content: record.status,
-      metadata: {
-        ...record,
-        recordedAt: new Date().toISOString(),
-      },
+      metadata: { ...record, recordedAt: new Date().toISOString() },
       type: EXPERT_FIRST_SYSTEM_MEMORY_TYPE,
-    });
+    };
+    if (!initiatingActor) {
+      if (isCloudDeployment()) denyWorkflowActor();
+      await this.brandMemoryService.upsertTypedEntry(
+        organizationId,
+        brandId,
+        entry,
+      );
+      return;
+    }
+    await this.brandMemoryService.upsertTypedEntry(
+      organizationId,
+      brandId,
+      entry,
+      async (tx) => {
+        const actor = await refreshWorkflowActor(
+          tx,
+          this.brandAccess,
+          initiatingActor,
+          organizationId,
+        );
+        await this.brandAccess.assert(actor, brandId, tx);
+      },
+    );
   }
 }

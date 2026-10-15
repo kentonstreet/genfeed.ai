@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { ContentGatewayController } from '@api/services/content-gateway/content-gateway.controller';
 import { ContentGatewayService } from '@api/services/content-gateway/content-gateway.service';
@@ -80,6 +81,7 @@ describe('ContentGatewayController', () => {
       'content-writing',
       { prompt: 'x' },
       userId,
+      captureWorkflowActor({ organizationId, userId }),
     );
   });
 

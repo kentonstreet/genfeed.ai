@@ -1,10 +1,12 @@
+import type { BrandAccessActor } from '@api/authorization/brand-access/brand-access.service';
 import type {
   ISourcePost,
   NativeSocialAction,
   SocialTimelineAccount,
 } from '@genfeedai/contracts/interfaces';
 
-export type TimelineScope = {
+export type TimelineScope = BrandAccessActor & {
+  apiKeyId?: string;
   organizationId: string;
   brandId: string;
   userId: string;

@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { CreateWorkflowDto } from '@api/collections/workflows/dto/create-workflow.dto';
 import {
   GenerateWorkflowDto,
@@ -28,7 +29,6 @@ import {
   isWorkflowInputNodeType,
   isWorkflowOutputNode,
 } from '@api/collections/workflows/workflow-node-predicates';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -51,7 +51,6 @@ import type { Request } from 'express';
  */
 @AutoSwagger()
 @FeatureFlag('automation')
-@OrganizationModule('automation')
 @Controller('workflows')
 export class WorkflowBuilderController {
   constructor(
@@ -174,6 +173,13 @@ export class WorkflowBuilderController {
           trigger: WorkflowTrigger.MANUAL,
         } as CreateWorkflowDto,
         user.brandId || undefined,
+        captureWorkflowActor({
+          userId: user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
       );
 
       return serializeSingle(request, WorkflowSerializer, created);
@@ -262,6 +268,7 @@ export class WorkflowBuilderController {
     const errors: string[] = [];
     const requiredInputs = new Set<string>();
 
+    // Extract required workflow input nodes
     for (const node of workflow.nodes || []) {
       if (isWorkflowInputNodeType(node.type)) {
         const nodeConfig = (node.data as { config?: { inputName?: string } })
@@ -271,6 +278,7 @@ export class WorkflowBuilderController {
       }
     }
 
+    // Validate provided inputs match requirements
     for (const required of requiredInputs) {
       if (!(required in (body.inputs || {}))) {
         errors.push(`Missing required input: ${required}`);

@@ -31,7 +31,6 @@ const MAX_FONT_LIST_SCANS = 5;
 type ValidatedBrandFontUpload = ReturnType<typeof validateBrandFontUpload>;
 export interface BrandFontActor {
   isApiKey?: boolean;
-  apiKeyId?: string;
   scopes?: string[];
   organizationId: string;
   brandId: string;

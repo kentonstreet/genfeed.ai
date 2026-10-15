@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
 import { WorkflowExecutionController } from '@api/collections/workflows/controllers/workflow-execution.controller';
 import { WorkflowExecutionAuthorizationService } from '@api/collections/workflows/services/workflow-execution-authorization.service';
@@ -20,6 +21,7 @@ describe('WorkflowExecutionController', () => {
   const workflowId = testId('workflow');
 
   const mockUser: User = {
+    id: testId('user'),
     organizationId: testId('org'),
     userId: testId('user'),
   } as unknown as User;
@@ -266,6 +268,13 @@ describe('WorkflowExecutionController', () => {
       expect(
         mockWorkflowExecutionAuthorizationService.authorize,
       ).toHaveBeenCalledWith({
+        initiatingActor: captureWorkflowActor({
+          userId: mockUser.id,
+          organizationId: mockUser.organizationId,
+          isApiKey: mockUser.isApiKey,
+          apiKeyId: mockUser.apiKeyId,
+          scopes: mockUser.scopes,
+        }),
         expectedContextVersion: 4,
         organizationId: mockUser.organizationId,
         requestedBrandId: undefined,
@@ -316,6 +325,13 @@ describe('WorkflowExecutionController', () => {
       expect(
         mockWorkflowExecutionAuthorizationService.authorize,
       ).toHaveBeenCalledWith({
+        initiatingActor: captureWorkflowActor({
+          userId: mockUser.id,
+          organizationId: mockUser.organizationId,
+          isApiKey: mockUser.isApiKey,
+          apiKeyId: mockUser.apiKeyId,
+          scopes: mockUser.scopes,
+        }),
         expectedContextVersion: undefined,
         organizationId: mockUser.organizationId,
         requestedBrandId: undefined,

@@ -1,3 +1,4 @@
+import { BotAccountLinksModule } from '@api/services/bot-account-links/bot-account-links.module';
 /** Platform integrations, notifications, and onboarding HTTP modules. */
 
 import { IntegrationsModule } from '@api/endpoints/integrations/integrations.module';
@@ -46,6 +47,7 @@ import { Module } from '@nestjs/common';
 @Module({
   exports: [MicroservicesModule],
   imports: [
+    BotAccountLinksModule,
     BeehiivModule,
     DevtoModule,
     DiscordModule,

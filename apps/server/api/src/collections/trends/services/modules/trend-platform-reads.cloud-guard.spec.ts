@@ -1,3 +1,5 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import {
   buildGuardedDelegate,
   type GuardedRow,
@@ -9,6 +11,7 @@ import { TrendFilteringService } from '@api/collections/trends/services/modules/
 import { TrendQueryService } from '@api/collections/trends/services/modules/trend-query.service';
 import { TrendRefreshHealthService } from '@api/collections/trends/services/modules/trend-refresh-health.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole, PlatformRole } from '@genfeedai/contracts';
 import type { LoggerService } from '@libs/logger/logger.service';
 import { runWithTenantContext } from '@libs/prisma/tenant-context';
 
@@ -71,6 +74,16 @@ function setup() {
     },
   ];
   const prisma = {
+    user: {
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ platformRole: PlatformRole.SUPERADMIN }),
+    },
+    member: {
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ role: { key: MemberRole.USER }, brands: [] }),
+    },
     notificationEvent: buildGuardedDelegate(
       'NotificationEvent',
       notificationEvents,
@@ -188,11 +201,18 @@ describe('trend platform reads under the CLOUD tenant guard', () => {
     const freshness = new TrendCorpusFreshnessService(
       prisma,
       new TrendRefreshHealthService(prisma),
+      new BrandAccessService(prisma),
     );
 
     await expect(
       inTenant(() =>
-        freshness.getCorpusFreshnessHealth({ organizationId: ORG }),
+        freshness.getCorpusFreshnessHealth({
+          organizationId: ORG,
+          initiatingActor: captureWorkflowActor({
+            organizationId: ORG,
+            userId: 'user',
+          }),
+        }),
       ),
     ).resolves.toBeDefined();
     await expect(
@@ -200,8 +220,17 @@ describe('trend platform reads under the CLOUD tenant guard', () => {
         freshness.getCorpusFreshnessHealth({
           isPlatformAdmin: true,
           organizationId: ORG,
+          initiatingActor: captureWorkflowActor({
+            organizationId: ORG,
+            userId: 'user',
+          }),
         }),
       ),
     ).resolves.toBeDefined();
   });
 });
+
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => true,
+}));

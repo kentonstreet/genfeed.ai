@@ -1,3 +1,4 @@
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { TenantContextInterceptor } from '@api/helpers/interceptors/tenant-context/tenant-context.interceptor';
 import { TENANT_READ_POLICY } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { finalizeDeferredTextCredits } from '@api/helpers/utils/credits/finalize-deferred-credits.util';
@@ -74,6 +75,7 @@ describe('TrendsController', () => {
   const mockReq = {} as Request;
 
   const mockTrendsService = {
+    assertBrandRead: vi.fn().mockResolvedValue(undefined),
     fetchAndCacheHashtags: vi.fn(),
     fetchAndCacheSounds: vi.fn(),
     fetchAndCacheViralVideos: vi.fn(),
@@ -324,6 +326,11 @@ describe('TrendsController', () => {
         mockUser.organizationId,
         mockUser.brandId,
         'twitter',
+        {},
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toBeDefined();
       expect(result).toHaveProperty('data');
@@ -370,6 +377,10 @@ describe('TrendsController', () => {
         mockUser.brandId,
         'twitter',
         undefined,
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual({
         summary: {
@@ -439,6 +450,10 @@ describe('TrendsController', () => {
           platform: Platform.TWITTER,
           refresh: false,
         },
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual({
         items: mockResult.items,
@@ -520,6 +535,10 @@ describe('TrendsController', () => {
           sourceKind: undefined,
           trendId: 'trend-1',
         },
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual({
         items: [
@@ -565,6 +584,10 @@ describe('TrendsController', () => {
           sourceKind: 'paid_creative_reference',
           trendId: undefined,
         },
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
     });
 
@@ -650,6 +673,10 @@ describe('TrendsController', () => {
           platform: 'tiktok',
           types: ['hooks'],
         },
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual(
         expect.objectContaining({
@@ -696,6 +723,10 @@ describe('TrendsController', () => {
           limit: 8,
           platform: Platform.TWITTER,
         },
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual({
         accounts: [
@@ -749,6 +780,10 @@ describe('TrendsController', () => {
 
       expect(trendsService.getCorpusFreshnessHealth).toHaveBeenCalledWith({
         isPlatformAdmin: false,
+        initiatingActor: captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
         organizationId: mockUser.organizationId,
         platform: 'tiktok',
       });
@@ -773,6 +808,10 @@ describe('TrendsController', () => {
 
       expect(trendsService.getCorpusFreshnessHealth).toHaveBeenCalledWith({
         isPlatformAdmin: true,
+        initiatingActor: captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
         organizationId: adminUser.organizationId,
         platform: undefined,
       });
@@ -1049,6 +1088,10 @@ describe('TrendsController', () => {
         'trend-1',
         mockUser.organizationId,
         3,
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(result).toEqual({
         items: [
@@ -1085,12 +1128,20 @@ describe('TrendsController', () => {
       expect(trendsService.getTrendById).toHaveBeenCalledWith(
         'trend-1',
         mockUser.organizationId,
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(trendsService.getRelatedTrends).toHaveBeenCalledWith(
         mockTrend.topic,
         mockTrend.platform,
         mockUser.organizationId,
         10,
+        captureWorkflowActor({
+          organizationId: mockUser.organizationId,
+          userId: mockUser.userId ?? mockUser.id,
+        }),
       );
       expect(trendsService.analyzeTrendPatterns).toHaveBeenCalledWith(
         mockTrend.topic,

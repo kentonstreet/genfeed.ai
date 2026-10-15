@@ -120,6 +120,8 @@ describe('TrendDiscoveryHandler', () => {
       baseContext.organizationId,
       baseContext.brandId,
       'twitter',
+      {},
+      undefined,
     );
   });
 });

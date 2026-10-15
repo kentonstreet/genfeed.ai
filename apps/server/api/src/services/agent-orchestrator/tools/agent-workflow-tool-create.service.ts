@@ -1,3 +1,4 @@
+import { captureWorkflowInvocationActor } from '@api/authorization/brand-access/workflow-actor.util';
 import type {
   WorkflowEdgeDto,
   WorkflowInputVariableDto,
@@ -16,7 +17,6 @@ import type {
   RecurringScaffoldParams,
   RecurringTaskContentType,
 } from '@api/services/agent-orchestrator/tools/agent-workflow-tool.types';
-import { resolveToolSchedulePrincipal } from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import { createGenfeedActionNode } from '@genfeedai/actions';
 import { WorkflowTrigger } from '@genfeedai/contracts';
 import { APP_ROUTES } from '@genfeedai/contracts/constants';
@@ -251,9 +251,11 @@ export class AgentWorkflowToolCreateService {
         trigger: input.trigger as WorkflowTrigger,
       },
       undefined,
-      // Binds an enabled schedule to the authenticated caller; a system turn
-      // has none and the schedule is saved unbound.
-      resolveToolSchedulePrincipal(input.ctx),
+      captureWorkflowInvocationActor(
+        input.ctx.userId,
+        input.ctx.organizationId,
+        input.ctx.apiKeyContext,
+      ),
     );
 
     const workflowId = String(
@@ -386,7 +388,11 @@ export class AgentWorkflowToolCreateService {
         trigger: WorkflowTrigger.MANUAL,
       },
       undefined,
-      resolveToolSchedulePrincipal(ctx),
+      captureWorkflowInvocationActor(
+        ctx.userId,
+        ctx.organizationId,
+        ctx.apiKeyContext,
+      ),
     );
 
     const workflowId = String(workflow.id);

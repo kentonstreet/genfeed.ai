@@ -1,5 +1,10 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
 import {
+  capturePublicWorkflowActorEnvelope,
+  captureWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
+import { WorkflowExecutionReadScopeService } from '@api/authorization/brand-access/workflow-execution-read-scope.service';
+import {
   AgentFailureQueryDto,
   CreateWorkflowExecutionDto,
   UpdateWorkflowExecutionDto,
@@ -10,7 +15,6 @@ import { WorkflowExecutionsService } from '@api/collections/workflow-executions/
 import { AGENT_CONVERSATION_WORKFLOW_IDS } from '@api/collections/workflows/services/agent-runtime-workflow-definitions';
 import { WorkflowExecutionAuthorizationService } from '@api/collections/workflows/services/workflow-execution-authorization.service';
 import { WorkflowExecutorService } from '@api/collections/workflows/services/workflow-executor.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { RolesDecorator } from '@api/helpers/decorators/roles/roles.decorator';
@@ -63,7 +67,6 @@ import type { Request } from 'express';
 @ApiTags('Workflow Executions')
 @ApiBearerAuth()
 @FeatureFlag('automation')
-@OrganizationModule('automation')
 @Controller('workflow-executions')
 @UseGuards(RolesGuard)
 export class WorkflowExecutionsController {
@@ -71,6 +74,7 @@ export class WorkflowExecutionsController {
     private readonly workflowExecutionsService: WorkflowExecutionsService,
     private readonly workflowExecutionAuthorizationService: WorkflowExecutionAuthorizationService,
     private readonly moduleRef: ModuleRef,
+    private readonly readScopes: WorkflowExecutionReadScopeService,
   ) {}
 
   private get workflowExecutorService(): WorkflowExecutorService {
@@ -81,6 +85,28 @@ export class WorkflowExecutionsController {
       throw new Error('WorkflowExecutorService is not available');
     }
     return service;
+  }
+
+  private reader(user: User, organizationId = user.organizationId) {
+    return captureWorkflowActor({
+      userId: user.id,
+      organizationId,
+      isApiKey: user.isApiKey,
+      apiKeyId: user.apiKeyId,
+      scopes: user.scopes,
+    });
+  }
+
+  private async opaqueReaderSnapshot(
+    reader: ReturnType<WorkflowExecutionsController['reader']>,
+  ) {
+    try {
+      return await this.readScopes.snapshot(reader);
+    } catch (error) {
+      if (error instanceof ForbiddenException)
+        throw new NotFoundException('Workflow execution not found');
+      throw error;
+    }
   }
 
   private buildFindAllQuery(
@@ -133,6 +159,8 @@ export class WorkflowExecutionsController {
       user,
       req,
     );
+    const reader = this.reader(user, tenant.organizationId);
+    const admission = await this.readScopes.snapshot(reader);
     if (query.view === 'statistics') {
       const dayStart = new Date(query.dayStart ?? '');
       const dayEnd = new Date(query.dayEnd ?? '');
@@ -146,20 +174,31 @@ export class WorkflowExecutionsController {
           'A valid dayStart and dayEnd window of at most 26 hours is required',
         );
       }
-      return {
-        data: await this.workflowExecutionsService.getCustomerSummary(
-          tenant.organizationId,
-          query,
-          dayStart,
-          dayEnd,
-        ),
-      };
+      const data = await this.workflowExecutionsService.getCustomerSummary(
+        tenant.organizationId,
+        query,
+        dayStart,
+        dayEnd,
+        admission.where,
+      );
+      await this.readScopes.assertUnchanged(reader, admission.key);
+      return { data };
     }
     const parsedLimit =
       limit !== undefined ? Number(limit) : (query.limit ?? undefined);
     const parsedOffset = offset !== undefined ? Number(offset) : 0;
     const result = await this.workflowExecutionsService.findAll(
-      this.buildFindAllQuery(tenant.organizationId, query),
+      {
+        ...this.buildFindAllQuery(tenant.organizationId, query),
+        where: {
+          organizationId: tenant.organizationId,
+          isDeleted: false,
+          AND: [
+            buildCustomerExecutionWhere(tenant.organizationId, query),
+            admission.where,
+          ],
+        },
+      },
       {
         customLabels,
         ...QueryDefaultsUtil.getPaginationDefaults({
@@ -172,6 +211,7 @@ export class WorkflowExecutionsController {
         offset: !Number.isNaN(parsedOffset) ? parsedOffset : 0,
       },
     );
+    await this.readScopes.assertUnchanged(reader, admission.key);
     return serializeCollection(req, WorkflowExecutionSerializer, result);
   }
 
@@ -266,14 +306,20 @@ export class WorkflowExecutionsController {
   @ApiOperation({ summary: 'Get execution statistics for a workflow' })
   @ApiParam({ description: 'Workflow ID', name: 'workflowId' })
   @ApiResponse({ description: 'Execution statistics', status: 200 })
-  getExecutionStats(
+  async getExecutionStats(
     @CurrentUser() user: User,
     @Param('workflowId') workflowId: string,
   ) {
-    return this.workflowExecutionsService.getExecutionStats(
+    const organizationId = resolveTenantReadScope(user).organizationId;
+    const reader = this.reader(user, organizationId);
+    const admission = await this.readScopes.snapshot(reader);
+    const result = await this.workflowExecutionsService.getExecutionStats(
       workflowId,
-      resolveTenantReadScope(user).organizationId,
+      organizationId,
+      admission.where,
     );
+    await this.readScopes.assertUnchanged(reader, admission.key);
+    return result;
   }
 
   @TenantReadPolicy('selected')
@@ -287,6 +333,11 @@ export class WorkflowExecutionsController {
     @CurrentUser() user: User,
     @Param('id') id: string,
   ) {
+    const reader = this.reader(
+      user,
+      resolveTenantReadScope(user).organizationId,
+    );
+    const admission = await this.opaqueReaderSnapshot(reader);
     const execution =
       await this.workflowExecutionsService.findOneWithAccounting({
         ...(getIsSuperAdmin(user, req)
@@ -298,10 +349,13 @@ export class WorkflowExecutionsController {
               resolveTenantReadScope(user).organizationId,
             )),
         id,
+        AND: [
+          buildCustomerExecutionWhere(reader.organizationId),
+          admission.where,
+        ],
       });
-    if (!execution) {
-      throw new NotFoundException('Execution');
-    }
+    if (!execution) throw new NotFoundException('Workflow execution not found');
+    await this.readScopes.assertUnchanged(reader, admission.key);
     return serializeSingle(req, WorkflowExecutionSerializer, execution);
   }
 
@@ -315,19 +369,37 @@ export class WorkflowExecutionsController {
     @Body() dto: CreateWorkflowExecutionDto,
   ) {
     const scope = await this.workflowExecutionAuthorizationService.authorize({
+      initiatingActor: captureWorkflowActor({
+        userId: user.id,
+        organizationId: user.organizationId,
+        isApiKey: user.isApiKey,
+        apiKeyId: user.apiKeyId,
+        scopes: user.scopes,
+      }),
       expectedContextVersion: dto.expectedContextVersion,
       organizationId: user.organizationId,
       requestedBrandId: user.brandId || undefined,
       threadId: dto.threadId,
-      userId: user.userId ?? user.id,
+      userId: user.id,
       workflowId: dto.workflowId,
     });
+    const envelope = capturePublicWorkflowActorEnvelope(
+      {
+        userId: user.userId ?? user.id,
+        organizationId: user.organizationId,
+        isApiKey: user.isApiKey,
+        apiKeyId: user.apiKeyId,
+        scopes: user.scopes,
+      },
+      dto.inputValues ?? {},
+      dto.metadata,
+    );
     const result = await this.workflowExecutorService.executeManualWorkflow(
       dto.workflowId,
       user.userId ?? user.id,
       user.organizationId,
-      dto.inputValues ?? {},
-      dto.metadata,
+      envelope.inputValues,
+      envelope.metadata,
       dto.trigger,
       scope,
     );
@@ -339,7 +411,6 @@ export class WorkflowExecutionsController {
   }
 
   @Patch(':id')
-  @OrganizationModule('automation', 'cancel')
   @RolesDecorator(MemberRole.OWNER, MemberRole.ADMIN, MemberRole.CREATOR)
   @ApiOperation({ summary: 'Update an execution (cancel a running execution)' })
   @ApiParam({ description: 'Execution ID', name: 'id' })
@@ -351,10 +422,13 @@ export class WorkflowExecutionsController {
     @Param('id') id: string,
     @Body() dto: UpdateWorkflowExecutionDto,
   ) {
-    // Verify ownership first
+    const reader = this.reader(user);
+    const admission = await this.opaqueReaderSnapshot(reader);
+    // The current caller's live scope is part of the database lookup, before payload reads.
     const execution = await this.workflowExecutionsService.findOne({
       ...buildCustomerExecutionWhere(user.organizationId),
       id,
+      AND: [buildCustomerExecutionWhere(user.organizationId), admission.where],
     });
 
     if (!execution) {
@@ -369,10 +443,12 @@ export class WorkflowExecutionsController {
       );
     }
 
+    await this.readScopes.assertUnchanged(reader, admission.key);
     const cancelled = await this.workflowExecutionsService.cancelExecution(
       id,
       user.organizationId,
     );
+    await this.readScopes.assertUnchanged(reader, admission.key);
     return serializeSingle(req, WorkflowExecutionSerializer, cancelled);
   }
 }

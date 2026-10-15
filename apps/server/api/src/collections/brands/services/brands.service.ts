@@ -2,6 +2,12 @@ import {
   type BrandAccessActor,
   BrandAccessService,
 } from '@api/authorization/brand-access/brand-access.service';
+import {
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
+import type { GenerateBatchIdeasDto } from '@api/collections/batch-projects/dto/generate-batch-ideas.dto';
 import type { ApplyBrandKitDto } from '@api/collections/brands/dto/apply-brand-kit.dto';
 import type { CrawlBrandKitDto } from '@api/collections/brands/dto/crawl-brand-kit.dto';
 import { CreateBrandDto } from '@api/collections/brands/dto/create-brand.dto';
@@ -23,7 +29,6 @@ import { patchBrandWithLearningFenced } from '@api/collections/brands/services/b
 import { BrandLifecycleService } from '@api/collections/brands/services/brand-lifecycle.service';
 import { BrandOsPreviewService } from '@api/collections/brands/services/brand-os-preview.service';
 import {
-  type BrandRelocationActingUser,
   type BrandRelocationPreview,
   type BrandRelocationResult,
   BrandRelocationService,
@@ -33,7 +38,6 @@ import {
   tenantScopedBrandWhere,
 } from '@api/collections/brands/services/brand-tenant-scope.util';
 import { DefaultRecurringContentService } from '@api/collections/brands/services/default-recurring-content.service';
-import { assertValidMergedAgentSchedule } from '@api/collections/brands/utils/brand-agent-schedule-validation.util';
 import {
   bootstrapCredentialInclude,
   mapBootstrapCredentials,
@@ -54,8 +58,10 @@ import {
   slugAllocationBase,
 } from '@api/collections/shared/slug-allocation.util';
 import { SkillsService } from '@api/collections/skills/services/skills.service';
-import type { GenerateTurboIdeasDto } from '@api/collections/turbo-projects/dto/generate-turbo-ideas.dto';
-import type { WorkflowSchedulePrincipal } from '@api/collections/workflows/utils/workflow-schedule-actor.util';
+import {
+  computeNextRunAtOrThrow,
+  isSchedulableTimezone,
+} from '@api/collections/workflows/utils/cron-schedule.util';
 import {
   CACHE_PATTERNS,
   CACHE_TAGS,
@@ -71,14 +77,15 @@ import { HeyGenIdentityService } from '@api/services/integrations/heygen/service
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { BaseService } from '@api/shared/services/base/base.service';
 import { paginatedQueryCacheTag } from '@api/shared/utils/query-cache/query-cache.util';
+import { isCloudDeployment } from '@genfeedai/config';
 import type {
+  BatchIdea,
   IBrandKitApplyResult,
   IBrandKitAssetImportRequest,
   IBrandKitAssetImportResponse,
   IBrandKitDraft,
   IBrandKitResolvedAssets,
   IBrandOsDraftHandoff,
-  TurboIdea,
 } from '@genfeedai/contracts/interfaces';
 import { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
@@ -89,7 +96,6 @@ import {
 } from '@nestjs/common';
 
 export type {
-  BrandRelocationActingUser,
   BrandRelocationMovingResource,
   BrandRelocationPreview,
   BrandRelocationResult,
@@ -623,9 +629,35 @@ export class BrandsService extends BaseService<
     brandId: string,
     orgId: string,
     agentConfig: BrandAgentConfig | UpdateBrandAgentConfigDto,
-    principal?: WorkflowSchedulePrincipal | null,
     retryCount = 0,
+    configuringActor?: WorkflowInitiatingActor,
   ): Promise<BrandDocument | null> {
+    const incomingScheduleFields = isMergeableRecord(agentConfig.schedule)
+      ? agentConfig.schedule
+      : null;
+    const configuringSchedule = Boolean(
+      incomingScheduleFields &&
+        ['cronExpression', 'enabled', 'timezone'].some(
+          (key) => incomingScheduleFields[key] !== undefined,
+        ),
+    );
+    const admitConfiguration = async (
+      tx: Prisma.TransactionClient = this.prisma,
+    ) => {
+      if (!configuringSchedule) return;
+      if (!configuringActor) {
+        if (isCloudDeployment()) denyWorkflowActor();
+        return;
+      }
+      const current = await refreshWorkflowActor(
+        tx,
+        this.brandAccessService,
+        configuringActor,
+        orgId,
+      );
+      await this.brandAccessService.assert(current, brandId, tx);
+    };
+    await admitConfiguration();
     this.logger.debug('Updating brand agent config', {
       brandId,
       operation: 'updateAgentConfig',
@@ -686,7 +718,7 @@ export class BrandsService extends BaseService<
       updatedConfig[key] = value;
     }
 
-    assertValidMergedAgentSchedule(updatedConfig, hasScheduleUpdate);
+    this.validateMergedAgentSchedule(updatedConfig, hasScheduleUpdate);
 
     // Scope the WRITE, not just the lookup above, and compare the exact JSON
     // snapshot that was merged. The JSON predicate prevents concurrent config
@@ -696,15 +728,25 @@ export class BrandsService extends BaseService<
       storedConfig === null
         ? Prisma.AnyNull
         : (storedConfig as Prisma.InputJsonValue);
-    const result = await this.delegate.updateMany({
-      data: {
-        agentConfig: updatedConfig as Record<string, unknown>,
-      },
-      where: scopedWhere(orgId, {
-        agentConfig: { equals: expectedAgentConfig },
-        id: brandId,
-      }),
+    const writeWhere = scopedWhere(orgId, {
+      agentConfig: { equals: expectedAgentConfig },
+      id: brandId,
     });
+    const result =
+      configuringSchedule && isCloudDeployment()
+        ? await this.prisma.$transaction(async (tx) => {
+            await admitConfiguration(tx);
+            const updated = await tx.brand.updateMany({
+              data: { agentConfig: updatedConfig as Prisma.InputJsonValue },
+              where: writeWhere,
+            });
+            await admitConfiguration(tx);
+            return updated;
+          })
+        : await this.delegate.updateMany({
+            data: { agentConfig: updatedConfig as Record<string, unknown> },
+            where: writeWhere,
+          });
 
     if (result.count !== 1) {
       if (retryCount < 2) {
@@ -712,8 +754,8 @@ export class BrandsService extends BaseService<
           brandId,
           orgId,
           agentConfig,
-          principal,
           retryCount + 1,
+          configuringActor,
         );
       }
 
@@ -742,11 +784,49 @@ export class BrandsService extends BaseService<
         orgId,
         brandId,
         updatedConfig,
-        { isSchedulerRequired: false, principal: principal ?? undefined },
+        { isSchedulerRequired: false, initiatingActor: configuringActor },
       );
     }
 
+    await admitConfiguration();
     return updatedBrand;
+  }
+
+  private validateMergedAgentSchedule(
+    updatedConfig: Record<string, unknown>,
+    hasScheduleUpdate: boolean,
+  ): void {
+    if (!hasScheduleUpdate) {
+      return;
+    }
+
+    const mergedSchedule = isMergeableRecord(updatedConfig.schedule)
+      ? updatedConfig.schedule
+      : null;
+    const mergedCron =
+      typeof mergedSchedule?.cronExpression === 'string'
+        ? mergedSchedule.cronExpression.trim()
+        : '';
+    const mergedTimezone =
+      typeof mergedSchedule?.timezone === 'string'
+        ? mergedSchedule.timezone.trim()
+        : '';
+
+    if (mergedTimezone && !isSchedulableTimezone(mergedTimezone)) {
+      throw new BadRequestException(
+        `Invalid timezone "${mergedTimezone}". Use an IANA timezone name, for example "Europe/Berlin".`,
+      );
+    }
+
+    if (mergedCron) {
+      try {
+        computeNextRunAtOrThrow(mergedCron, mergedTimezone || 'UTC');
+      } catch {
+        throw new BadRequestException(
+          `Invalid cron expression "${mergedCron}". Use a valid cron schedule, for example "0 9 * * 1-5" for weekdays at 9:00 AM.`,
+        );
+      }
+    }
   }
 
   async crawlWebsiteBrandKitDraft(
@@ -857,7 +937,7 @@ export class BrandsService extends BaseService<
   async readClaimedBrandOsPreview(
     brandId: string,
     organizationId: string,
-  ): Promise<IBrandOsDraftHandoff | null> {
+  ): Promise<IBrandOsDraftHandoff> {
     const brand = (await this.delegate.findFirst({
       where: scopedWhere(organizationId, { id: brandId }),
     })) as BrandDocument | null;
@@ -880,12 +960,12 @@ export class BrandsService extends BaseService<
     );
   }
 
-  async generateTurboIdeas(
+  async generateBatchIdeas(
     brandId: string,
-    dto: GenerateTurboIdeasDto,
+    dto: GenerateBatchIdeasDto,
     organizationId: string,
-  ): Promise<TurboIdea[]> {
-    return this.brandGenerationService.generateTurboIdeas(
+  ): Promise<BatchIdea[]> {
+    return this.brandGenerationService.generateBatchIdeas(
       brandId,
       dto,
       organizationId,
@@ -910,7 +990,7 @@ export class BrandsService extends BaseService<
     updateBrandDto: Partial<UpdateBrandDto> & {
       organizationId?: string;
     },
-    actingUser: BrandRelocationActingUser,
+    actingUser: { userId: string; isSuperAdmin: boolean },
   ): Promise<BrandRelocationResult> {
     return this.brandRelocationService.relocateToOrganization(
       brandId,
@@ -923,7 +1003,7 @@ export class BrandsService extends BaseService<
   async previewRelocation(
     brandId: string,
     destOrgId: string,
-    actingUser: BrandRelocationActingUser,
+    actingUser: { userId: string; isSuperAdmin: boolean },
   ): Promise<BrandRelocationPreview> {
     return this.brandRelocationService.previewRelocation(
       brandId,

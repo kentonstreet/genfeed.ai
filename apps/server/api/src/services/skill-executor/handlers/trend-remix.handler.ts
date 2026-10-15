@@ -1,3 +1,4 @@
+import { admitWorkflowDispatch } from '@api/authorization/brand-access/workflow-actor.util';
 import { TrendsService } from '@api/collections/trends/services/trends.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatcher.service';
@@ -42,6 +43,7 @@ export class TrendRemixHandler implements SkillHandler {
   async execute(
     context: SkillExecutionContext,
     params: Record<string, unknown>,
+    admission?: () => Promise<void>,
   ): Promise<GeneratedContent> {
     const platform =
       typeof params.platform === 'string'
@@ -91,6 +93,7 @@ export class TrendRemixHandler implements SkillHandler {
       .filter((line): line is string => line !== null)
       .join('\n');
 
+    await admitWorkflowDispatch(admission);
     let content: string | undefined;
     try {
       const response = await this.llmDispatcherService.chatCompletion(
@@ -147,6 +150,7 @@ export class TrendRemixHandler implements SkillHandler {
       const trend = await this.trendsService.getTrendById(
         params.trendId,
         context.organizationId,
+        context.initiatingActor,
       );
 
       const trendOrganizationId = (
@@ -167,6 +171,8 @@ export class TrendRemixHandler implements SkillHandler {
       context.organizationId,
       context.brandId,
       platform,
+      {},
+      context.initiatingActor,
     );
 
     return response.trends[0] ?? null;

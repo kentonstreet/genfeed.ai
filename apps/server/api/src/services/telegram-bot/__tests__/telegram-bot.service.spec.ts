@@ -1,8 +1,10 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import type { SystemWorkflowRunnerService } from '@api/collections/workflows/system-workflow-runner.service';
 import { TelegramBotService } from '@api/services/telegram-bot/telegram-bot.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { Bot } from 'grammy';
 
+// Mock grammy
 vi.mock('grammy', () => ({
   Bot: vi.fn().mockImplementation(function Bot() {
     return {
@@ -69,6 +71,7 @@ describe('TelegramBotService', () => {
       mockLoggerService,
       mockSystemWorkflowRunner as unknown as SystemWorkflowRunnerService,
       mockPrisma as unknown as PrismaService,
+      new BrandAccessService(mockPrisma as unknown as PrismaService),
     );
   });
 

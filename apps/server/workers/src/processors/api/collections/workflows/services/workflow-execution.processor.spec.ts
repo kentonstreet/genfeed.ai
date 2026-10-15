@@ -1,4 +1,8 @@
 import type { WorkflowExecutionJobData } from '@api/collections/workflows/services/workflow-execution-queue.service';
+import type {
+  RunSystemWorkflowInput,
+  SystemWorkflowStartedExecution,
+} from '@api/collections/workflows/system-workflow-runner.service';
 import { getActionOriginContext } from '@api/index';
 import { ActionOrigin, WorkflowExecutionStatus } from '@genfeedai/contracts';
 import {
@@ -54,10 +58,6 @@ function createMockQueueService() {
   return {
     queueDelayedResume: vi.fn().mockResolvedValue('job-123'),
     queueTriggerEvent: vi.fn().mockResolvedValue('job-456'),
-    runWithQueuedOrganizationModule: vi.fn(
-      async (_data: WorkflowExecutionJobData, work: () => Promise<unknown>) =>
-        work(),
-    ),
   };
 }
 
@@ -69,14 +69,14 @@ function createMockSchedulerService() {
 
 function createMockSystemWorkflowRunner() {
   return {
-    getRegisteredFailureWorkflow: vi.fn().mockReturnValue(undefined),
-    terminalFailures: { settle: vi.fn().mockResolvedValue(false) },
-    runWithStoredWorkflowModule: vi.fn(
-      async (_input: unknown, work: () => Promise<unknown>) => work(),
-    ),
-    runWithRegisteredWorkflowModule: vi.fn(
-      async (_input: unknown, work: () => Promise<unknown>) => work(),
-    ),
+    readStartedExecution: vi.fn().mockResolvedValue({
+      executionId: 'exec-prior',
+      workflowId: 'wf-prior',
+      workflowVersionId: 'version-prior',
+      organizationId: 'org-1',
+      userId: 'user-1',
+      workflowLabel: 'System workflow',
+    }),
     runWorkflow: vi.fn().mockResolvedValue({
       provenance: {
         executionId: 'exec-failure',
@@ -148,198 +148,6 @@ describe('WorkflowExecutionProcessor', () => {
       mockScheduler,
       mockSystemWorkflowRunner,
     );
-  });
-
-  describe('module revocation', () => {
-    it('blocks an old delay with no module envelope before resume or another queue write', async () => {
-      mockSystemWorkflowRunner.runWithStoredWorkflowModule.mockRejectedValueOnce(
-        new Error('Automation disabled'),
-      );
-      const delayResumeData = {
-        executionId: 'old-execution',
-        workflowId: 'old-workflow',
-        organizationId: 'org-1',
-        userId: 'user-1',
-        delayNodeId: 'delay-1',
-        remainingNodeIds: ['publish'],
-        nodeOutputCache: {},
-        triggerEvent: {
-          type: 'manual',
-          platform: 'manual',
-          organizationId: 'org-1',
-          userId: 'user-1',
-          data: {},
-        },
-      };
-      await expect(
-        processor.process(
-          createMockJob({ type: 'delay-resume', delayResumeData }) as never,
-        ),
-      ).rejects.toThrow('Automation disabled');
-      expect(
-        mockSystemWorkflowRunner.runWithStoredWorkflowModule,
-      ).toHaveBeenCalledWith(delayResumeData, expect.any(Function));
-      expect(mockExecutor.resumeAfterDelay).not.toHaveBeenCalled();
-      expect(mockQueue.queueDelayedResume).not.toHaveBeenCalled();
-    });
-
-    it('checks static module ownership on a legacy job before resuming its existing execution', async () => {
-      mockSystemWorkflowRunner.runWithRegisteredWorkflowModule.mockRejectedValueOnce(
-        new Error('Messages disabled'),
-      );
-      const job = createMockJob({
-        type: 'system-run',
-        systemRun: {
-          input: {
-            actionType: 'social.inbox.outbound.send-dm',
-            canonicalId: 'social.inbox.outbound.send-dm',
-            organizationId: 'org-1',
-            source: 'legacy',
-          },
-          priorExecution: {
-            executionId: 'old-execution',
-            status: WorkflowExecutionStatus.RUNNING,
-            userId: 'user-1',
-            workflowId: 'old-workflow',
-            workflowLabel: 'Send DM',
-          },
-          failureWorkflow: { canonicalId: 'failed-message' },
-        },
-      });
-      await expect(processor.process(job as never)).rejects.toThrow(
-        'Messages disabled',
-      );
-      expect(
-        mockSystemWorkflowRunner.runWithRegisteredWorkflowModule,
-      ).toHaveBeenCalledWith(job.data.systemRun?.input, expect.any(Function));
-      expect(mockExecutor.continueExistingExecution).not.toHaveBeenCalled();
-      expect(mockSystemWorkflowRunner.startWorkflow).not.toHaveBeenCalled();
-      expect(job.updateData).not.toHaveBeenCalled();
-      expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          canonicalId: 'failed-message',
-          organizationId: 'org-1',
-        }),
-      );
-    });
-
-    it('blocks execution and runs registered failure compensation after revocation', async () => {
-      mockQueue.runWithQueuedOrganizationModule.mockRejectedValueOnce(
-        new Error('Module disabled'),
-      );
-      const job = createMockJob({
-        type: 'system-run',
-        organizationModuleContext: {
-          organizationId: 'org-1',
-          moduleId: 'clips',
-        },
-        systemRun: {
-          input: {
-            actionType: 'clip-generate',
-            canonicalId: 'clip-generate',
-            organizationId: 'org-1',
-            source: 'web',
-          },
-          failureWorkflow: { canonicalId: 'clip-failed' },
-        },
-      });
-      await expect(processor.process(job as never)).rejects.toThrow(
-        'Module disabled',
-      );
-      expect(mockSystemWorkflowRunner.startWorkflow).not.toHaveBeenCalled();
-      expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith(
-        expect.objectContaining({
-          canonicalId: 'clip-failed',
-          organizationId: 'org-1',
-        }),
-      );
-    });
-
-    it.each(['missing', 'altered'] as const)(
-      'uses registered Motion compensation for a legacy %s failure payload',
-      async (kind) => {
-        mockQueue.runWithQueuedOrganizationModule.mockRejectedValueOnce(
-          new Error('Motion disabled'),
-        );
-        const input = {
-          actionType: 'visual-code.execute',
-          canonicalId: 'visual-code.execute',
-          organizationId: 'org-1',
-          userId: 'user-1',
-          source: 'visual-code',
-          inputValues: {
-            job: {
-              revisionId: 'revision-1',
-              organizationId: 'org-1',
-              brandId: 'brand-1',
-              userId: 'user-1',
-            },
-          },
-        };
-        mockSystemWorkflowRunner.getRegisteredFailureWorkflow.mockReturnValue({
-          canonicalId: 'visual-code.failure',
-          inputValues: input.inputValues,
-        });
-        const job = createMockJob(
-          {
-            type: 'system-run',
-            systemRun: {
-              input,
-              ...(kind === 'altered'
-                ? {
-                    failureWorkflow: {
-                      canonicalId: 'attacker',
-                      inputValues: { job: 'foreign' },
-                    },
-                  }
-                : {}),
-              priorExecution: {
-                executionId: 'motion-execution',
-                status: WorkflowExecutionStatus.PENDING,
-                userId: 'user-1',
-                workflowId: 'motion-workflow',
-                workflowLabel: 'Motion',
-              },
-            },
-          },
-          { id: 'system-workflow-motion-execution' },
-        );
-        await expect(processor.process(job as never)).rejects.toThrow(
-          'Motion disabled',
-        );
-        expect(
-          mockSystemWorkflowRunner.getRegisteredFailureWorkflow,
-        ).toHaveBeenCalledWith(input);
-        expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith({
-          canonicalId: 'visual-code.failure',
-          actionType: 'visual-code.failure',
-          inputValues: {
-            ...input.inputValues,
-            workflowError: 'Motion disabled',
-          },
-          metadata: {
-            failedCanonicalId: 'visual-code.execute',
-            failedJobId: 'system-workflow-motion-execution',
-          },
-          organizationId: 'org-1',
-          userId: 'user-1',
-          source: 'workflow-failure:visual-code.execute',
-        });
-        expect(mockSystemWorkflowRunner.startWorkflow).not.toHaveBeenCalled();
-        expect(mockExecutor.continueExistingExecution).not.toHaveBeenCalled();
-        expect(job.updateData).not.toHaveBeenCalled();
-      },
-    );
-
-    it('blocks a revoked delayed resume before the executor can fire another node', async () => {
-      mockQueue.runWithQueuedOrganizationModule.mockRejectedValueOnce(
-        new Error('Module disabled'),
-      );
-      await expect(
-        processor.process(createMockJob({ type: 'delay-resume' }) as never),
-      ).rejects.toThrow('Module disabled');
-      expect(mockExecutor.resumeAfterDelay).not.toHaveBeenCalled();
-    });
   });
 
   describe('process - system workflow jobs', () => {
@@ -426,6 +234,7 @@ describe('WorkflowExecutionProcessor', () => {
       });
       expect(mockSystemWorkflowRunner.startWorkflow).toHaveBeenCalledWith(
         input,
+        expect.any(Function),
       );
     });
 
@@ -549,9 +358,6 @@ describe('WorkflowExecutionProcessor', () => {
         ),
       ).rejects.toThrow('QA provider ETIMEDOUT');
       expect(mockSystemWorkflowRunner.runWorkflow).not.toHaveBeenCalled();
-      expect(
-        mockSystemWorkflowRunner.getRegisteredFailureWorkflow,
-      ).not.toHaveBeenCalled();
     });
 
     it('runs registered failure compensation on the terminal queue attempt', async () => {
@@ -573,10 +379,7 @@ describe('WorkflowExecutionProcessor', () => {
               systemRun: {
                 failureWorkflow: {
                   canonicalId: 'clip.continuity.failure',
-                  inputValues: {
-                    projectId: 'project-1',
-                    workflowError: 'stale queued error',
-                  },
+                  inputValues: { projectId: 'project-1' },
                 },
                 input,
               },
@@ -589,7 +392,7 @@ describe('WorkflowExecutionProcessor', () => {
       expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith({
         actionType: 'clip.continuity.failure',
         canonicalId: 'clip.continuity.failure',
-        inputValues: { projectId: 'project-1', workflowError: 'QA failed' },
+        inputValues: { projectId: 'project-1' },
         metadata: {
           failedCanonicalId: 'clip.continuity',
           failedJobId: 'job-1',
@@ -600,84 +403,99 @@ describe('WorkflowExecutionProcessor', () => {
       });
     });
 
-    describe('when compensation also fails (#6655)', () => {
-      const input = {
-        actionType: 'clip.analysis',
-        canonicalId: 'clip.analysis',
-        inputValues: { job: { orgId: 'org-1', projectId: 'project-1' } },
-        organizationId: 'org-1',
-        source: 'clip-analysis',
-        userId: 'user-1',
-      };
-      const job = () =>
-        createMockJob({
-          systemRun: {
-            failureWorkflow: {
-              canonicalId: 'clip.analysis.failure',
-              inputValues: input.inputValues,
-            },
-            input,
-          },
-          type: 'system-run',
-        });
-
-      beforeEach(() => {
-        mockSystemWorkflowRunner.startWorkflow.mockRejectedValueOnce(
-          new Error('Action contract input validation failed [action=x]'),
-        );
-        mockSystemWorkflowRunner.runWorkflow.mockRejectedValueOnce(
-          new Error('Action contract input validation failed [action=y]'),
-        );
-      });
-
-      it('settles the owned record through the last resort and reports it once', async () => {
-        mockSystemWorkflowRunner.terminalFailures.settle.mockResolvedValueOnce(
-          true,
-        );
-
-        await expect(processor.process(job() as never)).rejects.toThrow(
-          'System workflow clip.analysis and registered failure workflow clip.analysis.failure both failed',
-        );
-
-        expect(
-          mockSystemWorkflowRunner.terminalFailures.settle,
-        ).toHaveBeenCalledWith(
-          input,
-          'Action contract input validation failed [action=x]',
-        );
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          'WorkflowExecutionProcessor workflow and failure workflow both failed',
-          expect.any(AggregateError),
-          {
-            canonicalId: 'clip.analysis',
-            failureCanonicalId: 'clip.analysis.failure',
-            isSettled: true,
-            jobId: 'job-1',
+    it('uses only server-captured lineage IDs and discards queued parent claims', async () => {
+      mockSystemWorkflowRunner.startWorkflow.mockImplementationOnce(
+        async (
+          _input: RunSystemWorkflowInput,
+          onStarted: (proof: SystemWorkflowStartedExecution) => Promise<void>,
+        ) => {
+          await onStarted({
+            executionId: 'actual-parent',
+            workflowId: 'actual-workflow',
+            workflowVersionId: 'actual-version',
             organizationId: 'org-1',
+            userId: 'user-1',
+            workflowLabel: 'Private label',
+          });
+          throw new Error('QA failed');
+        },
+      );
+      await expect(
+        processor.process(
+          createMockJob({
+            type: 'system-run',
+            systemRun: {
+              input: {
+                actionType: 'clip-continuity',
+                canonicalId: 'clip.continuity',
+                organizationId: 'org-1',
+                source: 'clip-generation-completion',
+                userId: 'user-1',
+              },
+              failureWorkflow: {
+                canonicalId: 'clip.continuity.failure',
+                inputValues: {
+                  projectId: 'project-1',
+                  failedParent: { executionId: 'forged' },
+                },
+              },
+            },
+          }) as never,
+        ),
+      ).rejects.toThrow('QA failed');
+      const lineage = {
+        executionId: 'actual-parent',
+        workflowId: 'actual-workflow',
+        workflowVersionId: 'actual-version',
+      };
+      expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputValues: { projectId: 'project-1', failedParent: lineage },
+          metadata: {
+            failedCanonicalId: 'clip.continuity',
+            failedJobId: 'job-1',
+            failedParent: lineage,
           },
-        );
-      });
+        }),
+      );
+    });
 
-      it('still fails the job terminally when the last resort throws', async () => {
-        mockSystemWorkflowRunner.terminalFailures.settle.mockRejectedValueOnce(
-          new Error('database unavailable'),
-        );
-
-        await expect(processor.process(job() as never)).rejects.toThrow(
-          'both failed',
-        );
-
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          'WorkflowExecutionProcessor terminal failure settlement failed',
-          expect.any(Error),
-          { canonicalId: 'clip.analysis', jobId: 'job-1' },
-        );
-        expect(mockLogger.error).toHaveBeenCalledWith(
-          'WorkflowExecutionProcessor workflow and failure workflow both failed',
-          expect.any(AggregateError),
-          expect.objectContaining({ isSettled: false }),
-        );
-      });
+    it('does not accept a queued parent when no execution was started', async () => {
+      mockSystemWorkflowRunner.startWorkflow.mockRejectedValueOnce(
+        new Error('QA failed'),
+      );
+      await expect(
+        processor.process(
+          createMockJob({
+            type: 'system-run',
+            systemRun: {
+              input: {
+                actionType: 'clip-continuity',
+                canonicalId: 'clip.continuity',
+                organizationId: 'org-1',
+                source: 'clip-generation-completion',
+                userId: 'user-1',
+              },
+              failureWorkflow: {
+                canonicalId: 'clip.continuity.failure',
+                inputValues: {
+                  failedParent: { executionId: 'forged' },
+                  projectId: 'project-1',
+                },
+              },
+            },
+          }) as never,
+        ),
+      ).rejects.toThrow('QA failed');
+      expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inputValues: { projectId: 'project-1' },
+          metadata: {
+            failedCanonicalId: 'clip.continuity',
+            failedJobId: 'job-1',
+          },
+        }),
+      );
     });
 
     describe('deterministic contract failures are terminal (#5622)', () => {
@@ -769,34 +587,6 @@ describe('WorkflowExecutionProcessor', () => {
           ),
         ).rejects.toBeInstanceOf(UnrecoverableError);
         expect(mockSystemWorkflowRunner.runWorkflow).toHaveBeenCalledTimes(1);
-      });
-
-      it('keeps a failed terminal compensation unrecoverable and retains both causes', async () => {
-        mockSystemWorkflowRunner.startWorkflow.mockRejectedValueOnce(
-          new Error('Source acquisition rejected'),
-        );
-        mockSystemWorkflowRunner.runWorkflow.mockRejectedValueOnce(
-          new Error('Failure projection rejected'),
-        );
-        const failure = await processor
-          .process(
-            createMockJob(
-              {
-                type: 'system-run',
-                systemRun: {
-                  input,
-                  failureWorkflow: { canonicalId: 'clip.analysis.failure' },
-                },
-              },
-              { opts: { attempts: 3 } },
-            ) as never,
-          )
-          .catch((error: unknown) => error);
-        expect(failure).toBeInstanceOf(UnrecoverableError);
-        expect((failure as Error).cause).toBeInstanceOf(AggregateError);
-        expect(
-          ((failure as Error).cause as AggregateError).errors,
-        ).toHaveLength(2);
       });
 
       it('keeps a transient node failure retryable', async () => {

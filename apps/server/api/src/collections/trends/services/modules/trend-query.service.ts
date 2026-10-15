@@ -1,6 +1,7 @@
 import { TrendEntity } from '@api/collections/trends/entities/trend.entity';
 import type { TrendDocument } from '@api/collections/trends/schemas/trend.schema';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import type { Prisma } from '@genfeedai/prisma';
 import {
   platformOrTenantScope,
   withPlatformTenantArm,
@@ -48,6 +49,7 @@ export class TrendQueryService {
   async getTrendById(
     trendId: string,
     organizationId?: string,
+    authorizedBrandWhere?: Prisma.BrandWhereInput,
   ): Promise<TrendEntity | null> {
     // tenant-scope-ignore: platformOrTenantScope limits the lookup to the supplied organization (or the active tenant) plus platform trends; isDeleted is false
     const doc = await this.prisma.trend.findFirst({
@@ -55,6 +57,19 @@ export class TrendQueryService {
         id: trendId,
         isDeleted: false,
         ...platformOrTenantScope(organizationId),
+        ...(organizationId && authorizedBrandWhere
+          ? {
+              AND: [
+                {
+                  OR: [
+                    { organizationId: null },
+                    { organizationId, brandId: null },
+                    { organizationId, brand: authorizedBrandWhere },
+                  ],
+                },
+              ],
+            }
+          : {}),
       },
     });
 

@@ -1,5 +1,5 @@
 import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
-import { SYSTEM_WORKFLOW_PRINCIPAL_ID } from '@api/collections/workflows/system-workflow.contract';
+import { runWithWorkflowExecutionReadScope } from '@api/authorization/brand-access/workflow-execution-read-scope-context.util';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { MemberRole } from '@genfeedai/contracts';
 import type { Prisma } from '@genfeedai/prisma';
@@ -20,9 +20,6 @@ function fixture() {
     brands: [{ id: 'brand-a' }],
   };
   const findMember = vi.fn().mockResolvedValue(member);
-  const findKey = vi
-    .fn()
-    .mockResolvedValue({ scopes: ['read', 'write', 'admin'] });
   const findBrand = vi
     .fn()
     .mockImplementation(async ({ where }: Prisma.BrandFindFirstArgs) => {
@@ -38,6 +35,9 @@ function fixture() {
         ? { id: brandId }
         : null;
     });
+  const findKey = vi
+    .fn()
+    .mockResolvedValue({ scopes: ['read', 'write', 'admin'] });
   const prisma = {
     apiKey: { findFirst: findKey },
     member: { findFirst: findMember },
@@ -45,8 +45,8 @@ function fixture() {
   } as unknown as PrismaService;
   return {
     member,
-    findMember,
     findKey,
+    findMember,
     findBrand,
     prisma,
     service: new BrandAccessService(prisma),
@@ -84,8 +84,9 @@ describe('live Cloud member brand policy', () => {
             userId: 'opaque-auth-user',
             isDeleted: false,
             isActive: true,
-            organization: { is: { isDeleted: false } },
-            role: { is: { isDeleted: false } },
+            organization: { isDeleted: false },
+            user: { isDeleted: false, banned: false },
+            role: { isDeleted: false },
           },
         }),
       );
@@ -142,22 +143,31 @@ describe('live Cloud member brand policy', () => {
     );
   });
 
-  it('rechecks the bound live key and current scopes on each brand admission', async () => {
+  it('denies missing key identity before membership or brand reads', async () => {
     const f = fixture();
-    f.member.role.key = MemberRole.OWNER;
-    f.member.brands = [];
-    const keyActor = {
-      ...actor,
-      isApiKey: true,
-      apiKeyId: 'key-a',
-      scopes: ['admin'],
-    };
-    await f.service.assert(keyActor, 'brand-b');
-    f.findKey.mockResolvedValue({ scopes: ['read'] });
-    await expect(f.service.assert(keyActor, 'brand-b')).rejects.toThrow(
-      'Brand access denied',
-    );
-    expect(f.findKey).toHaveBeenLastCalledWith({
+    await expect(
+      f.service.assert(
+        { ...actor, isApiKey: true, scopes: ['admin'] },
+        'brand-a',
+      ),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.findKey).not.toHaveBeenCalled();
+    expect(f.findMember).not.toHaveBeenCalled();
+    expect(f.findBrand).not.toHaveBeenCalled();
+  });
+
+  it('binds live keys to their canonical user and tenant and denies revoked or expired keys', async () => {
+    const f = fixture();
+    f.findKey.mockResolvedValue(null);
+    await expect(
+      f.service.resolve({
+        ...actor,
+        isApiKey: true,
+        apiKeyId: 'key-a',
+        scopes: ['admin'],
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.findKey).toHaveBeenCalledWith({
       where: {
         id: 'key-a',
         userId: actor.userId,
@@ -167,34 +177,26 @@ describe('live Cloud member brand policy', () => {
       },
       select: { scopes: true },
     });
-    f.findKey.mockResolvedValue(null);
-    await expect(f.service.assert(keyActor, 'brand-b')).rejects.toThrow(
-      'Brand access denied',
-    );
+    expect(f.findMember).not.toHaveBeenCalled();
   });
 
-  it('requires key identity and uses the transaction for key admission', async () => {
+  it('intersects captured and current key caps without mutating or widening the captured actor', async () => {
     const f = fixture();
-    await expect(
-      f.service.assert(
-        { ...actor, isApiKey: true, scopes: ['read'] },
-        'brand-a',
-      ),
-    ).rejects.toThrow('Brand access denied');
-    expect(f.findKey).not.toHaveBeenCalled();
-    expect(f.findMember).not.toHaveBeenCalled();
-    const tx = fixture();
-    tx.findKey.mockResolvedValue(null);
-    await expect(
-      f.service.assert(
-        { ...actor, isApiKey: true, apiKeyId: 'key-a', scopes: ['read'] },
-        'brand-a',
-        tx.prisma,
-      ),
-    ).rejects.toThrow('Brand access denied');
-    expect(tx.findKey).toHaveBeenCalledOnce();
-    expect(f.findKey).not.toHaveBeenCalled();
-    expect(tx.findMember).not.toHaveBeenCalled();
+    f.member.role.key = MemberRole.OWNER;
+    f.member.brands = [];
+    const keyActor = {
+      ...actor,
+      isApiKey: true,
+      apiKeyId: 'key-a',
+      scopes: ['admin'],
+    };
+    f.findKey.mockResolvedValue({ scopes: ['read'] });
+    expect((await f.service.resolve(keyActor)).role).toBe(MemberRole.USER);
+    expect(keyActor.scopes).toEqual(['admin']);
+    f.findKey.mockResolvedValue({ scopes: ['admin', 'read'] });
+    expect(
+      (await f.service.resolve({ ...keyActor, scopes: ['read'] })).role,
+    ).toBe(MemberRole.USER);
   });
 
   it('uses the transaction client for both canonical member and brand checks', async () => {
@@ -273,39 +275,67 @@ it('preserves actorless cosmetic selfhost reads while Cloud rejects a missing in
   expect(f.findMember).not.toHaveBeenCalled();
 });
 
-describe('system brand principal', () => {
-  const system = {
-    organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-    userId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-  };
-
+describe('execution dependency transaction admission', () => {
   beforeEach(() => {
     runtime.cloud = true;
   });
 
-  it('sees the system organization brands without any membership', async () => {
+  it('lets the recorder open its atomic transaction for a root-client assertion', async () => {
     const f = fixture();
-    f.findMember.mockResolvedValue(null);
-    expect(await f.service.predicate(system)).toEqual({
-      organizationId: SYSTEM_WORKFLOW_PRINCIPAL_ID,
-      isDeleted: false,
-    });
+    const recordBrand = vi.fn().mockResolvedValue(undefined);
+    await runWithWorkflowExecutionReadScope(
+      {
+        executionId: 'execution-a',
+        organizationId: actor.organizationId,
+        initiatingActor: { ...actor, isApiKey: false, scopes: [] },
+        admit: vi.fn().mockResolvedValue(undefined),
+        markUnproven: vi.fn().mockResolvedValue(undefined),
+        recordBrand,
+      },
+      () => f.service.assert(actor, 'brand-a'),
+    );
+    expect(recordBrand).toHaveBeenCalledExactlyOnceWith('brand-a', undefined);
+  });
+
+  it('keeps the existing transaction for atomic payload and dependency writes', async () => {
+    const f = fixture();
+    const transaction = fixture();
+    const recordBrand = vi.fn().mockResolvedValue(undefined);
+    await runWithWorkflowExecutionReadScope(
+      {
+        executionId: 'execution-a',
+        organizationId: actor.organizationId,
+        initiatingActor: { ...actor, isApiKey: false, scopes: [] },
+        admit: vi.fn().mockResolvedValue(undefined),
+        markUnproven: vi.fn().mockResolvedValue(undefined),
+        recordBrand,
+      },
+      () => f.service.assert(actor, 'brand-a', transaction.prisma),
+    );
+    expect(recordBrand).toHaveBeenCalledExactlyOnceWith(
+      'brand-a',
+      transaction.prisma,
+    );
     expect(f.findMember).not.toHaveBeenCalled();
   });
 
-  it('is an ordinary non-member in a customer organization', async () => {
+  it('never records a denied brand dependency', async () => {
     const f = fixture();
-    f.findMember.mockResolvedValue(null);
+    f.member.brands = [];
+    const recordBrand = vi.fn();
     await expect(
-      f.service.predicate({ ...system, organizationId: 'org-a' }),
-    ).rejects.toThrow(ForbiddenException);
-  });
-
-  it('gets no system access through an API key', async () => {
-    const f = fixture();
-    f.findKey.mockResolvedValue(null);
-    await expect(
-      f.service.predicate({ ...system, apiKeyId: 'key-1', isApiKey: true }),
-    ).rejects.toThrow(ForbiddenException);
+      runWithWorkflowExecutionReadScope(
+        {
+          executionId: 'execution-a',
+          organizationId: actor.organizationId,
+          initiatingActor: { ...actor, isApiKey: false, scopes: [] },
+          admit: vi.fn().mockResolvedValue(undefined),
+          markUnproven: vi.fn().mockResolvedValue(undefined),
+          recordBrand,
+        },
+        () => f.service.assert(actor, 'brand-a'),
+      ),
+    ).rejects.toThrow('Brand access denied');
+    expect(recordBrand).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 export * from '@serializers/configs/integrations/beehiiv-subscriber-outcome.config';
+export * from '@serializers/configs/integrations/bot-account-link.config';
 export * from '@serializers/configs/integrations/google-search-console.config';
 export * from '@serializers/configs/integrations/org-integration.config';
 export * from '@serializers/configs/integrations/service-server.config';

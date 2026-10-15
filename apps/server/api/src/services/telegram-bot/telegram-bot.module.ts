@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 /**
  * Telegram Bot Module
  *
@@ -18,6 +19,7 @@ import { Module } from '@nestjs/common';
   exports: [TelegramBotService],
   imports: [
     ApiKeysModule,
+    BrandAccessModule,
     ConfigModule,
     FilesClientModule,
     LoggerModule,

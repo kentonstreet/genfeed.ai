@@ -1,8 +1,38 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { TrendFilteringService } from '@api/collections/trends/services/modules/trend-filtering.service';
 import { TrendsService } from '@api/collections/trends/services/trends.service';
-import { describe, expect, it, vi } from 'vitest';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole } from '@genfeedai/contracts';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 function setup(description: string) {
+  const prisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-1' }) },
+    member: {
+      findFirst: vi.fn().mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [{ id: 'brand-1' }],
+      }),
+    },
+    apiKey: { findFirst: vi.fn().mockResolvedValue({ scopes: ['read'] }) },
+    brand: { findFirst: vi.fn() },
+  };
+  prisma.brand.findFirst.mockImplementation(async ({ where }) => {
+    const predicate = where.AND[0];
+    const id = where.AND[1].id;
+    return id === 'brand-1' &&
+      (predicate.id?.in === undefined || predicate.id.in.includes(id))
+      ? { id }
+      : null;
+  });
+  const credentials = { findAll: vi.fn().mockResolvedValue({ docs: [] }) };
   const brands = { findOne: vi.fn().mockResolvedValue({ description }) };
   const preferences = {
     getPreferences: vi.fn().mockResolvedValue({
@@ -22,7 +52,7 @@ function setup(description: string) {
   const service = new TrendsService(
     {} as never,
     brands as never,
-    {} as never,
+    credentials as never,
     preferences as never,
     {} as never,
     {} as never,
@@ -32,11 +62,16 @@ function setup(description: string) {
     videos as never,
     {} as never,
     {} as never,
+    new BrandAccessService(prisma as unknown as PrismaService),
+    prisma as unknown as PrismaService,
   );
-  return { service, brands, videos, preferences };
+  return { service, brands, videos, preferences, credentials, prisma };
 }
 
 describe('Brand viral videos', () => {
+  beforeEach(() => {
+    runtime.cloud = false;
+  });
   it('filters before limiting and resolves the brand within its organization', async () => {
     const { service, brands, videos } = setup('AI marketing automation');
     expect(
@@ -94,5 +129,88 @@ describe('Brand viral videos', () => {
       service.getBrandViralVideos('org-1', 'foreign-brand', {}),
     ).rejects.toThrow('Brand not found');
     expect(videos.getViralVideos).not.toHaveBeenCalled();
+  });
+  it('denies ordinary zero assignments before private brand context or video reads', async () => {
+    runtime.cloud = true;
+    const f = setup('AI');
+    f.prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [],
+    });
+    await expect(
+      f.service.getBrandViralVideos(
+        'org-1',
+        'brand-1',
+        {},
+        captureWorkflowActor({ organizationId: 'org-1', userId: 'user-1' }),
+      ),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.brands.findOne).not.toHaveBeenCalled();
+    expect(f.preferences.getPreferences).not.toHaveBeenCalled();
+    expect(f.videos.getViralVideos).not.toHaveBeenCalled();
+  });
+  it('filters connected credential metadata with explicit empty assignments before querying', async () => {
+    runtime.cloud = true;
+    const f = setup('AI');
+    f.prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [],
+    });
+    await expect(
+      f.service.getConnectedPlatforms(
+        'org-1',
+        captureWorkflowActor({ organizationId: 'org-1', userId: 'user-1' }),
+      ),
+    ).resolves.toEqual([]);
+    expect(f.credentials.findAll).toHaveBeenCalledWith(
+      {
+        where: {
+          organizationId: 'org-1',
+          isDeleted: false,
+          isConnected: true,
+          brandId: { in: [] },
+        },
+      },
+      { limit: 100 },
+    );
+  });
+  it('uses current effective key scopes before selecting organization credential metadata', async () => {
+    runtime.cloud = true;
+    const f = setup('AI');
+    f.prisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [],
+    });
+    await f.service.getConnectedPlatforms(
+      'org-1',
+      captureWorkflowActor({
+        organizationId: 'org-1',
+        userId: 'user-1',
+        isApiKey: true,
+        apiKeyId: 'key',
+        scopes: ['admin', 'read'],
+      }),
+    );
+    expect(f.credentials.findAll).toHaveBeenCalledWith(
+      { where: expect.objectContaining({ brandId: { in: [] } }) },
+      { limit: 100 },
+    );
+  });
+  it('denies fresh membership revocation before a repeated private read', async () => {
+    runtime.cloud = true;
+    const f = setup('AI');
+    const actor = captureWorkflowActor({
+      organizationId: 'org-1',
+      userId: 'user-1',
+    });
+    await f.service.getBrandViralVideos('org-1', 'brand-1', {}, actor);
+    f.prisma.member.findFirst.mockResolvedValue(null as never);
+    f.brands.findOne.mockClear();
+    f.videos.getViralVideos.mockClear();
+    await expect(
+      f.service.getBrandViralVideos('org-1', 'brand-1', {}, actor),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.brands.findOne).not.toHaveBeenCalled();
+    expect(f.videos.getViralVideos).not.toHaveBeenCalled();
   });
 });

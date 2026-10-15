@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { getActionOriginContext } from '@api/action-origin/action-origin.context';
+import {
+  captureWorkflowActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { AgentMessagesService } from '@api/collections/agent-messages/services/agent-messages.service';
 import { SettingsService } from '@api/collections/settings/services/settings.service';
 import { normalizeRequestedSkillSlugs } from '@api/collections/skills/utils/requested-skill-slugs.util';
@@ -128,15 +133,21 @@ export class AgentTurnAcceptanceService {
         request.requestedSkillSlugs,
       ),
     };
+    const initiatingActor = captureWorkflowActor({
+      organizationId: context.organizationId,
+      userId: context.userId,
+      isApiKey: context.apiKeyContext?.isApiKey,
+      apiKeyId: context.apiKeyContext?.apiKeyId,
+      scopes: context.apiKeyContext?.scopes,
+    });
     const preparedScope = await this.scopeService.prepareForTurn({
       expectedContextVersion: request.expectedContextVersion,
       organizationId: context.organizationId,
       requestedBrandId: request.brandId,
       threadId: request.threadId,
       userId: context.userId,
-      isApiKey: context.apiKeyContext?.isApiKey,
-      apiKeyId: context.apiKeyContext?.apiKeyId,
-      scopes: context.apiKeyContext?.scopes,
+      isApiKey: initiatingActor.isApiKey,
+      scopes: initiatingActor.scopes,
     });
     const threadId =
       preparedScope.existingScope?.threadId ??
@@ -159,7 +170,6 @@ export class AgentTurnAcceptanceService {
         threadId,
         userId: context.userId,
         isApiKey: context.apiKeyContext?.isApiKey,
-        apiKeyId: context.apiKeyContext?.apiKeyId,
         scopes: context.apiKeyContext?.scopes,
       }));
     if (existingScope)
@@ -169,6 +179,52 @@ export class AgentTurnAcceptanceService {
       });
     const contextId = `${threadId}:v${contextVersion}`;
     const queuedAt = new Date().toISOString();
+    const inputValues = {
+      initiatingActor,
+      request: {
+        content: request.content,
+        generationEntry:
+          getActionOriginContext().generationEntry ?? context.generationEntry,
+        hostSupportsApproval: request.hostSupportsApproval === true,
+        clientRequestId: request.clientRequestId,
+        threadId,
+        ...(request.agentType ? { agentType: request.agentType } : {}),
+        ...(request.artifactReferences?.length
+          ? { artifactReferences: request.artifactReferences }
+          : {}),
+        ...(request.attachments?.length
+          ? { attachments: request.attachments }
+          : {}),
+        ...(thread.brandId ? { brandId: thread.brandId } : {}),
+        // Acceptance has already loaded and authorized this exact thread
+        // version. Pin it into the durable request so the execution
+        // revalidates the same scope instead of downgrading to a missing
+        // version context.
+        expectedContextVersion: contextVersion,
+        ...(request.generationMode
+          ? { generationMode: request.generationMode }
+          : {}),
+        ...(request.generationSettings
+          ? { generationSettings: request.generationSettings }
+          : {}),
+        ...(request.requestedSkillSlugs
+          ? { requestedSkillSlugs: request.requestedSkillSlugs }
+          : {}),
+        ...(request.knowledgeSelection
+          ? { knowledgeSelection: request.knowledgeSelection }
+          : {}),
+        ...(request.model ? { model: request.model } : {}),
+        ...(request.pageContext ? { pageContext: request.pageContext } : {}),
+        ...(request.agentMode !== undefined
+          ? { agentMode: request.agentMode }
+          : {}),
+        ...(request.source ? { source: request.source } : {}),
+        ...(request.systemPromptOverride
+          ? { systemPromptOverride: request.systemPromptOverride }
+          : {}),
+        ...(request.transferId ? { transferId: request.transferId } : {}),
+      },
+    };
     const { executionId } = await this.workflowRunner.enqueueWorkflow(
       {
         actionType: AGENT_TURN_WORKFLOW_ID,
@@ -178,16 +234,10 @@ export class AgentTurnAcceptanceService {
           context.userId,
           request.clientRequestId,
         ),
-        inputValues: {
-          request: this.buildDurableTurnRequest({
-            brandId: thread.brandId,
-            context,
-            contextVersion,
-            request,
-            threadId,
-          }),
-        },
+        inputValues,
         metadata: {
+          initiatingActorKey: workflowActorKey(initiatingActor),
+          initiatingRequestKey: workflowRequestKey(inputValues),
           clientRequestId: request.clientRequestId,
           contextId,
           source: request.source ?? 'agent',
@@ -216,7 +266,12 @@ export class AgentTurnAcceptanceService {
       executionId,
     );
 
-    this.logAcceptedTurn(request, context, executionId, threadId);
+    this.logger.log('Agent turn workflow accepted', {
+      clientRequestId: request.clientRequestId,
+      executionId,
+      organizationId: context.organizationId,
+      threadId,
+    });
 
     return {
       brandId: thread.brandId ?? undefined,
@@ -228,79 +283,6 @@ export class AgentTurnAcceptanceService {
       status: 'queued',
       threadId,
     };
-  }
-
-  /** The durable request the queued turn executes from. */
-  private buildDurableTurnRequest(input: {
-    brandId: string | null | undefined;
-    context: AgentChatContext;
-    contextVersion: number;
-    request: AgentChatRequest & { clientRequestId: string };
-    threadId: string;
-  }): Record<string, unknown> {
-    const { brandId, context, contextVersion, request, threadId } = input;
-    return {
-      content: request.content,
-      generationEntry:
-        getActionOriginContext().generationEntry ?? context.generationEntry,
-      hostSupportsApproval: request.hostSupportsApproval === true,
-      // The authenticated principal rides the durable request so the queued
-      // turn can bind schedules to it without ever inferring one.
-      ...(context.initiatingPrincipal
-        ? { initiatingPrincipal: context.initiatingPrincipal }
-        : {}),
-      clientRequestId: request.clientRequestId,
-      threadId,
-      ...(request.agentType ? { agentType: request.agentType } : {}),
-      ...(request.artifactReferences?.length
-        ? { artifactReferences: request.artifactReferences }
-        : {}),
-      ...(request.attachments?.length
-        ? { attachments: request.attachments }
-        : {}),
-      ...(brandId ? { brandId } : {}),
-      // Acceptance has already loaded and authorized this exact thread
-      // version. Pin it into the durable request so the execution
-      // revalidates the same scope instead of downgrading to a missing
-      // version context.
-      expectedContextVersion: contextVersion,
-      ...(request.generationMode
-        ? { generationMode: request.generationMode }
-        : {}),
-      ...(request.generationSettings
-        ? { generationSettings: request.generationSettings }
-        : {}),
-      ...(request.requestedSkillSlugs
-        ? { requestedSkillSlugs: request.requestedSkillSlugs }
-        : {}),
-      ...(request.knowledgeSelection
-        ? { knowledgeSelection: request.knowledgeSelection }
-        : {}),
-      ...(request.model ? { model: request.model } : {}),
-      ...(request.pageContext ? { pageContext: request.pageContext } : {}),
-      ...(request.agentMode !== undefined
-        ? { agentMode: request.agentMode }
-        : {}),
-      ...(request.source ? { source: request.source } : {}),
-      ...(request.systemPromptOverride
-        ? { systemPromptOverride: request.systemPromptOverride }
-        : {}),
-      ...(request.transferId ? { transferId: request.transferId } : {}),
-    };
-  }
-
-  private logAcceptedTurn(
-    request: AgentChatRequest & { clientRequestId: string },
-    context: AgentChatContext,
-    executionId: string,
-    threadId: string,
-  ): void {
-    this.logger.log('Agent turn workflow accepted', {
-      clientRequestId: request.clientRequestId,
-      executionId,
-      organizationId: context.organizationId,
-      threadId,
-    });
   }
 
   private async persistUserMessage(

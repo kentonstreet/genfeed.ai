@@ -8,7 +8,6 @@ import type {
 } from '@genfeedai/contracts/interfaces/content/branded-generation.interface';
 export interface BrandedGenerationActorV1 {
   isApiKey?: boolean;
-  apiKeyId?: string;
   scopes?: string[];
   organizationId: string;
   brandId: string;
@@ -94,10 +93,6 @@ export interface BrandedGenerationFailureInputV1 {
   reasonCode: string;
   completedAt: string;
 }
-/** Why a resolved receipt stopped before any provider accepted its attempt. */
-export type BrandedGenerationBlockReasonV1 =
-  | 'provider_attempt_ref_unavailable'
-  | 'provider_submission_failed';
 export interface BrandedGenerationDispatchRecoveryV1 {
   blocked: string[];
   skipped: string[];

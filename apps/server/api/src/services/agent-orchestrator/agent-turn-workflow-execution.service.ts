@@ -9,12 +9,12 @@ import {
   SystemWorkflowRunnerService,
 } from '@api/collections/workflows/system-workflow-runner.service';
 import { AgentChatModelRegistryService } from '@api/services/agent-orchestrator/agent-chat-model-registry.service';
+import { AgentOrchestratorBatchService } from '@api/services/agent-orchestrator/agent-orchestrator-batch.service';
 import { AgentOrchestratorContextService } from '@api/services/agent-orchestrator/agent-orchestrator-context.service';
 import { AgentOrchestratorPlanModeService } from '@api/services/agent-orchestrator/agent-orchestrator-plan-mode.service';
 import { AgentOrchestratorRecurringTaskService } from '@api/services/agent-orchestrator/agent-orchestrator-recurring-task.service';
 import { AgentOrchestratorStreamLoopService } from '@api/services/agent-orchestrator/agent-orchestrator-stream-loop.service';
 import { AgentOrchestratorSyncLoopService } from '@api/services/agent-orchestrator/agent-orchestrator-sync-loop.service';
-import { AgentOrchestratorTurboRunService } from '@api/services/agent-orchestrator/agent-orchestrator-turbo-run.service';
 import { AgentOrchestratorUiActionService } from '@api/services/agent-orchestrator/agent-orchestrator-ui-action.service';
 import { AgentStreamEffectsService } from '@api/services/agent-orchestrator/agent-stream-effects.service';
 import { AgentThreadEventRecorderService } from '@api/services/agent-orchestrator/agent-thread-event-recorder.service';
@@ -26,10 +26,6 @@ import type {
 } from '@api/services/agent-orchestrator/interfaces/agent-chat.interface';
 import type { ResolvedAgentExecutionPolicy } from '@api/services/agent-orchestrator/interfaces/agent-execution-policy.interface';
 import { persistComposerGenerationSource } from '@api/services/agent-orchestrator/persist-composer-generation-source';
-import {
-  type AgentInitiatingPrincipal,
-  projectAgentInitiatingPrincipal,
-} from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import { buildAgentRoutingMetadata } from '@api/services/agent-orchestrator/utils/agent-routing-policy.util';
 import {
   buildSeedThreadTitle,
@@ -72,10 +68,7 @@ export type PreparedAgentTurnState = {
   campaignId?: string;
   executionId: string;
   organizationId: string;
-  request: AgentChatRequest & {
-    initiatingPrincipal?: AgentInitiatingPrincipal;
-    threadId: string;
-  };
+  request: AgentChatRequest & { threadId: string };
   strategyId?: string;
   threadId: string;
   userId: string;
@@ -105,7 +98,7 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     private readonly agentChatModelRegistry: AgentChatModelRegistryService,
     private readonly contextService: AgentOrchestratorContextService,
     private readonly planModeService: AgentOrchestratorPlanModeService,
-    private readonly turboRunService: AgentOrchestratorTurboRunService,
+    private readonly batchService: AgentOrchestratorBatchService,
     private readonly recurringTaskService: AgentOrchestratorRecurringTaskService,
     private readonly streamLoopService: AgentOrchestratorStreamLoopService,
     private readonly syncLoopService: AgentOrchestratorSyncLoopService,
@@ -151,17 +144,12 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
       ({ context, input, provenance }) => {
         const request = readRecord(input.request);
         const generationEntry = parseGenerationEntry(request.generationEntry);
-        const initiatingPrincipal = projectAgentInitiatingPrincipal(
-          request.initiatingPrincipal,
-          context,
-        );
         return runWithGenerationEntry(generationEntry, () =>
           this.executeUiAction(
             request as unknown as AgentThreadUiActionRequest,
             {
               executionId: provenance.executionId,
               generationEntry,
-              ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
               organizationId: context.organizationId,
               userId: context.userId,
             },
@@ -173,10 +161,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
       AGENT_RUNTIME_ACTION_IDS.INPUT_RESPONSE,
       ({ context, input, provenance }) => {
         const request = readRecord(input.request);
-        const initiatingPrincipal = projectAgentInitiatingPrincipal(
-          request.initiatingPrincipal,
-          context,
-        );
         return runWithGenerationEntry(request.generationEntry, () =>
           this.resumeInput({
             answer: requiredString(request.answer, 'request.answer'),
@@ -184,7 +168,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
             ...(optionalString(request.fieldId)
               ? { fieldId: optionalString(request.fieldId) }
               : {}),
-            ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
             organizationId: context.organizationId,
             scope: readRecord(request.scope) as unknown as ValidatedAgentScope,
             threadId: requiredString(request.threadId, 'request.threadId'),
@@ -376,7 +359,7 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     const handledDeterministically =
       request.source !== 'proactive' &&
       request.creditBudget === undefined &&
-      ((await this.turboRunService.tryHandleTurboRunTurnStream(
+      ((await this.batchService.tryHandleBatchGenerationTurnStream(
         {
           context,
           model,
@@ -417,25 +400,9 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     );
   }
 
-  private async tryExecuteCadenceTurn(
-    state: PreparedAgentTurnState,
-  ): Promise<AgentTurnWorkflowResult | null> {
-    if (
-      state.request.source !== 'proactive' ||
-      !state.strategyId ||
-      !this.turboRunService.tryExecuteCadence
-    )
-      return null;
-    return this.executionLaneService.runExclusive(state.threadId, () =>
-      this.turboRunService.tryExecuteCadence(state),
-    );
-  }
-
   async execute(
     state: PreparedAgentTurnState,
   ): Promise<AgentTurnWorkflowResult> {
-    const cadence = await this.tryExecuteCadenceTurn(state);
-    if (cadence) return cadence;
     let request = state.request;
     const baseContext = this.buildBaseContext(state);
     const mediaResult = await this.tryExecuteMediaTurn(state, baseContext);
@@ -576,33 +543,8 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     return this.readCompletedTurn(state.threadId, state.organizationId, model);
   }
 
-  /**
-   * The authenticated principal the accepted turn acts for. Proactive,
-   * campaign and strategy runs are system turns: they are enqueued without a
-   * request principal and never acquire one here. The schedules they save bind
-   * to the strategy's persisted actor instead
-   * (`AgentStrategyScheduleAuthorityService`), read live at each save.
-   */
-  private resolveTurnPrincipal(
-    state: PreparedAgentTurnState,
-  ): AgentInitiatingPrincipal | undefined {
-    if (
-      state.request.source === 'proactive' ||
-      state.strategyId ||
-      state.campaignId
-    ) {
-      return undefined;
-    }
-    return projectAgentInitiatingPrincipal(state.request.initiatingPrincipal, {
-      organizationId: state.organizationId,
-      userId: state.userId,
-    });
-  }
-
   private buildBaseContext(state: PreparedAgentTurnState): AgentChatContext {
-    const initiatingPrincipal = this.resolveTurnPrincipal(state);
     return {
-      ...(initiatingPrincipal ? { initiatingPrincipal } : {}),
       ...(state.request.requestedSkillSlugs?.length
         ? { requestedSkillSlugs: state.request.requestedSkillSlugs }
         : {}),
@@ -742,7 +684,6 @@ export class AgentTurnWorkflowExecutionService implements OnModuleInit {
     answer: string;
     executionId: string;
     fieldId?: string;
-    initiatingPrincipal?: AgentInitiatingPrincipal;
     organizationId: string;
     scope: ValidatedAgentScope;
     threadId: string;

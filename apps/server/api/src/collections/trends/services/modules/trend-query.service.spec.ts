@@ -321,4 +321,52 @@ describe('TrendQueryService', () => {
       expect(prisma.trend.updateMany).not.toHaveBeenCalled();
     });
   });
+  it('filters brand-owned rows at the ID query while retaining public and organization-only data', async () => {
+    const brandWhere = {
+      organizationId: 'org',
+      isDeleted: false,
+      id: { in: ['assigned'] },
+    };
+    prisma.trend.findFirst.mockResolvedValue(null);
+    await expect(
+      service.getTrendById('unassigned', 'org', brandWhere),
+    ).resolves.toBeNull();
+    expect(prisma.trend.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: 'unassigned',
+        isDeleted: false,
+        AND: [
+          {
+            OR: [
+              { organizationId: null },
+              { organizationId: 'org', brandId: null },
+              { organizationId: 'org', brand: brandWhere },
+            ],
+          },
+        ],
+      }),
+    });
+  });
+  it('uses an explicit empty assignment predicate without treating it as an all-brand wildcard', async () => {
+    const brandWhere = {
+      organizationId: 'org',
+      isDeleted: false,
+      id: { in: [] },
+    };
+    prisma.trend.findFirst.mockResolvedValue(null);
+    await service.getTrendById('brand-owned', 'org', brandWhere);
+    expect(prisma.trend.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          {
+            OR: [
+              { organizationId: null },
+              { organizationId: 'org', brandId: null },
+              { organizationId: 'org', brand: brandWhere },
+            ],
+          },
+        ],
+      }),
+    });
+  });
 });

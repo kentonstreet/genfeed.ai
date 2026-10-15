@@ -21,6 +21,8 @@ export class TrendDiscoveryHandler implements SkillHandler {
       context.organizationId,
       context.brandId,
       platform,
+      {},
+      context.initiatingActor,
     );
 
     const topTrends = response.trends.slice(0, 5);

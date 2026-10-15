@@ -1,6 +1,9 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { TrendCorpusFreshnessService } from '@api/collections/trends/services/modules/trend-corpus-freshness.service';
 import { TrendRefreshHealthService } from '@api/collections/trends/services/modules/trend-refresh-health.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole, PlatformRole } from '@genfeedai/contracts';
 import { Test, TestingModule } from '@nestjs/testing';
 
 type ReferenceDoc = {
@@ -154,6 +157,7 @@ describe('TrendCorpusFreshnessService', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        BrandAccessService,
         TrendCorpusFreshnessService,
         {
           provide: TrendRefreshHealthService,
@@ -344,5 +348,248 @@ describe('TrendCorpusFreshnessService', () => {
         latestObservedAt: receipt.lastAttemptAt,
       }),
     );
+  });
+});
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
+beforeEach(() => {
+  runtime.cloud = false;
+});
+
+function cloudHealthFixture() {
+  runtime.cloud = true;
+  const state = {
+    platformRole: PlatformRole.SUPERADMIN,
+    role: MemberRole.USER,
+    brands: ['brand-a'],
+    scopes: ['admin', 'read'],
+    userActive: true,
+    keyActive: true,
+  };
+  const prisma = {
+    user: {
+      findFirst: vi
+        .fn()
+        .mockImplementation(async () =>
+          state.userActive ? { platformRole: state.platformRole } : null,
+        ),
+    },
+    apiKey: {
+      findFirst: vi
+        .fn()
+        .mockImplementation(async () =>
+          state.keyActive ? { scopes: state.scopes } : null,
+        ),
+    },
+    member: {
+      findFirst: vi.fn().mockImplementation(async () => ({
+        role: { key: state.role },
+        brands: state.brands.map((id) => ({ id })),
+      })),
+    },
+    trendSourceReference: { findMany: vi.fn().mockResolvedValue([]) },
+    trend: { findMany: vi.fn().mockResolvedValue([]) },
+  };
+  const db = prisma as unknown as PrismaService;
+  const refresh = { getHealth: vi.fn().mockResolvedValue([]) };
+  const service = new TrendCorpusFreshnessService(
+    db,
+    refresh as unknown as TrendRefreshHealthService,
+    new BrandAccessService(db),
+  );
+  const actor = captureWorkflowActor({
+    organizationId: 'org',
+    userId: 'user',
+    isApiKey: true,
+    apiKeyId: 'key',
+    scopes: ['admin', 'read'],
+  });
+  return { state, prisma, refresh, service, actor };
+}
+describe('Cloud freshness current-reader policy', () => {
+  it('requires an actual actor before any tenant private query', async () => {
+    const f = cloudHealthFixture();
+    await expect(
+      f.service.getCorpusFreshnessHealth({ organizationId: 'org' }),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.prisma.trend.findMany).not.toHaveBeenCalled();
+    expect(f.prisma.trendSourceReference.findMany).not.toHaveBeenCalled();
+    expect(f.refresh.getHealth).not.toHaveBeenCalled();
+  });
+  it('does not accept a platform flag without a proven current principal', async () => {
+    const f = cloudHealthFixture();
+    await expect(
+      f.service.getCorpusFreshnessHealth({ isPlatformAdmin: true }),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.prisma.trend.findMany).not.toHaveBeenCalled();
+  });
+  it('retains fresh platform operator cross-organization health with explicit admin key caps', async () => {
+    const f = cloudHealthFixture();
+    await f.service.getCorpusFreshnessHealth({
+      organizationId: 'org',
+      isPlatformAdmin: true,
+      initiatingActor: f.actor,
+    });
+    expect(f.prisma.trend.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { isDeleted: false } }),
+    );
+    expect(f.prisma.member.findFirst).not.toHaveBeenCalled();
+    expect(f.prisma.apiKey.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'key',
+          userId: 'user',
+          organizationId: 'org',
+          isRevoked: false,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+        }),
+      }),
+    );
+  });
+  it('caps an operator read key to current tenant assigned-brand health', async () => {
+    const f = cloudHealthFixture();
+    f.state.scopes = ['read'];
+    await f.service.getCorpusFreshnessHealth({
+      organizationId: 'org',
+      isPlatformAdmin: true,
+      initiatingActor: f.actor,
+    });
+    const where = f.prisma.trend.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { organizationId: 'org' },
+      { organizationId: null },
+    ]);
+    expect(where.AND[0].OR).toEqual([
+      { organizationId: null },
+      { organizationId: 'org', brandId: null },
+      {
+        organizationId: 'org',
+        brand: {
+          organizationId: 'org',
+          isDeleted: false,
+          id: { in: ['brand-a'] },
+        },
+      },
+    ]);
+  });
+  it('does not turn a stale superadmin flag into current operator authority', async () => {
+    const f = cloudHealthFixture();
+    f.state.platformRole = PlatformRole.USER;
+    await f.service.getCorpusFreshnessHealth({
+      organizationId: 'org',
+      isPlatformAdmin: true,
+      initiatingActor: f.actor,
+    });
+    expect(f.prisma.trend.findMany.mock.calls[0][0].where).toHaveProperty(
+      'AND',
+    );
+  });
+  it('retains public and genuine org-only rows with zero assigned brands', async () => {
+    const f = cloudHealthFixture();
+    f.state.brands = [];
+    await f.service.getCorpusFreshnessHealth({
+      organizationId: 'org',
+      initiatingActor: f.actor,
+    });
+    expect(
+      f.prisma.trend.findMany.mock.calls[0][0].where.AND[0].OR[2].brand.id.in,
+    ).toEqual([]);
+    expect(f.refresh.getHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: 'org' }),
+    );
+  });
+  it.each([MemberRole.OWNER, MemberRole.ADMIN])(
+    'retains canonical %s all active tenant brands',
+    async (role) => {
+      const f = cloudHealthFixture();
+      f.state.role = role;
+      f.state.brands = [];
+      await f.service.getCorpusFreshnessHealth({
+        organizationId: 'org',
+        initiatingActor: f.actor,
+      });
+      expect(
+        f.prisma.trend.findMany.mock.calls[0][0].where.AND[0].OR[2].brand,
+      ).toEqual({ organizationId: 'org', isDeleted: false });
+    },
+  );
+  it.each(['keyActive', 'userActive'] as const)(
+    'denies missing/revoked current %s before private reads',
+    async (field) => {
+      const f = cloudHealthFixture();
+      f.state[field] = false;
+      await expect(
+        f.service.getCorpusFreshnessHealth({
+          organizationId: 'org',
+          isPlatformAdmin: true,
+          initiatingActor: f.actor,
+        }),
+      ).rejects.toThrow('Brand access denied');
+      expect(f.prisma.trend.findMany).not.toHaveBeenCalled();
+    },
+  );
+  it('denies key cap loss while private reads await', async () => {
+    const f = cloudHealthFixture();
+    f.refresh.getHealth.mockImplementation(async () => {
+      f.state.scopes = ['read'];
+      return [];
+    });
+    await expect(
+      f.service.getCorpusFreshnessHealth({
+        organizationId: 'org',
+        isPlatformAdmin: true,
+        initiatingActor: f.actor,
+      }),
+    ).rejects.toThrow('Brand access denied');
+  });
+  it('denies canonical platform-role revocation before returning private health', async () => {
+    const f = cloudHealthFixture();
+    f.refresh.getHealth.mockImplementation(async () => {
+      f.state.platformRole = PlatformRole.USER;
+      return [];
+    });
+    await expect(
+      f.service.getCorpusFreshnessHealth({
+        organizationId: 'org',
+        isPlatformAdmin: true,
+        initiatingActor: f.actor,
+      }),
+    ).rejects.toThrow('Brand access denied');
+  });
+  it('denies assignment removal before returning already-read tenant health', async () => {
+    const f = cloudHealthFixture();
+    f.refresh.getHealth.mockImplementation(async () => {
+      f.state.brands = [];
+      return [];
+    });
+    await expect(
+      f.service.getCorpusFreshnessHealth({
+        organizationId: 'org',
+        initiatingActor: f.actor,
+      }),
+    ).rejects.toThrow('Brand access denied');
+  });
+  it('denies a foreign target organization before querying', async () => {
+    const f = cloudHealthFixture();
+    await expect(
+      f.service.getCorpusFreshnessHealth({
+        organizationId: 'other',
+        initiatingActor: f.actor,
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(f.prisma.trend.findMany).not.toHaveBeenCalled();
+  });
+  it('keeps actorless global corpus isolated from ambient tenant private rows', async () => {
+    const f = cloudHealthFixture();
+    await f.service.getCorpusFreshnessHealth();
+    expect(f.prisma.trend.findMany.mock.calls[0][0].where).toMatchObject({
+      organizationId: null,
+      isDeleted: false,
+    });
+    expect(f.prisma.member.findFirst).not.toHaveBeenCalled();
   });
 });

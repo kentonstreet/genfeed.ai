@@ -7,12 +7,7 @@ import {
   verifyBrandAccess,
   verifyBrandSlugAccess,
 } from '@api/collections/brands/controllers/brand-access.helpers';
-import {
-  recordBrandRelocation,
-  toRelocationActor,
-} from '@api/collections/brands/controllers/brand-relocation.helpers';
 import { decorateBrandResponse } from '@api/collections/brands/controllers/brand-response.helpers';
-import { BrandFleetAccess } from '@api/collections/brands/decorators/brand-fleet-access.decorator';
 import { CreateBrandDto } from '@api/collections/brands/dto/create-brand.dto';
 import { UpdateBrandDto } from '@api/collections/brands/dto/update-brand.dto';
 import { type BrandDocument } from '@api/collections/brands/schemas/brand.schema';
@@ -30,6 +25,7 @@ import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { BaseQueryDto } from '@api/helpers/dto/base-query.dto';
+import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import { getIsSuperAdmin } from '@api/helpers/utils/auth/auth.util';
@@ -45,6 +41,7 @@ import { ActivityRecorderService } from '@api/services/activity-recording/activi
 import { BaseCRUDController } from '@api/shared/controllers/base-crud/base-crud.controller';
 import { resolveScopeId } from '@api/shared/controllers/base-crud/base-crud-scope.util';
 import { BaseService } from '@api/shared/services/base/base.service';
+import { ActivityKey, ActivitySource } from '@genfeedai/contracts';
 import type {
   JsonApiCollectionResponse,
   JsonApiSingleResponse,
@@ -65,12 +62,13 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
 
 @AutoSwagger()
 @Controller('brands')
-@BrandFleetAccess()
+@UseGuards(RolesGuard)
 export class BrandsController extends BaseCRUDController<
   BrandDocument,
   CreateBrandDto,
@@ -267,24 +265,24 @@ export class BrandsController extends BaseCRUDController<
       return super.patch(request, user, id, fields as UpdateBrandDto);
     }
 
-    // Spans both tenants; the service's assertCanRelocate authorizes it
-    // (superadmin, or owner/admin of both orgs; an API key needs admin scope).
+    // A relocation spans the source and destination tenants; authorization
+    // (superadmin, or owner/admin of both orgs) is the service's
+    // assertCanRelocate.
     const { brand: moved, summary } = await crossOrgUnsafe(
       async () =>
-        await this.brandsService.relocateToOrganization(
-          id,
-          updateDto,
-          toRelocationActor(user, request),
-        ),
+        await this.brandsService.relocateToOrganization(id, updateDto, {
+          isSuperAdmin: getIsSuperAdmin(user, request),
+          userId: user.userId ?? user.id,
+        }),
     );
 
-    await recordBrandRelocation(this.activityRecorder, this.loggerService, {
+    await this.activityRecorder.record({
       brandId: id,
-      brandOwnerId: existing.userId,
-      destinationOrganizationId: requestedOrgId,
-      sourceOrganizationId: existing.organizationId,
-      summary,
+      key: ActivityKey.BRAND_RELOCATED,
+      organizationId: requestedOrgId,
+      source: ActivitySource.BRAND_RELOCATION,
       userId: user.userId ?? user.id,
+      value: JSON.stringify(summary),
     });
 
     return {
@@ -318,11 +316,10 @@ export class BrandsController extends BaseCRUDController<
     // Counts resources across source and destination tenants; see patch().
     const preview = await crossOrgUnsafe(
       async () =>
-        await this.brandsService.previewRelocation(
-          id,
-          organizationId,
-          toRelocationActor(user, request),
-        ),
+        await this.brandsService.previewRelocation(id, organizationId, {
+          isSuperAdmin: getIsSuperAdmin(user, request),
+          userId: user.userId ?? user.id,
+        }),
     );
 
     return { data: preview };

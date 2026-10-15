@@ -80,10 +80,10 @@ describe('CampaignPlanningService', () => {
       where: { id: dto.brandId, organizationId: 'org-1', isDeleted: false },
     });
     expect(context.assembleContext).toHaveBeenCalledWith({
+      userId: 'user-1',
       brandId: dto.brandId,
       organizationId: 'org-1',
       query: 'Product launch',
-      userId: 'user-1',
     });
     expect(llm.completeStructured).toHaveBeenCalledWith(
       expect.objectContaining({ schema: campaignPlanSchema }),

@@ -1,8 +1,11 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { WorkflowExecutionReadScopeService } from '@api/authorization/brand-access/workflow-execution-read-scope.service';
 import { WorkflowExecutionsController } from '@api/collections/workflow-executions/controllers/workflow-executions.controller';
 import { WorkflowExecutionQueryDto } from '@api/collections/workflow-executions/dto/create-workflow-execution.dto';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
 import { WorkflowExecutionAuthorizationService } from '@api/collections/workflows/services/workflow-execution-authorization.service';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   adminUser,
   emptyPage,
@@ -14,8 +17,31 @@ import {
   tenantReadQuery,
   tenantReadRequest,
 } from '@api-test/helpers/tenant-read.fixture';
+import { MemberRole } from '@genfeedai/contracts';
 import { ForbiddenException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+
+function actualReaderPolicy() {
+  const prisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: memberUser.userId }) },
+    member: {
+      findFirst: vi
+        .fn()
+        .mockImplementation(
+          async ({ where }: { where: { organizationId: string } }) =>
+            [sessionOrganizationId, targetOrganizationId].includes(
+              where.organizationId,
+            )
+              ? { role: { key: MemberRole.OWNER }, brands: [] }
+              : null,
+        ),
+    },
+  } as unknown as PrismaService;
+  return new WorkflowExecutionReadScopeService(
+    prisma,
+    new BrandAccessService(prisma),
+  );
+}
 
 describe('WorkflowExecutionsController tenant reads (#6176)', () => {
   async function setup() {
@@ -23,6 +49,10 @@ describe('WorkflowExecutionsController tenant reads (#6176)', () => {
     const module = await Test.createTestingModule({
       controllers: [WorkflowExecutionsController],
       providers: [
+        {
+          provide: WorkflowExecutionReadScopeService,
+          useValue: actualReaderPolicy(),
+        },
         { provide: WorkflowExecutionsService, useValue: { findAll: mock } },
         { provide: WorkflowExecutionAuthorizationService, useValue: {} },
       ],
@@ -95,6 +125,10 @@ describe('Workflow execution statistics tenant reads (#6176)', () => {
     const module = await Test.createTestingModule({
       controllers: [WorkflowExecutionsController],
       providers: [
+        {
+          provide: WorkflowExecutionReadScopeService,
+          useValue: actualReaderPolicy(),
+        },
         {
           provide: WorkflowExecutionsService,
           useValue: { getCustomerSummary: mock },

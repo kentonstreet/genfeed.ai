@@ -4,10 +4,6 @@ import type {
   AgentGenerationSettings,
 } from '@api/services/agent-orchestrator/interfaces/agent-chat.interface';
 import {
-  type AgentInitiatingPrincipal,
-  projectAgentInitiatingPrincipal,
-} from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
-import {
   AgentAutonomyMode,
   AgentThreadMode,
   AgentType,
@@ -20,23 +16,8 @@ import { readRecord } from '@genfeedai/utils/data/extract.util';
 
 type AgentTurnWorkflowRequest = AgentChatRequest & {
   campaignId?: string;
-  /** Server-written by turn acceptance; checked against the execution before use. */
-  initiatingPrincipal?: AgentInitiatingPrincipal;
   strategyId?: string;
 };
-
-function projectPersistedPrincipal(
-  value: unknown,
-): AgentInitiatingPrincipal | undefined {
-  const record = readRecord(value);
-  return typeof record.userId === 'string' &&
-    typeof record.organizationId === 'string'
-    ? projectAgentInitiatingPrincipal(value, {
-        organizationId: record.organizationId,
-        userId: record.userId,
-      })
-    : undefined;
-}
 
 export function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -216,13 +197,6 @@ export function projectAgentTurnRequest(
       : {}),
     ...(optionalString(request.campaignId)
       ? { campaignId: optionalString(request.campaignId) }
-      : {}),
-    ...(projectPersistedPrincipal(request.initiatingPrincipal)
-      ? {
-          initiatingPrincipal: projectPersistedPrincipal(
-            request.initiatingPrincipal,
-          ),
-        }
       : {}),
     ...(optionalString(request.clientRequestId)
       ? { clientRequestId: optionalString(request.clientRequestId) }

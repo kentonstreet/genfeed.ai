@@ -204,13 +204,18 @@ describe('automation selected data and immutable actor', () => {
     );
     const count = vi.fn(async (_query: Record<string, unknown>) => 1);
     const prisma = {
-      knowledgeSource: { findMany, count },
-      brand: { findFirst: vi.fn().mockResolvedValue({ id: selectedBrand }) },
+      brand: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: selectedBrand,
+          organizationId: selectedOrg,
+        }),
+      },
       member: {
         findFirst: vi
           .fn()
           .mockResolvedValue({ role: { key: 'admin' }, brands: [] }),
       },
+      knowledgeSource: { findMany, count },
       $transaction: (queries: Promise<unknown>[]) => Promise.all(queries),
     } as unknown as PrismaService;
     const records = new KnowledgeRecordsService(
@@ -277,10 +282,10 @@ describe('automation selected data and immutable actor', () => {
     const findAll = vi.fn(async (where: { organizationId: string }) => ({
       docs: [rowFor(where.organizationId)],
     }));
-    const generateContentPlan = vi.fn(async () => ({ entries: [] }));
+    const generatePhoto = vi.fn(async () => 'generated');
     const controller = instance(PersonasContentController, {
       postsService: { findAll },
-      personaContentPlanService: { generateContentPlan },
+      personaContentService: { generatePhoto },
     });
     expect(
       await selected(() =>
@@ -318,10 +323,8 @@ describe('automation selected data and immutable actor', () => {
       response: { detail: 'brandId is required and must be a string' },
     });
     expect(findAll).not.toHaveBeenCalled();
-    await selected(() =>
-      controller.generateContentPlan(testId('persona'), { days: 1 }, user),
-    );
-    expect(generateContentPlan).toHaveBeenCalledWith(
+    await selected(() => controller.generatePhoto(testId('persona'), {}, user));
+    expect(generatePhoto).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: originalOrg,
         userId: user.userId,

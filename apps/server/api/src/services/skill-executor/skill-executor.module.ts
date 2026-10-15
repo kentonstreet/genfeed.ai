@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { ContentIntelligenceModule } from '@api/collections/content-intelligence/content-intelligence.module';
 import { SkillsModule } from '@api/collections/skills/skills.module';
 import { TrendsModule } from '@api/collections/trends/trends.module';
@@ -20,6 +21,7 @@ import { Module } from '@nestjs/common';
 @Module({
   exports: [SkillWorkflowService],
   imports: [
+    BrandAccessModule,
     AgentChatModelRegistryModule,
     ByokModule,
     ContentIntelligenceModule,

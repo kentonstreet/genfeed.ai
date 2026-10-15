@@ -8,7 +8,7 @@ import {
   dispatchRegisteredAgentTool,
 } from '@api/services/agent-orchestrator/tools/agent-tool-dispatch.routes';
 import type { ToolExecutionContext } from '@api/services/agent-orchestrator/tools/agent-tool-executor.service';
-import { TurboRunService } from '@api/services/turbo-run/turbo-run.service';
+import { BatchGenerationService } from '@api/services/batch-generation/batch-generation.service';
 import { testId } from '@helpers/testing/test-id.helper';
 import { LoggerService } from '@libs/logger/logger.service';
 import { ForbiddenException } from '@nestjs/common';
@@ -58,7 +58,7 @@ async function fixture() {
         },
       },
       { provide: CreditsUtilsService, useValue: credits },
-      { provide: TurboRunService, useValue: generation },
+      { provide: BatchGenerationService, useValue: generation },
     ],
   }).compile();
   return {
@@ -114,7 +114,11 @@ describe('link_external_publication_credential execution', () => {
     await f.handler.linkExternalPublicationCredential(params, ctx);
     expect(f.scopeService.assertBrandAuthorized).toHaveBeenCalledWith(
       params.brandId,
-      { organizationId: ctx.organizationId, userId: ctx.userId },
+      {
+        userId: ctx.userId,
+        organizationId: ctx.organizationId,
+        ...ctx.apiKeyContext,
+      },
     );
   });
   it('rejects a brand the organization does not own before persistence', async () => {

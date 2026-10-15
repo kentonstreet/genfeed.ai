@@ -1,5 +1,9 @@
 import { runWithActionOrigin } from '@api/action-origin/action-origin.context';
 import {
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
+import {
   ActionOrigin,
   AgentGenerationMode,
   RouterPriority,
@@ -436,35 +440,6 @@ describe('AgentTurnAcceptanceService', () => {
     );
   });
 
-  it('persists the authenticated principal on the durable turn request only when the caller supplies one', async () => {
-    const initiatingPrincipal = {
-      apiKeyId: 'key-1',
-      isApiKey: true,
-      organizationId: 'org-1',
-      scopes: ['posts:schedule'],
-      userId: 'user-1',
-    };
-    await service.accept(
-      { clientRequestId: 'with-principal', content: 'Plan my week' },
-      { initiatingPrincipal, organizationId: 'org-1', userId: 'user-1' },
-    );
-    await service.accept(
-      { clientRequestId: 'system-turn', content: 'Plan my week' },
-      { organizationId: 'org-1', userId: 'user-1' },
-    );
-
-    const requests = workflowRunner.enqueueWorkflow.mock.calls.map(
-      (call: unknown[]) =>
-        (
-          call[0] as {
-            inputValues: { request: Record<string, unknown> };
-          }
-        ).inputValues.request,
-    );
-    expect(requests[0]).toMatchObject({ initiatingPrincipal });
-    expect(requests[1]).not.toHaveProperty('initiatingPrincipal');
-  });
-
   it('returns the same durable identities and idempotency key when an acknowledgement is retried', async () => {
     const request = {
       clientRequestId: '018f6f76-b821-7a51-82af-93d0ecac2101',
@@ -787,5 +762,46 @@ describe('AgentTurnAcceptanceService', () => {
       ),
     ).rejects.toThrow('This thread is archived');
     expect(workflowRunner.enqueueWorkflow).not.toHaveBeenCalled();
+  });
+  it('captures the actual keyed producer and rejects client authority in the durable envelope', async () => {
+    await service.accept(
+      {
+        clientRequestId: 'keyed-turn',
+        content: 'Continue',
+        ...{
+          initiatingActor: { userId: 'forged', isApiKey: false },
+          initiatingActorKey: 'forged',
+          initiatingRequestKey: 'forged',
+        },
+      },
+      {
+        organizationId: 'org-1',
+        userId: 'user-1',
+        apiKeyContext: { isApiKey: true, apiKeyId: 'key-1', scopes: ['read'] },
+      },
+    );
+    const queued = workflowRunner.enqueueWorkflow.mock.calls[0][0];
+    const actor = {
+      organizationId: 'org-1',
+      userId: 'user-1',
+      isApiKey: true,
+      apiKeyId: 'key-1',
+      scopes: ['read'],
+    };
+    expect(queued.inputValues.initiatingActor).toEqual(actor);
+    expect(queued.inputValues.request).not.toHaveProperty('initiatingActor');
+    expect(queued.metadata.initiatingActorKey).toBe(workflowActorKey(actor));
+    expect(queued.metadata.initiatingRequestKey).toBe(
+      workflowRequestKey(queued.inputValues),
+    );
+    expect(scopeService.prepareForTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isApiKey: true,
+        scopes: ['read'],
+        organizationId: 'org-1',
+        userId: 'user-1',
+      }),
+    );
+    expect(queued.userId).toBe('user-1');
   });
 });

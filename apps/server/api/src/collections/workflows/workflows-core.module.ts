@@ -1,8 +1,8 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { WorkflowExecutionQueueService } from '@api/collections/workflows/services/workflow-execution-queue.service';
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
 import { SystemWorkflowRunnerService } from '@api/collections/workflows/system-workflow-runner.service';
 import { SYSTEM_WORKFLOW_RUNNER } from '@api/collections/workflows/workflows.tokens';
-import { OrganizationModuleAccessModule } from '@api/common/organization-modules/organization-module-access.module';
 import {
   AGENT_TURN_QUEUE,
   PLATFORM_SYSTEM_WORKFLOW_QUEUE,
@@ -31,7 +31,7 @@ import { Module } from '@nestjs/common';
     WorkflowsService,
   ],
   imports: [
-    OrganizationModuleAccessModule,
+    BrandAccessModule,
     BullModule.registerQueue(
       {
         defaultJobOptions: {

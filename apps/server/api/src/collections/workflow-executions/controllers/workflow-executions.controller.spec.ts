@@ -1,5 +1,12 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  capturePublicWorkflowActorEnvelope,
+  captureWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
+import { WorkflowExecutionReadScopeService } from '@api/authorization/brand-access/workflow-execution-read-scope.service';
 import { WorkflowExecutionQueryDto } from '@api/collections/workflow-executions/dto/create-workflow-execution.dto';
 import { buildCustomerExecutionWhere } from '@api/collections/workflow-executions/services/workflow-execution-query.util';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 
 vi.mock('@api/helpers/utils/response/response.util', () => ({
   serializeCollection: vi.fn((_req, _serializer, data) => data.docs || data),
@@ -12,9 +19,9 @@ import { WorkflowExecutionAuthorizationService } from '@api/collections/workflow
 import { WorkflowExecutorService } from '@api/collections/workflows/services/workflow-executor.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
-import { serializeSingle } from '@api/helpers/utils/response/response.util';
 import {
   AgentFailureReason,
+  MemberRole,
   WorkflowExecutionStatus,
 } from '@genfeedai/contracts';
 import { testId } from '@helpers/testing/test-id.helper';
@@ -22,6 +29,11 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Test, TestingModule } from '@nestjs/testing';
 
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 const organizationId = testId('org');
 
 describe('WorkflowExecutionsController', () => {
@@ -50,10 +62,44 @@ describe('WorkflowExecutionsController', () => {
     authorize: vi.fn().mockResolvedValue(undefined),
   };
 
+  const readerPrisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-123' }) },
+    member: {
+      findFirst: vi
+        .fn()
+        .mockResolvedValue({ role: { key: MemberRole.OWNER }, brands: [] }),
+    },
+    apiKey: { findFirst: vi.fn().mockResolvedValue({ scopes: ['read'] }) },
+  };
+  const readerDatabase = readerPrisma as unknown as PrismaService;
+  const readScopes = new WorkflowExecutionReadScopeService(
+    readerDatabase,
+    new BrandAccessService(readerDatabase),
+  );
+  const readerActor = () =>
+    captureWorkflowActor({ userId: 'user-123', organizationId });
+  const authorizedWhere = async (
+    query: WorkflowExecutionQueryDto = {} as WorkflowExecutionQueryDto,
+  ) => ({
+    organizationId,
+    isDeleted: false,
+    AND: [
+      buildCustomerExecutionWhere(organizationId, query),
+      await readScopes.predicate(readerActor()),
+    ],
+  });
+
   beforeEach(async () => {
+    runtime.cloud = false;
+    readerPrisma.user.findFirst.mockResolvedValue({ id: 'user-123' });
+    readerPrisma.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [],
+    });
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WorkflowExecutionsController],
       providers: [
+        { provide: WorkflowExecutionReadScopeService, useValue: readScopes },
         {
           provide: WorkflowExecutionsService,
           useValue: mockService,
@@ -116,7 +162,7 @@ describe('WorkflowExecutionsController', () => {
           workflow: { select: { description: true, id: true, label: true } },
         },
         orderBy: { createdAt: -1 },
-        where: buildCustomerExecutionWhere(organizationId, query),
+        where: await authorizedWhere(query),
       });
       expect(options).toEqual(
         expect.objectContaining({ limit: expect.any(Number), offset: 0 }),
@@ -150,9 +196,9 @@ describe('WorkflowExecutionsController', () => {
 
       expect(mockService.findAll).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: buildCustomerExecutionWhere(organizationId, {
+          where: await authorizedWhere({
             brandId: 'brand-from-another-org',
-          }),
+          } as WorkflowExecutionQueryDto),
         }),
         expect.any(Object),
       );
@@ -168,7 +214,9 @@ describe('WorkflowExecutionsController', () => {
 
       expect(mockService.findAll).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: buildCustomerExecutionWhere(organizationId, { strategyId }),
+          where: await authorizedWhere({
+            strategyId,
+          } as WorkflowExecutionQueryDto),
         }),
         expect.any(Object),
       );
@@ -193,6 +241,7 @@ describe('WorkflowExecutionsController', () => {
       query,
       new Date(query.dayStart),
       new Date(query.dayEnd),
+      await readScopes.predicate(readerActor()),
     );
     expect(mockService.findAll).not.toHaveBeenCalled();
   });
@@ -219,32 +268,19 @@ describe('WorkflowExecutionsController', () => {
       mockService.getExecutionStats.mockResolvedValue(mockStats);
 
       const result = controller.getExecutionStats(mockUser, 'wf-1');
+      expect(result).toEqual(expect.any(Promise));
+      expect(await result).toEqual(mockStats);
 
       expect(mockService.getExecutionStats).toHaveBeenCalledWith(
         'wf-1',
         organizationId,
+        await readScopes.predicate(readerActor()),
       );
       expect(result).toEqual(expect.any(Promise));
     });
   });
 
   describe('findOne', () => {
-    it('returns a 404 before serialization when the scoped execution is missing', async () => {
-      mockService.findOneWithAccounting.mockResolvedValue(null);
-      const serializedBefore = vi.mocked(serializeSingle).mock.calls.length;
-      const result = controller.findOne(mockRequest, mockUser, 'missing-exec');
-
-      await expect(result).rejects.toBeInstanceOf(NotFoundException);
-      await expect(result).rejects.toMatchObject({ status: 404 });
-      expect(mockService.findOneWithAccounting).toHaveBeenCalledWith({
-        ...buildCustomerExecutionWhere(organizationId),
-        id: 'missing-exec',
-      });
-      expect(vi.mocked(serializeSingle).mock.calls).toHaveLength(
-        serializedBefore,
-      );
-    });
-
     it('should return a single execution by id', async () => {
       const mockExecution = {
         id: 'exec-1',
@@ -258,6 +294,10 @@ describe('WorkflowExecutionsController', () => {
       expect(mockService.findOneWithAccounting).toHaveBeenCalledWith({
         ...buildCustomerExecutionWhere(organizationId),
         id: 'exec-1',
+        AND: [
+          buildCustomerExecutionWhere(organizationId),
+          await readScopes.predicate(readerActor()),
+        ],
       });
       expect(result).toEqual({ ...mockExecution, accounting: null });
     });
@@ -285,8 +325,16 @@ describe('WorkflowExecutionsController', () => {
         'wf-1',
         'user-123',
         organizationId,
-        { prompt: 'hello' },
-        { source: 'builder' },
+        capturePublicWorkflowActorEnvelope(
+          readerActor(),
+          { prompt: 'hello' },
+          { source: 'builder' },
+        ).inputValues,
+        capturePublicWorkflowActorEnvelope(
+          readerActor(),
+          { prompt: 'hello' },
+          { source: 'builder' },
+        ).metadata,
         'api',
         undefined,
       );
@@ -334,8 +382,8 @@ describe('WorkflowExecutionsController', () => {
         'wf-1',
         'user-123',
         organizationId,
-        {},
-        undefined,
+        capturePublicWorkflowActorEnvelope(readerActor()).inputValues,
+        capturePublicWorkflowActorEnvelope(readerActor()).metadata,
         undefined,
         scope,
       );
@@ -360,6 +408,29 @@ describe('WorkflowExecutionsController', () => {
     });
   });
 
+  it('opaquely denies a revoked current reader before the execution ID query', async () => {
+    runtime.cloud = true;
+    readerPrisma.member.findFirst.mockResolvedValue(null);
+    await expect(
+      controller.findOne(mockRequest, mockUser, 'exec-1'),
+    ).rejects.toThrow(NotFoundException);
+    expect(mockService.findOneWithAccounting).not.toHaveBeenCalled();
+  });
+
+  it('denies cancellation when membership is revoked during the private lookup', async () => {
+    runtime.cloud = true;
+    mockService.findOne.mockImplementationOnce(async () => {
+      readerPrisma.member.findFirst.mockResolvedValue(null);
+      return { id: 'exec-1', status: 'running' };
+    });
+    await expect(
+      controller.update(mockRequest, mockUser, 'exec-1', {
+        status: WorkflowExecutionStatus.CANCELLED,
+      }),
+    ).rejects.toThrow(NotFoundException);
+    expect(mockService.cancelExecution).not.toHaveBeenCalled();
+  });
+
   describe('update', () => {
     it('should cancel an execution when status is cancelled', async () => {
       const mockExecution = { id: 'exec-1', status: 'running' };
@@ -374,6 +445,10 @@ describe('WorkflowExecutionsController', () => {
       expect(mockService.findOne).toHaveBeenCalledWith({
         ...buildCustomerExecutionWhere(organizationId),
         id: 'exec-1',
+        AND: [
+          buildCustomerExecutionWhere(organizationId),
+          await readScopes.predicate(readerActor()),
+        ],
       });
       expect(mockService.cancelExecution).toHaveBeenCalledWith(
         'exec-1',

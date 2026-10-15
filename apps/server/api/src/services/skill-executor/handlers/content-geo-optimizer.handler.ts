@@ -1,3 +1,4 @@
+import { admitWorkflowDispatch } from '@api/authorization/brand-access/workflow-actor.util';
 import { AgentChatModelRegistryService } from '@api/services/agent-orchestrator/agent-chat-model-registry.service';
 import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatcher.service';
 import {
@@ -17,7 +18,7 @@ import {
   type JsonLdValue,
 } from '@helpers/content/schema-org.helper';
 import { LoggerService } from '@libs/logger/logger.service';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 const GEO_SKILL_SLUG = 'content-geo-optimizer';
 
@@ -65,6 +66,7 @@ export class ContentGeoOptimizerHandler implements SkillHandler {
   async execute(
     context: SkillExecutionContext,
     params: Record<string, unknown>,
+    admission?: () => Promise<void>,
   ): Promise<GeneratedContent> {
     const sourceContent = this.resolveContent(params);
     if (!sourceContent) {
@@ -92,6 +94,7 @@ export class ContentGeoOptimizerHandler implements SkillHandler {
       params,
       sourceContent,
       scorecard,
+      admission,
     );
     const rewrittenContent =
       llmResult?.rewrittenContent?.trim() || fallbackContent;
@@ -131,8 +134,11 @@ export class ContentGeoOptimizerHandler implements SkillHandler {
     params: Record<string, unknown>,
     sourceContent: string,
     scorecard: GeoScorecard,
+    admission?: () => Promise<void>,
   ): Promise<ContentGeoOptimization | null> {
     try {
+      const model = await this.resolveModel(params.model);
+      await admitWorkflowDispatch(admission);
       return await this.llmDispatcherService.completeStructured(
         {
           max_tokens: 1400,
@@ -147,7 +153,7 @@ export class ContentGeoOptimizerHandler implements SkillHandler {
               role: 'user',
             },
           ],
-          model: await this.resolveModel(params.model),
+          model,
           schema: contentGeoOptimizationSchema,
           schemaName: CONTENT_GEO_OPTIMIZATION_SCHEMA_NAME,
           temperature: 0.3,
@@ -155,6 +161,7 @@ export class ContentGeoOptimizerHandler implements SkillHandler {
         context.organizationId,
       );
     } catch (error: unknown) {
+      if (error instanceof ForbiddenException) throw error;
       this.loggerService.warn(
         `${GEO_SKILL_SLUG} LLM call failed, using fallback`,
         {

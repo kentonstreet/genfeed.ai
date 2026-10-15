@@ -1,3 +1,4 @@
+import type { WorkflowInitiatingActor } from '@api/authorization/brand-access/workflow-actor.util';
 import type { PostDocument } from '@api/collections/posts/post.schema';
 import type { JsonApiCollectionResponse } from '@genfeedai/contracts/interfaces';
 
@@ -9,6 +10,7 @@ export type ContentSignalType =
   | 'webhook';
 
 export interface ContentSignal {
+  initiatingActor?: WorkflowInitiatingActor;
   brandId: string;
   organizationId: string;
   payload?: Record<string, unknown>;

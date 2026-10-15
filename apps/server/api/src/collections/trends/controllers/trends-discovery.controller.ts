@@ -1,11 +1,11 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import type {
   TrendPromptReferencePackType,
   TrendSourceIntendedUse,
   TrendSourceKind,
 } from '@api/collections/trends/interfaces/trend.interfaces';
 import { TrendsService } from '@api/collections/trends/services/trends.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -37,7 +37,6 @@ const TREND_SOURCE_INTENDED_USE_VALUES = [
 
 @AutoSwagger()
 @FeatureFlag('discovery')
-@OrganizationModule('discovery')
 @Controller('trends')
 @UseInterceptors(CreditsInterceptor)
 export class TrendsDiscoveryController {
@@ -81,6 +80,7 @@ export class TrendsDiscoveryController {
       brandId,
       platform,
       relevance,
+      this.actor(user),
     );
 
     return {
@@ -129,6 +129,7 @@ export class TrendsDiscoveryController {
         platform,
         refresh: false,
       },
+      this.actor(user),
     );
 
     return {
@@ -178,6 +179,7 @@ export class TrendsDiscoveryController {
         sourceKind: this.parseSourceKindQuery(sourceKindParam),
         trendId,
       },
+      this.actor(user),
     );
 
     return {
@@ -209,12 +211,17 @@ export class TrendsDiscoveryController {
       ? 12
       : Math.min(Math.max(parsedLimit, 1), 100);
 
-    return this.trendsService.getPromptReferencePacks(organizationId, brandId, {
-      intent: this.parsePromptReferenceIntent(intentParam),
-      limit,
-      platform,
-      types: this.parsePromptReferencePackTypes(typesParam),
-    });
+    return this.trendsService.getPromptReferencePacks(
+      organizationId,
+      brandId,
+      {
+        intent: this.parsePromptReferenceIntent(intentParam),
+        limit,
+        platform,
+        types: this.parsePromptReferencePackTypes(typesParam),
+      },
+      this.actor(user),
+    );
   }
 
   @Get('references/accounts')
@@ -242,6 +249,7 @@ export class TrendsDiscoveryController {
         limit,
         platform,
       },
+      this.actor(user),
     );
 
     return {
@@ -264,8 +272,19 @@ export class TrendsDiscoveryController {
   ) {
     return this.trendsService.getCorpusFreshnessHealth({
       isPlatformAdmin: user?.isSuperAdmin === true,
+      initiatingActor: this.actor(user),
       organizationId: user.organizationId,
       platform,
+    });
+  }
+
+  private actor(user: User) {
+    return captureWorkflowActor({
+      organizationId: user.organizationId,
+      userId: user.userId ?? user.id,
+      isApiKey: user.isApiKey,
+      scopes: user.scopes,
+      apiKeyId: user.apiKeyId,
     });
   }
 

@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { CredentialsCoreModule } from '@api/collections/credentials/credentials-core.module';
 import { WorkflowsCoreModule } from '@api/collections/workflows/workflows-core.module';
 import { YoutubeAuthService } from '@api/services/integrations/youtube/services/modules/youtube-auth.service';
@@ -6,7 +7,7 @@ import { SocialTimelineProviderService } from '@api/services/social-timeline/soc
 import { Module } from '@nestjs/common';
 
 @Module({
-  imports: [CredentialsCoreModule, WorkflowsCoreModule],
+  imports: [BrandAccessModule, CredentialsCoreModule, WorkflowsCoreModule],
   providers: [
     YoutubeAuthService,
     SocialTimelineProviderService,

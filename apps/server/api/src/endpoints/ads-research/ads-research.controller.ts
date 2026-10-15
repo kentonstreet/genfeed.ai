@@ -1,5 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { AdsDiscoveryService } from '@api/endpoints/ads-research/ads-discovery.service';
 import { AdsResearchService } from '@api/endpoints/ads-research/ads-research.service';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
@@ -40,7 +40,6 @@ import {
 
 @AutoSwagger()
 @FeatureFlag('discovery')
-@OrganizationModule('discovery')
 @Controller('ads/research')
 @UseGuards(RolesGuard)
 export class AdsResearchController {
@@ -203,6 +202,13 @@ export class AdsResearchController {
       brandId,
       organizationId: user.organizationId,
       userId: user.userId ?? user.id,
+      initiatingActor: captureWorkflowActor({
+        userId: user.id,
+        organizationId: user.organizationId,
+        isApiKey: user.isApiKey,
+        apiKeyId: user.apiKeyId,
+        scopes: user.scopes,
+      }),
     });
   }
 
@@ -233,6 +239,13 @@ export class AdsResearchController {
       brandId,
       organizationId: user.organizationId,
       userId: user.userId ?? user.id,
+      initiatingActor: captureWorkflowActor({
+        userId: user.id,
+        organizationId: user.organizationId,
+        isApiKey: user.isApiKey,
+        apiKeyId: user.apiKeyId,
+        scopes: user.scopes,
+      }),
     });
   }
 

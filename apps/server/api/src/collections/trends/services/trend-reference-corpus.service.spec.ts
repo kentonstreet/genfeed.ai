@@ -1,9 +1,17 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import type { TrendSourceItem } from '@api/collections/trends/interfaces/trend.interfaces';
 import { TrendCorpusFreshnessService } from '@api/collections/trends/services/modules/trend-corpus-freshness.service';
 import { TrendReferenceSyncService } from '@api/collections/trends/services/modules/trend-reference-sync.service';
 import { TrendReferenceCorpusService } from '@api/collections/trends/services/trend-reference-corpus.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 type ReferenceRow = {
   authorHandle: string | null;
@@ -297,6 +305,10 @@ describe('TrendReferenceCorpusService', () => {
   }
 
   const prisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: 'actor' }) },
+    apiKey: { findFirst: vi.fn().mockResolvedValue({ scopes: ['read'] }) },
+    member: { findFirst: vi.fn() },
+    brand: { findFirst: vi.fn() },
     $queryRaw: vi.fn((query: QueryLike) => {
       const sql = String(query.sql ?? query.text ?? '');
       if (sql.includes('source_reference_id')) {
@@ -441,6 +453,7 @@ describe('TrendReferenceCorpusService', () => {
   let service: TrendReferenceCorpusService;
 
   beforeEach(() => {
+    runtime.cloud = false;
     vi.clearAllMocks();
     trendCorpusFreshnessService.getCorpusFreshnessHealth.mockResolvedValue({
       generatedAt: '2026-06-14T00:00:00.000Z',
@@ -470,6 +483,7 @@ describe('TrendReferenceCorpusService', () => {
         prisma as unknown as PrismaService,
         loggerService as unknown as LoggerService,
       ),
+      new BrandAccessService(prisma as unknown as PrismaService),
     );
   });
 
@@ -1148,5 +1162,181 @@ describe('TrendReferenceCorpusService', () => {
       }),
     );
     expect(prisma.trendRemixLineage.create).not.toHaveBeenCalled();
+  });
+  describe('fresh Cloud private reference admission', () => {
+    const actor = {
+      organizationId: 'org_1',
+      userId: 'actor',
+      isApiKey: false,
+      scopes: [] as string[],
+    };
+    beforeEach(() => {
+      runtime.cloud = true;
+      prisma.user.findFirst.mockResolvedValue({ id: actor.userId });
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [{ id: 'brand_1' }],
+      });
+      prisma.brand.findFirst.mockImplementation(async ({ where }) => {
+        const ids = where.AND[0].id?.in;
+        const id = where.AND[1].id;
+        return id === 'brand_1' && (ids === undefined || ids.includes(id))
+          ? { id }
+          : null;
+      });
+    });
+    it.each([undefined, { ...actor, organizationId: 'foreign' }])(
+      'denies missing or foreign authority before reference or count queries',
+      async (supplied) => {
+        await expect(
+          service.getTopReferenceAccounts('org_1', 'brand_1', {}, supplied),
+        ).rejects.toThrow('Brand access denied');
+        expect(prisma.trendSourceReference.groupBy).not.toHaveBeenCalled();
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      },
+    );
+    it('denies empty assignments before resolving a private trend or its reference links', async () => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [],
+      });
+      await expect(
+        service.getReferenceCorpus(
+          'org_1',
+          'brand_1',
+          { trendId: 'trend_1' },
+          actor,
+        ),
+      ).rejects.toThrow('Brand access denied');
+      expect(prisma.trend.findFirst).not.toHaveBeenCalled();
+      expect(prisma.trendSourceReferenceLink.findMany).not.toHaveBeenCalled();
+      expect(prisma.trendSourceReference.findMany).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+    it('keeps organization-only trends visible while filtering brand-owned trend IDs in the database', async () => {
+      prisma.trend.findFirst.mockResolvedValueOnce(null);
+      expect(
+        await service.getReferenceCorpus(
+          'org_1',
+          undefined,
+          { trendId: 'hidden' },
+          actor,
+        ),
+      ).toEqual({ hasMore: false, items: [], totalReferences: 0 });
+      expect(prisma.trend.findFirst).toHaveBeenCalledWith({
+        select: { id: true },
+        where: {
+          organizationId: 'org_1',
+          isDeleted: false,
+          id: 'hidden',
+          OR: [
+            { brandId: null },
+            {
+              brand: {
+                organizationId: 'org_1',
+                isDeleted: false,
+                id: { in: ['brand_1'] },
+              },
+            },
+          ],
+        },
+      });
+      expect(prisma.trendSourceReferenceLink.findMany).not.toHaveBeenCalled();
+    });
+    it('admits organization-only trend references without granting a brand or reading private counts', async () => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [],
+      });
+      prisma.trend.findFirst.mockResolvedValueOnce({ id: 'organization-only' });
+      await expect(
+        service.getReferenceCorpus(
+          'org_1',
+          undefined,
+          { trendId: 'organization-only' },
+          actor,
+        ),
+      ).resolves.toEqual({ hasMore: false, items: [], totalReferences: 0 });
+      expect(prisma.trend.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { brandId: null },
+              {
+                brand: {
+                  organizationId: 'org_1',
+                  isDeleted: false,
+                  id: { in: [] },
+                },
+              },
+            ],
+          }),
+        }),
+      );
+      expect(prisma.trendSourceReferenceLink.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { isDeleted: false, trendId: 'organization-only' },
+        }),
+      );
+      expect(prisma.brand.findFirst).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+    it('denies private counts after authority is revoked during the public account query', async () => {
+      prisma.trendSourceReference.groupBy.mockImplementationOnce(async () => {
+        prisma.member.findFirst.mockResolvedValue(null);
+        return [];
+      });
+      await expect(
+        service.getTopReferenceAccounts('org_1', 'brand_1', {}, actor),
+      ).rejects.toThrow('Brand access denied');
+      expect(prisma.trendSourceReference.groupBy).toHaveBeenCalledTimes(1);
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+    it('caps an owner API key by its current scopes before private counts', async () => {
+      prisma.member.findFirst.mockResolvedValue({
+        role: { key: MemberRole.OWNER },
+        brands: [],
+      });
+      prisma.apiKey.findFirst.mockResolvedValue({ scopes: ['read'] });
+      await expect(
+        service.getTopReferenceAccounts(
+          'org_1',
+          'brand_1',
+          {},
+          {
+            ...actor,
+            isApiKey: true,
+            apiKeyId: 'key',
+            scopes: ['admin', 'read'],
+          },
+        ),
+      ).rejects.toThrow('Brand access denied');
+      expect(prisma.apiKey.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'key',
+            userId: 'actor',
+            organizationId: 'org_1',
+            isRevoked: false,
+          }),
+        }),
+      );
+      expect(prisma.trendSourceReference.groupBy).not.toHaveBeenCalled();
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+    it('restricts an actorless public trend lookup to the global corpus without membership reads', async () => {
+      prisma.trend.findFirst.mockResolvedValueOnce(null);
+      expect(
+        await service.getReferenceCorpus(undefined, undefined, {
+          trendId: 'private',
+        }),
+      ).toEqual({ hasMore: false, items: [], totalReferences: 0 });
+      expect(prisma.trend.findFirst).toHaveBeenCalledWith({
+        select: { id: true },
+        where: { id: 'private', organizationId: null, isDeleted: false },
+      });
+      expect(prisma.member.findFirst).not.toHaveBeenCalled();
+      expect(prisma.trendSourceReferenceLink.findMany).not.toHaveBeenCalled();
+    });
   });
 });

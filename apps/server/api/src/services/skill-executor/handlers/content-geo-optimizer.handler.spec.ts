@@ -3,8 +3,15 @@ import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatc
 import { LlmStructuredOutputError } from '@api/services/integrations/llm/llm-structured-output.error';
 import { ContentGeoOptimizerHandler } from '@api/services/skill-executor/handlers/content-geo-optimizer.handler';
 import { LoggerService } from '@libs/logger/logger.service';
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 describe('ContentGeoOptimizerHandler', () => {
   let handler: ContentGeoOptimizerHandler;
@@ -30,6 +37,7 @@ describe('ContentGeoOptimizerHandler', () => {
   };
 
   beforeEach(async () => {
+    runtime.cloud = false;
     vi.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -182,5 +190,23 @@ describe('ContentGeoOptimizerHandler', () => {
     await expect(handler.execute(baseContext, {})).rejects.toThrow(
       'content-geo-optimizer requires content',
     );
+  });
+  it('rejects missing trusted Cloud admission rather than returning a rewrite fallback', async () => {
+    runtime.cloud = true;
+    await expect(
+      handler.execute(baseContext, { content: 'Some GEO content.' }),
+    ).rejects.toThrow('Brand access denied');
+    expect(mockLlmDispatcherService.completeStructured).not.toHaveBeenCalled();
+  });
+  it('rejects revocation after model resolution before provider dispatch', async () => {
+    runtime.cloud = true;
+    const admission = vi
+      .fn()
+      .mockRejectedValue(new ForbiddenException('Brand access denied'));
+    await expect(
+      handler.execute(baseContext, { content: 'Some GEO content.' }, admission),
+    ).rejects.toThrow('Brand access denied');
+    expect(admission).toHaveBeenCalledOnce();
+    expect(mockLlmDispatcherService.completeStructured).not.toHaveBeenCalled();
   });
 });

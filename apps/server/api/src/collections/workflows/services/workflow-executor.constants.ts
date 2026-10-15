@@ -58,6 +58,10 @@ export const EXECUTABLE_WORKFLOW_IDENTITY_SELECT = {
 } satisfies Prisma.WorkflowSelect;
 
 export const EXECUTABLE_WORKFLOW_SELECT = {
+  schedule: true,
+  timezone: true,
+  isScheduleEnabled: true,
+  scheduleInitiatingActor: true,
   ...EXECUTABLE_WORKFLOW_IDENTITY_SELECT,
   currentVersion: {
     select: {

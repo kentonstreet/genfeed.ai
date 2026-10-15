@@ -1,11 +1,7 @@
-import { writeFile } from 'node:fs/promises';
 import { runWithActionOrigin } from '@api/action-origin/action-origin.context';
 import type { AuthenticatedUser } from '@api/auth/interfaces/authenticated-user.interface';
 import { VisualProjectAssetsService } from '@api/collections/visual-projects/services/visual-project-assets.service';
-import { BrandRenderEvidenceService } from '@api/services/brand-render-evidence/brand-render-evidence.service';
-import { verifyBrandRenderEvidenceManifest } from '@api/services/brand-render-evidence/brand-render-evidence-manifest.util';
-import realRender from '@api-test/fixtures/brand-render-evidence/visual-code-still.fixture.json';
-import { ActionOrigin, IngredientCategory } from '@genfeedai/contracts';
+import { ActionOrigin } from '@genfeedai/contracts';
 import type { IVisualSandboxMedia } from '@genfeedai/contracts/interfaces';
 import {
   GenerationEntryAttribution,
@@ -14,7 +10,7 @@ import {
 import type { VisualRevision } from '@genfeedai/prisma';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const storage = vi.hoisted(() => ({ upload: vi.fn(), download: vi.fn() }));
+const storage = vi.hoisted(() => ({ upload: vi.fn() }));
 vi.mock('@genfeedai/storage', () => ({ createStorageProvider: () => storage }));
 interface AdmittedOutput {
   id: string;
@@ -92,25 +88,10 @@ function fixture() {
     }),
   };
   const ingredients = { patch: vi.fn().mockResolvedValue({}) };
-  const preview = vi.fn().mockResolvedValue({
-    revisionId: 'brand-revision',
-    revisionVersion: 3,
-    contentHash: `sha256:${'d'.repeat(64)}`,
-  });
-  const brandFonts = {
-    approvedFonts: vi.fn().mockResolvedValue([]),
-    stage: vi.fn().mockResolvedValue({ assets: [], totalBytes: 0 }),
-  };
   const service = new VisualProjectAssetsService(
     prisma as never,
     { authorizeBrand: vi.fn().mockResolvedValue(undefined) } as never,
     ingredients as never,
-    new BrandRenderEvidenceService(
-      prisma as never,
-      { preview } as never,
-      { warn: vi.fn() } as never,
-    ),
-    brandFonts as never,
   );
   const media: IVisualSandboxMedia = {
     format: 'png',
@@ -125,12 +106,8 @@ function fixture() {
   const commit = (item = media) =>
     service.commit(user, revision, [item], async () => {});
   return {
-    brandFonts,
     commit,
     media,
-    preview,
-    service,
-    user,
     ingredients,
     ingredient,
     revision,
@@ -139,10 +116,7 @@ function fixture() {
     },
   };
 }
-beforeEach(() => {
-  storage.upload.mockReset();
-  storage.download.mockReset();
-});
+beforeEach(() => storage.upload.mockReset());
 describe('canonical visual output admission', () => {
   it('stamps visual output admission once and retains the original entry on replay', async () => {
     const { commit, ingredient } = fixture();
@@ -232,234 +206,5 @@ describe('canonical visual output admission', () => {
     });
     await expect(commit()).rejects.toThrow('visual_cancelled');
     expect(ingredients.patch).not.toHaveBeenCalled();
-  });
-});
-
-describe('render evidence persistence', () => {
-  const png = Buffer.from(realRender.png, 'base64');
-  const rendered: IVisualSandboxMedia = {
-    format: 'png',
-    width: realRender.width,
-    height: realRender.height,
-    frame: realRender.frame,
-    bytes: realRender.png,
-    evidence: realRender.evidence,
-  };
-  const storedManifest = (create: { mock: { calls: unknown[][] } }) =>
-    (
-      create.mock.calls[0][0] as {
-        data: { providerData: { renderEvidence?: unknown } };
-      }
-    ).data.providerData.renderEvidence;
-
-  it('stores the manifest with the artifact in the same admission', async () => {
-    const { commit, ingredient, preview } = fixture();
-    await commit(rendered);
-    const manifest = storedManifest(ingredient.create);
-    expect(manifest).toMatchObject({
-      organizationId: 'org',
-      brandId: 'brand',
-      artifact: {
-        id: expect.any(String),
-        format: 'png',
-        byteLength: png.byteLength,
-        storageKey: 'visual-code/org/brand/revision/outputs/0.png',
-      },
-      brandSnapshot: {
-        binding: 'approved_at_render',
-        revisionId: 'brand-revision',
-      },
-    });
-    expect(preview).toHaveBeenCalledWith({
-      actorId: 'user',
-      organizationId: 'org',
-      brandId: 'brand',
-    });
-    const created = ingredient.create.mock.calls[0][0].data;
-    expect(
-      verifyBrandRenderEvidenceManifest(manifest, {
-        organizationId: 'org',
-        brandId: 'brand',
-        artifactId: created.id,
-        bytes: png,
-      }).status,
-    ).toBe('verified');
-  });
-
-  it('does not let the stored manifest vouch for different bytes', async () => {
-    const { commit, ingredient } = fixture();
-    await commit(rendered);
-    const created = ingredient.create.mock.calls[0][0].data;
-    const stale = Buffer.from(png);
-    stale[stale.length - 1] ^= 1;
-    expect(
-      verifyBrandRenderEvidenceManifest(storedManifest(ingredient.create), {
-        organizationId: 'org',
-        brandId: 'brand',
-        artifactId: created.id,
-        bytes: stale,
-      }),
-    ).toMatchObject({
-      status: 'rejected',
-      reasonCode: 'artifact_hash_mismatch',
-    });
-  });
-
-  it('stores no manifest for output the renderer did not observe', async () => {
-    const { commit, ingredient, preview } = fixture();
-    await commit();
-    expect(storedManifest(ingredient.create)).toBeUndefined();
-    expect(preview).not.toHaveBeenCalled();
-  });
-
-  it('still admits the output when its observations are unusable', async () => {
-    const { commit, ingredient } = fixture();
-    await commit({ ...rendered, evidence: { schemaVersion: 1 } });
-    expect(ingredient.create).toHaveBeenCalledOnce();
-    expect(storedManifest(ingredient.create)).toBeUndefined();
-  });
-
-  it('keeps the first manifest when the commit is replayed', async () => {
-    const { commit, ingredient } = fixture();
-    await commit(rendered);
-    const first = storedManifest(ingredient.create);
-    await commit(rendered);
-    expect(ingredient.create).toHaveBeenCalledOnce();
-    expect(storedManifest(ingredient.create)).toBe(first);
-  });
-});
-
-describe('brand font staging', () => {
-  const font = {
-    id: 'brand-font',
-    mime: 'font/woff2',
-    bytes: Buffer.from('wOF2').toString('base64'),
-    faces: [{ family: 'Brand Display', style: 'normal' as const, weight: 700 }],
-  };
-
-  it('stages the approved brand fonts for the revision brand', async () => {
-    const { service, user, revision, brandFonts } = fixture();
-    brandFonts.stage.mockResolvedValue({ assets: [font], totalBytes: 4 });
-    expect(await service.stage(user, revision)).toEqual([font]);
-    expect(brandFonts.stage).toHaveBeenCalledWith({
-      organizationId: 'org',
-      brandId: 'brand',
-      userId: 'user',
-    });
-  });
-
-  const libraryImage = (id: string) => ({
-    id,
-    s3Key: `library/${id}.png`,
-    category: IngredientCategory.IMAGE,
-    fileSize: 3,
-    metadata: { extension: 'PNG', size: 3 },
-  });
-  function withLibraryImage(id: string) {
-    const staged = fixture();
-    staged.ingredient.findMany.mockResolvedValue([libraryImage(id)]);
-    storage.download.mockImplementation(async (_key: string, target: string) =>
-      writeFile(target, 'png'),
-    );
-    staged.brandFonts.stage.mockResolvedValue({
-      assets: [font],
-      totalBytes: 4,
-    });
-    return {
-      ...staged,
-      revision: { ...staged.revision, sourceAssetIds: [id] } as VisualRevision,
-    };
-  }
-
-  it('stages the fonts after the media, so source order is unchanged', async () => {
-    const { service, user, revision } = withLibraryImage('image-a');
-    const staged = await service.stage(user, revision);
-    expect(staged.map((asset) => asset.id)).toEqual(['image-a', 'brand-font']);
-  });
-
-  it('refuses a brand font that would shadow a source asset', async () => {
-    const { service, user, revision } = withLibraryImage('brand-font');
-    await expect(service.stage(user, revision)).rejects.toThrow(
-      'visual_brand_font_id_collision',
-    );
-  });
-
-  it('keeps media and fonts together inside the staging budget', async () => {
-    const { service, user, revision, brandFonts } = fixture();
-    brandFonts.stage.mockResolvedValue({
-      assets: [font],
-      totalBytes: 48 * 1024 * 1024 + 1,
-    });
-    await expect(service.stage(user, revision)).rejects.toThrow(
-      'visual_source_assets_too_large',
-    );
-  });
-
-  it('does not stage fonts for a brand the actor cannot access', async () => {
-    const { service, user, revision, brandFonts } = fixture();
-    const denied = new Error('denied');
-    brandFonts.stage.mockRejectedValue(denied);
-    await expect(service.stage(user, revision)).rejects.toBe(denied);
-  });
-});
-
-describe('brand font evidence', () => {
-  const rendered: IVisualSandboxMedia = {
-    format: 'png',
-    width: realRender.width,
-    height: realRender.height,
-    frame: realRender.frame,
-    bytes: realRender.png,
-    evidence: realRender.evidence,
-  };
-  const fontOf = (create: { mock: { calls: unknown[][] } }) =>
-    (
-      create.mock.calls[0][0] as {
-        data: {
-          providerData: {
-            renderEvidence: {
-              fonts: { family: string; source: unknown }[];
-            };
-          };
-        };
-      }
-    ).data.providerData.renderEvidence.fonts.find(
-      (entry) => entry.family === 'Zodiak',
-    );
-
-  it('credits a font to its asset only when the brand approved that asset', async () => {
-    const { commit, ingredient, brandFonts } = fixture();
-    brandFonts.approvedFonts.mockResolvedValue([
-      { assetId: 'zodiak-regular', faces: [] },
-    ]);
-    await commit(rendered);
-    expect(fontOf(ingredient.create)?.source).toEqual({
-      kind: 'asset',
-      assetId: 'zodiak-regular',
-      contentHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
-    });
-    expect(brandFonts.approvedFonts).toHaveBeenCalledWith({
-      organizationId: 'org',
-      brandId: 'brand',
-      userId: 'user',
-    });
-  });
-
-  it('leaves a font from an unapproved asset unknown', async () => {
-    const { commit, ingredient, brandFonts } = fixture();
-    brandFonts.approvedFonts.mockResolvedValue([
-      { assetId: 'another-brand-font', faces: [] },
-    ]);
-    await commit(rendered);
-    expect(fontOf(ingredient.create)?.source).toEqual({
-      kind: 'unknown',
-      contentHash: null,
-    });
-  });
-
-  it('does not look up fonts for output the renderer did not observe', async () => {
-    const { commit, brandFonts } = fixture();
-    await commit();
-    expect(brandFonts.approvedFonts).not.toHaveBeenCalled();
   });
 });

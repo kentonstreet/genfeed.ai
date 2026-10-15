@@ -1,3 +1,8 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { CredentialsService } from '@api/collections/credentials/services/credentials.service';
 import { TrendIdea } from '@api/collections/trends/dto/trend-ideas.dto';
@@ -38,9 +43,11 @@ import { TrendPreferencesService } from '@api/collections/trends/services/trend-
 import { TrendReferenceCorpusService } from '@api/collections/trends/services/trend-reference-corpus.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { scopedWhere } from '@api/index';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import { Timeframe } from '@genfeedai/contracts';
 import { LoggerService } from '@libs/logger/logger.service';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 /**
  * Orchestrates trend retrieval, access control, and discovery, delegating the
@@ -65,7 +72,31 @@ export class TrendsService {
     private readonly trendVideoService: TrendVideoService,
     private readonly trendQueryService: TrendQueryService,
     private readonly trendSourcePreviewService: TrendSourcePreviewService,
+    private readonly brandAccess: BrandAccessService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  async assertBrandRead(
+    organizationId: string,
+    brandId: string | undefined,
+    actor: WorkflowInitiatingActor | undefined,
+  ) {
+    if (!actor) {
+      if (isCloudDeployment())
+        throw new ForbiddenException('Brand access denied');
+      return undefined;
+    }
+    if (actor.organizationId !== organizationId)
+      throw new ForbiddenException('Brand access denied');
+    const fresh = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      actor,
+      organizationId,
+    );
+    if (brandId) await this.brandAccess.assert(fresh, brandId);
+    return this.brandAccess.resolve(fresh);
+  }
 
   async getGlobalCorpusStats(): Promise<{
     activeTrends: number;
@@ -87,6 +118,8 @@ export class TrendsService {
     ]);
     return result;
   }
+
+  // ==================== Orchestrator Methods ====================
 
   /**
    * Calculate virality score — delegates to TrendFilteringService
@@ -234,6 +267,7 @@ export class TrendsService {
       return [];
     }
 
+    // No cached trends, fetch fresh
     this.loggerService.log('No cached trends found, fetching fresh data');
     const fetchedTrends = await this.fetchAndCacheTrends(
       organizationId,
@@ -252,11 +286,25 @@ export class TrendsService {
   /**
    * Get user's connected platforms
    */
-  async getConnectedPlatforms(organizationId: string): Promise<string[]> {
+  async getConnectedPlatforms(
+    organizationId: string,
+    actor?: WorkflowInitiatingActor,
+  ): Promise<string[]> {
+    const admission = await this.assertBrandRead(
+      organizationId,
+      undefined,
+      actor,
+    );
+    const where = scopedWhere(organizationId, {
+      isConnected: true,
+      ...(admission?.brandIds !== undefined
+        ? { brandId: { in: admission.brandIds } }
+        : {}),
+    });
     try {
       const credentials = await this.credentialsService.findAll(
         {
-          where: scopedWhere(organizationId, { isConnected: true }),
+          where,
         },
         { limit: 100 },
       );
@@ -282,13 +330,16 @@ export class TrendsService {
       allowFetchIfMissing?: boolean;
       relevance?: 'market' | 'brand';
     } = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<{
     trends: TrendEntity[];
     connectedPlatforms: string[];
     lockedPlatforms: string[];
   }> {
+    if (organizationId && options.relevance !== 'market')
+      await this.assertBrandRead(organizationId, brandId, actor);
     const connectedPlatforms = organizationId
-      ? await this.getConnectedPlatforms(organizationId)
+      ? await this.getConnectedPlatforms(organizationId, actor)
       : [];
     const allPlatforms = [
       'tiktok',
@@ -376,6 +427,7 @@ export class TrendsService {
     brandId?: string,
     platform?: string,
     relevance?: 'market' | 'brand',
+    actor?: WorkflowInitiatingActor,
   ): Promise<{
     trends: TrendDiscoveryItem[];
     connectedPlatforms: string[];
@@ -386,6 +438,7 @@ export class TrendsService {
       brandId,
       platform,
       { relevance },
+      actor,
     );
 
     const trends = await Promise.all(
@@ -403,6 +456,8 @@ export class TrendsService {
       trends,
     };
   }
+
+  // ==================== Delegated: Content Ideas ====================
 
   /**
    * Generate AI-powered content ideas for trends
@@ -422,6 +477,8 @@ export class TrendsService {
       byokApiKeyOverride,
     );
   }
+
+  // ==================== Delegated: Analysis ====================
 
   /**
    * Mark expired trends as historical
@@ -477,11 +534,13 @@ export class TrendsService {
       sourceKind?: TrendSourceKind;
       trendId?: string;
     } = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendSourceReferenceResult> {
     return this.trendReferenceCorpusService.getReferenceCorpus(
       organizationId,
       brandId,
       options,
+      actor,
     );
   }
 
@@ -491,11 +550,13 @@ export class TrendsService {
     options: Parameters<
       TrendReferenceCorpusService['getPromptReferencePacks']
     >[2] = {},
+    actor?: WorkflowInitiatingActor,
   ): ReturnType<TrendReferenceCorpusService['getPromptReferencePacks']> {
     return this.trendReferenceCorpusService.getPromptReferencePacks(
       organizationId,
       brandId,
       options,
+      actor,
     );
   }
 
@@ -506,11 +567,13 @@ export class TrendsService {
       limit?: number;
       platform?: string;
     } = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendSourceAccountResult> {
     return this.trendReferenceCorpusService.getTopReferenceAccounts(
       organizationId,
       brandId,
       options,
+      actor,
     );
   }
 
@@ -519,6 +582,7 @@ export class TrendsService {
       platform?: string;
       organizationId?: string;
       isPlatformAdmin?: boolean;
+      initiatingActor?: WorkflowInitiatingActor;
     } = {},
   ): Promise<TrendCorpusFreshnessResult> {
     return this.trendReferenceCorpusService.getCorpusFreshnessHealth(options);
@@ -548,25 +612,33 @@ export class TrendsService {
     );
   }
 
+  // ==================== Delegated: Read Queries ====================
+
   /**
    * Get a single trend by ID
    */
-  getTrendById(
+  async getTrendById(
     trendId: string,
     organizationId?: string,
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendEntity | null> {
-    return this.trendQueryService.getTrendById(trendId, organizationId);
+    const admission = organizationId
+      ? await this.assertBrandRead(organizationId, undefined, actor)
+      : undefined;
+    return this.trendQueryService.getTrendById(
+      trendId,
+      organizationId,
+      admission?.where,
+    );
   }
 
   async getTrendSourceItems(
     trendId: string,
     organizationId?: string,
     limit: number = 5,
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendSourceItem[]> {
-    const trend = await this.trendQueryService.getTrendById(
-      trendId,
-      organizationId,
-    );
+    const trend = await this.getTrendById(trendId, organizationId, actor);
     if (!trend) {
       return [];
     }
@@ -582,7 +654,10 @@ export class TrendsService {
       limit?: number;
       refresh?: boolean;
     } = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendContentResult> {
+    if (organizationId)
+      await this.assertBrandRead(organizationId, brandId, actor);
     if (organizationId && brandId) {
       const brand = await this.brandsService.findOne({
         id: brandId,
@@ -599,6 +674,8 @@ export class TrendsService {
           organizationId,
           brandId,
           options.platform,
+          {},
+          actor,
         ),
     );
   }
@@ -606,19 +683,26 @@ export class TrendsService {
   /**
    * Get related trends (same topic, different platforms)
    */
-  getRelatedTrends(
+  async getRelatedTrends(
     topic: string,
     excludePlatform: string,
     organizationId?: string,
     limit: number = 10,
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendEntity[]> {
+    const admission = organizationId
+      ? await this.assertBrandRead(organizationId, undefined, actor)
+      : undefined;
     return this.trendFilteringService.getRelatedTrends(
       topic,
       excludePlatform,
       organizationId,
       limit,
+      admission?.where,
     );
   }
+
+  // ==================== Delegated: Video/Hashtag/Sound ====================
 
   /**
    * Get viral videos
@@ -636,8 +720,10 @@ export class TrendsService {
     organizationId: string,
     brandId: string,
     options: Parameters<TrendVideoService['getViralVideos']>[0],
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendingVideoDocument[]> {
     if (!organizationId || !brandId) return [];
+    await this.assertBrandRead(organizationId, brandId, actor);
     const [brand, preferences] = await Promise.all([
       this.brandsService.findOne({
         id: brandId,
@@ -757,6 +843,8 @@ export class TrendsService {
   markExpiredSoundsAsHistorical(): Promise<number> {
     return this.trendVideoService.markExpiredSoundsAsHistorical();
   }
+
+  // ==================== Delegated: Turnover Analytics ====================
 
   /**
    * Get trend appearance and death counts by platform for the given period.

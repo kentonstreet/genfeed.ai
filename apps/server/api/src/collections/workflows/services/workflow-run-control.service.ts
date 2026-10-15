@@ -1,3 +1,5 @@
+import type { WorkflowInitiatingActor } from '@api/authorization/brand-access/workflow-actor.util';
+import { WorkflowExecutionReadScopeService } from '@api/authorization/brand-access/workflow-execution-read-scope.service';
 import { CreditsUtilsService } from '@api/collections/credits/services/credits.utils.service';
 import { type WorkflowExecutionDocument } from '@api/collections/workflow-executions/schemas/workflow-execution.schema';
 import { WorkflowExecutionsService } from '@api/collections/workflow-executions/services/workflow-executions.service';
@@ -7,12 +9,18 @@ import { WorkflowsService } from '@api/collections/workflows/services/workflows.
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { HandleErrors } from '@api/helpers/decorators/error-handler.decorator';
 import { WorkflowExecutionStatus } from '@genfeedai/contracts';
+import { publicWorkflowExecutionValue } from '@genfeedai/serializers';
 import type { CreditEstimate } from '@genfeedai/workflows/engine';
 import {
   calculateCreditEstimate,
   DEFAULT_CREDIT_COSTS,
 } from '@genfeedai/workflows/engine';
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
 
 /**
  * Run-control surface for node-based workflow executions: partial (subset of
@@ -25,6 +33,7 @@ export class WorkflowRunControlService {
     private readonly workflowsService: WorkflowsService,
     private readonly workflowExecutorService: WorkflowExecutorService,
     private readonly workflowExecutionsService: WorkflowExecutionsService,
+    private readonly readScopes: WorkflowExecutionReadScopeService,
     @Optional()
     private readonly creditsUtilsService?: CreditsUtilsService,
   ) {}
@@ -52,6 +61,7 @@ export class WorkflowRunControlService {
       throw new NotFoundException('Workflow');
     }
 
+    // Validate nodes exist
     const workflowNodeIds = workflow.nodes.map((n) => n.id);
     const invalidNodes = nodeIds.filter((id) => !workflowNodeIds.includes(id));
     if (invalidNodes.length > 0) {
@@ -198,18 +208,31 @@ export class WorkflowRunControlService {
     workflowId: string,
     runId: string,
     organizationId: string,
+    reader: WorkflowInitiatingActor,
   ): Promise<Record<string, unknown>> {
+    if (reader.organizationId !== organizationId)
+      throw new NotFoundException('Execution run', runId);
+    const admission = await this.readScopes
+      .snapshot(reader)
+      .catch((error: unknown) => {
+        if (error instanceof ForbiddenException)
+          throw new NotFoundException('Execution run', runId);
+        throw error;
+      });
     const execution = await this.workflowExecutionsService.findOne({
       id: runId,
-      organizationId: organizationId,
-      workflowId: workflowId,
+      organizationId,
+      isDeleted: false,
+      workflowId,
+      AND: [admission.where],
     });
 
     if (!execution) {
       throw new NotFoundException('Execution run', runId);
     }
 
-    return {
+    await this.readScopes.assertUnchanged(reader, admission.key);
+    return publicWorkflowExecutionValue({
       completedAt: execution.completedAt,
       error: execution.error,
       nodeResults: execution.nodeResults || [],
@@ -218,6 +241,6 @@ export class WorkflowRunControlService {
       status: execution.status,
       totalCreditsUsed: execution.creditsUsed,
       workflowId,
-    };
+    }) as Record<string, unknown>;
   }
 }

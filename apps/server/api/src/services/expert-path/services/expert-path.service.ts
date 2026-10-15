@@ -1,3 +1,9 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { HarnessProfilesService } from '@api/collections/harness-profiles/services/harness-profiles.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { scopedWhere } from '@api/index';
@@ -5,6 +11,7 @@ import { ExpertCorpusService } from '@api/services/expert-path/services/expert-c
 import { ExpertFirstSystemService } from '@api/services/expert-path/services/expert-first-system.service';
 import { ExpertPositioningService } from '@api/services/expert-path/services/expert-positioning.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import { OrganizationCategory } from '@genfeedai/contracts';
 import {
   EXPERT_POSITIONING_FIELD_KEYS,
@@ -43,21 +50,47 @@ export class ExpertPathService {
     private readonly expertFirstSystemService: ExpertFirstSystemService,
     private readonly expertPositioningService: ExpertPositioningService,
     private readonly harnessProfilesService: HarnessProfilesService,
+    private readonly brandAccess: BrandAccessService,
   ) {}
 
   async getStatus(
     organizationId: string,
     brandId: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<IExpertPathStatus> {
+    const admit = async () => {
+      if (!initiatingActor) {
+        if (isCloudDeployment()) denyWorkflowActor();
+        return;
+      }
+      const actor = await refreshWorkflowActor(
+        this.prisma,
+        this.brandAccess,
+        initiatingActor,
+        organizationId,
+      );
+      await this.brandAccess.assert(actor, brandId);
+    };
+    const read = async <T>(work: () => Promise<T>): Promise<T> => {
+      await admit();
+      const value = await work();
+      await admit();
+      return value;
+    };
+    await admit();
     const [organization, brand] = await Promise.all([
-      this.prisma.organization.findFirst({
-        select: { accountType: true },
-        where: { id: organizationId, isDeleted: false },
-      }),
-      this.prisma.brand.findFirst({
-        select: { agentConfig: true, id: true },
-        where: scopedWhere(organizationId, { id: brandId }),
-      }),
+      read(() =>
+        this.prisma.organization.findFirst({
+          select: { accountType: true },
+          where: { id: organizationId, isDeleted: false },
+        }),
+      ),
+      read(() =>
+        this.prisma.brand.findFirst({
+          select: { agentConfig: true, id: true },
+          where: scopedWhere(organizationId, { id: brandId }),
+        }),
+      ),
     ]);
     if (!brand) {
       throw new NotFoundException('Brand', brandId);
@@ -65,13 +98,33 @@ export class ExpertPathService {
 
     const [answers, profile, corpus, firstSystem, readiness] =
       await Promise.all([
-        this.expertPositioningService.readAnswers(organizationId, brandId),
-        this.harnessProfilesService.getActiveForBrand(organizationId, brandId),
-        this.expertCorpusService.summarize(organizationId, brandId),
-        this.expertFirstSystemService.readRecord(organizationId, brandId),
-        this.expertFirstSystemService.getReadiness(organizationId, brandId),
+        read(() =>
+          this.expertPositioningService.readAnswers(organizationId, brandId),
+        ),
+        read(() =>
+          this.harnessProfilesService.getActiveForBrand(
+            organizationId,
+            brandId,
+          ),
+        ),
+        read(() => this.expertCorpusService.summarize(organizationId, brandId)),
+        read(() =>
+          this.expertFirstSystemService.readRecord(
+            organizationId,
+            brandId,
+            initiatingActor,
+          ),
+        ),
+        read(() =>
+          this.expertFirstSystemService.getReadiness(
+            organizationId,
+            brandId,
+            initiatingActor,
+          ),
+        ),
       ]);
 
+    await admit();
     return {
       brandId,
       corpus: {

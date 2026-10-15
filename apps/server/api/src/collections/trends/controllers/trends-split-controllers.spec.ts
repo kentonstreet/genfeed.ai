@@ -1,8 +1,15 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { TrendsController } from '@api/collections/trends/controllers/trends.controller';
 import { TrendsAnalyticsController } from '@api/collections/trends/controllers/trends-analytics.controller';
 import { TrendsDiscoveryController } from '@api/collections/trends/controllers/trends-discovery.controller';
 import { TrendsModule } from '@api/collections/trends/trends.module';
-import { Timeframe } from '@genfeedai/contracts';
+import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole, Timeframe } from '@genfeedai/contracts';
 import { RequestMethod } from '@nestjs/common';
 import {
   METHOD_METADATA,
@@ -11,7 +18,29 @@ import {
 } from '@nestjs/common/constants';
 
 describe('Trends split controllers', () => {
+  const prisma = {
+    user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-1' }) },
+    member: {
+      findFirst: vi.fn().mockResolvedValue({
+        role: { key: MemberRole.USER },
+        brands: [{ id: 'brand-active' }],
+      }),
+    },
+    brand: {
+      findFirst: vi.fn(async ({ where }) =>
+        where.AND[1].id === 'brand-active' ? { id: 'brand-active' } : null,
+      ),
+    },
+  };
+  const db = prisma as unknown as PrismaService;
+  const policy = new BrandAccessService(db);
   const trendsService = {
+    assertBrandRead: vi.fn(
+      async (org: string, brandId: string, actor: WorkflowInitiatingActor) => {
+        const fresh = await refreshWorkflowActor(db, policy, actor, org);
+        await policy.assert(fresh, brandId);
+      },
+    ),
     getTrendingHashtags: vi.fn(),
     getTrendingSounds: vi.fn(),
     getTrendTimeline: vi.fn(),
@@ -90,7 +119,11 @@ describe('Trends split controllers', () => {
 
     const result = await analyticsController.getViralVideos(
       { limit: 12, timeframe: Timeframe.H24, brandId: 'brand-active' },
-      { organizationId: 'org-1', brandId: 'brand-active' } as never,
+      {
+        organizationId: 'org-1',
+        brandId: 'brand-active',
+        userId: 'user-1',
+      } as never,
     );
 
     expect(trendsService.getBrandViralVideos).toHaveBeenCalledWith(
@@ -101,6 +134,7 @@ describe('Trends split controllers', () => {
         platform: undefined,
         timeframe: Timeframe.H24,
       },
+      captureWorkflowActor({ organizationId: 'org-1', userId: 'user-1' }),
     );
     expect(result.summary).toEqual({
       avgViralScore: 41,
@@ -113,7 +147,11 @@ describe('Trends split controllers', () => {
     await expect(
       analyticsController.getViralVideos(
         { brandId: 'brand-sibling', relevance: 'brand' },
-        { organizationId: 'org-1', brandId: 'brand-active' } as never,
+        {
+          organizationId: 'org-1',
+          brandId: 'brand-active',
+          userId: 'user-1',
+        } as never,
       ),
     ).rejects.toThrow('Select an authorized brand');
     expect(trendsService.getBrandViralVideos).not.toHaveBeenCalled();

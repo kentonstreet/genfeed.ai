@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { BRAND_PROFILE_GENERATION_CREDIT_COST } from '@api/collections/brands/constants/brand-profile.constant';
 import { verifyBrandAccess } from '@api/collections/brands/controllers/brand-access.helpers';
 import { ApplyBrandKitDto } from '@api/collections/brands/dto/apply-brand-kit.dto';
@@ -12,7 +13,6 @@ import { BrandVoiceGenerationExceptionFilter } from '@api/collections/brands/exc
 import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { SkillsService } from '@api/collections/skills/services/skills.service';
-import { toWorkflowSchedulePrincipal } from '@api/collections/workflows/utils/workflow-schedule-actor.util';
 import { BrandOsPreviewClaimDto } from '@api/endpoints/public/controllers/brand-os/brand-os-preview-claim.dto';
 import { Credits } from '@api/helpers/decorators/credits/credits.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
@@ -101,7 +101,14 @@ export class BrandsAgentConfigController {
       id,
       organizationId,
       updateAgentConfigDto,
-      toWorkflowSchedulePrincipal(user),
+      0,
+      captureWorkflowActor({
+        userId: user.id,
+        organizationId,
+        isApiKey: user.isApiKey,
+        apiKeyId: user.apiKeyId,
+        scopes: user.scopes,
+      }),
     );
 
     if (!updatedBrand) {

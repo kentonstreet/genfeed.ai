@@ -1,5 +1,4 @@
 import type { ApiKeyPublishingContext } from '@api/helpers/utils/auth/api-key-publishing-scope.util';
-import type { AgentInitiatingPrincipal } from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import type {
   AgentAutonomyMode,
   AgentGenerationMode,
@@ -108,13 +107,6 @@ export interface AgentChatContext {
   autonomyMode?: AgentAutonomyMode;
   requestedSkillSlugs?: string[];
   apiKeyContext?: ApiKeyPublishingContext;
-  /**
-   * The authenticated principal this turn acts for. Set only where a request is
-   * authenticated and restored from the durable turn record; absent for system
-   * turns. A strategy turn binds its strategy's persisted actor instead, read
-   * live when a schedule is saved; any other system turn leaves it unbound.
-   */
-  initiatingPrincipal?: AgentInitiatingPrincipal;
   /** Queue-owned turns await execution so BullMQ retains the durable lease. */
   executionMode?: 'background';
   /** Campaign ID — when set, enables campaign coordination features */

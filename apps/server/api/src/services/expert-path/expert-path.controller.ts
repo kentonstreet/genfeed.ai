@@ -1,4 +1,9 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  refreshWorkflowActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
@@ -12,6 +17,7 @@ import { ReviewFirstSystemItemDto } from '@api/services/expert-path/dto/review-f
 import { ExpertFirstSystemService } from '@api/services/expert-path/services/expert-first-system.service';
 import { ExpertPathService } from '@api/services/expert-path/services/expert-path.service';
 import { ExpertPositioningService } from '@api/services/expert-path/services/expert-positioning.service';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import type { IExpertPathStatus } from '@genfeedai/contracts/interfaces';
 import {
   ContentPlanItemSerializer,
@@ -40,17 +46,26 @@ export class ExpertPathController {
     private readonly expertPathService: ExpertPathService,
     private readonly expertPositioningService: ExpertPositioningService,
     private readonly expertFirstSystemService: ExpertFirstSystemService,
+    private readonly brandAccess: BrandAccessService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @TenantReadPolicy('selected')
   @Get()
-  getStatus(
+  async getStatus(
     @Param('brandId') brandId: string,
     @CurrentUser() user: User,
   ): Promise<IExpertPathStatus> {
-    return this.expertPathService.getStatus(
-      this.requireOrg(user, resolveTenantReadScope(user)),
+    const organizationId = this.requireOrg(user, resolveTenantReadScope(user));
+    const initiatingActor = await this.admitBrand(
+      user,
       brandId,
+      organizationId,
+    );
+    return this.expertPathService.getStatus(
+      organizationId,
+      brandId,
+      initiatingActor,
     );
   }
 
@@ -60,6 +75,7 @@ export class ExpertPathController {
     @Param('brandId') brandId: string,
     @CurrentUser() user: User,
   ) {
+    await this.admitBrand(user, brandId, this.requireOrg(user));
     const { profile, score } =
       await this.expertPositioningService.generateDraft({
         brandId,
@@ -75,8 +91,14 @@ export class ExpertPathController {
     @Param('brandId') brandId: string,
     @CurrentUser() user: User,
   ) {
+    const initiatingActor = await this.admitBrand(
+      user,
+      brandId,
+      this.requireOrg(user),
+    );
     const { items, plan, provenance } =
       await this.expertFirstSystemService.generate({
+        initiatingActor,
         brandId,
         organizationId: this.requireOrg(user),
         userId: this.requireUser(user),
@@ -98,9 +120,16 @@ export class ExpertPathController {
     @Param('brandId') brandId: string,
     @CurrentUser() user: User,
   ) {
-    const result = await this.expertFirstSystemService.getCurrentPlan(
-      this.requireOrg(user, resolveTenantReadScope(user)),
+    const organizationId = this.requireOrg(user, resolveTenantReadScope(user));
+    const initiatingActor = await this.admitBrand(
+      user,
       brandId,
+      organizationId,
+    );
+    const result = await this.expertFirstSystemService.getCurrentPlan(
+      organizationId,
+      brandId,
+      initiatingActor,
     );
     if (!result) {
       return { items: null, plan: null };
@@ -124,6 +153,13 @@ export class ExpertPathController {
   ) {
     const { item } = await this.expertFirstSystemService.applyItemAction({
       action: dto.action,
+      initiatingActor: captureWorkflowActor({
+        organizationId: this.requireOrg(user),
+        userId: this.requireUser(user),
+        isApiKey: user.isApiKey,
+        scopes: user.scopes,
+        apiKeyId: user.apiKeyId,
+      }),
       brandId,
       itemId,
       organizationId: this.requireOrg(user),
@@ -133,6 +169,27 @@ export class ExpertPathController {
       userId: this.requireUser(user),
     });
     return serializeSingle(req, ContentPlanItemSerializer, item);
+  }
+
+  private async admitBrand(
+    user: User,
+    brandId: string,
+    organizationId: string,
+  ) {
+    const actor = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      captureWorkflowActor({
+        organizationId,
+        userId: this.requireUser(user),
+        isApiKey: user.isApiKey,
+        scopes: user.scopes,
+        apiKeyId: user.apiKeyId,
+      }),
+      organizationId,
+    );
+    await this.brandAccess.assert(actor, brandId);
+    return actor;
   }
 
   private requireOrg(user: User, readScope?: ITenantReadScope): string {

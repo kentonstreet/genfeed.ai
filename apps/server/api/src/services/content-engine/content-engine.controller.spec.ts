@@ -1,4 +1,10 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { ContentPlanItemsService } from '@api/collections/content-plan-items/services/content-plan-items.service';
 import { ContentPlansService } from '@api/collections/content-plans/services/content-plans.service';
 import { AUTOMATION_WORKFLOW_IDS } from '@api/collections/workflows/services/automation-workflow-definitions';
@@ -9,7 +15,8 @@ import { getTenantReadScope } from '@api/helpers/interceptors/tenant-context/ten
 import { ContentEngineController } from '@api/services/content-engine/content-engine.controller';
 import { ContentPlanSeedsService } from '@api/services/content-engine/content-plan-seeds.service';
 import { ContentPlannerService } from '@api/services/content-engine/content-planner.service';
-import { WorkflowExecutionTrigger } from '@genfeedai/contracts';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { MemberRole, WorkflowExecutionTrigger } from '@genfeedai/contracts';
 import { testId } from '@helpers/testing/test-id.helper';
 import { getTenantContext } from '@libs/prisma/tenant-context';
 import type { ExecutionContext } from '@nestjs/common';
@@ -18,6 +25,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import type { Request } from 'express';
 import { defer, firstValueFrom } from 'rxjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 vi.mock('@api/helpers/utils/response/response.util', () => ({
   serializeCollection: vi
@@ -50,6 +63,12 @@ describe('ContentEngineController', () => {
     runWorkflow: ReturnType<typeof vi.fn>;
   };
   let moduleRefGet: ReturnType<typeof vi.fn>;
+  const admissionDb = {
+    user: { findFirst: vi.fn() },
+    member: { findFirst: vi.fn() },
+    brand: { findFirst: vi.fn() },
+    apiKey: { findFirst: vi.fn() },
+  };
 
   const orgId = testId('org');
   const userId = testId('user');
@@ -66,6 +85,21 @@ describe('ContentEngineController', () => {
   } as unknown as Request;
 
   beforeEach(async () => {
+    runtime.cloud = false;
+    admissionDb.user.findFirst.mockResolvedValue({ id: userId });
+    admissionDb.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [{ id: 'brand-1' }],
+    });
+    admissionDb.brand.findFirst.mockImplementation(async ({ where }) => {
+      const predicate = where.AND[0];
+      const brandId = where.AND[1].id;
+      return brandId === 'brand-1' &&
+        (predicate.id?.in === undefined || predicate.id.in.includes(brandId))
+        ? { id: brandId }
+        : null;
+    });
+    admissionDb.apiKey.findFirst.mockResolvedValue({ scopes: ['read'] });
     systemWorkflowRunner = {
       runWorkflow: vi.fn().mockResolvedValue({
         provenance: {},
@@ -77,6 +111,8 @@ describe('ContentEngineController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ContentEngineController],
       providers: [
+        BrandAccessService,
+        { provide: PrismaService, useValue: admissionDb },
         {
           provide: ModuleRef,
           useValue: { get: moduleRefGet },
@@ -489,10 +525,26 @@ describe('ContentEngineController', () => {
         actionType: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_PLAN,
         canonicalId: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_PLAN,
         inputValues: {
-          request: { brandId: 'brand-1', planId: 'plan-1', userId },
+          request: {
+            brandId: 'brand-1',
+            planId: 'plan-1',
+            userId,
+            initiatingActor: captureWorkflowActor({
+              organizationId: orgId,
+              userId,
+            }),
+          },
         },
         organizationId: orgId,
         source: 'api:content-engine.execute-plan',
+        metadata: {
+          initiatingActorKey: workflowActorKey(
+            captureWorkflowActor({ organizationId: orgId, userId }),
+          ),
+          initiatingRequestKey: workflowRequestKey({
+            request: { brandId: 'brand-1', planId: 'plan-1', userId },
+          }),
+        },
         trigger: WorkflowExecutionTrigger.API,
         userId,
       });
@@ -514,9 +566,27 @@ describe('ContentEngineController', () => {
       expect(systemWorkflowRunner.runWorkflow).toHaveBeenCalledWith({
         actionType: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
         canonicalId: AUTOMATION_WORKFLOW_IDS.CONTENT_ENGINE_ITEM,
-        inputValues: { brandId: 'brand-1', item: { id: 'item-1' }, userId },
+        inputValues: {
+          brandId: 'brand-1',
+          item: { id: 'item-1' },
+          userId,
+          initiatingActor: captureWorkflowActor({
+            organizationId: orgId,
+            userId,
+          }),
+        },
         organizationId: orgId,
         source: 'api:content-engine.execute-plan-item',
+        metadata: {
+          initiatingActorKey: workflowActorKey(
+            captureWorkflowActor({ organizationId: orgId, userId }),
+          ),
+          initiatingRequestKey: workflowRequestKey({
+            brandId: 'brand-1',
+            item: { id: 'item-1' },
+            userId,
+          }),
+        },
         trigger: WorkflowExecutionTrigger.API,
         userId,
       });
@@ -525,4 +595,60 @@ describe('ContentEngineController', () => {
   });
 
   // ── Review Queue ───────────────────────────────────────────────────
+  it('denies a zero-assignment Cloud actor before invoking a workflow producer', async () => {
+    runtime.cloud = true;
+    admissionDb.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.USER },
+      brands: [],
+    });
+    await expect(
+      controller.executeItem(mockUser, 'brand-1', 'item-1'),
+    ).rejects.toThrow('Brand access denied');
+    expect(systemWorkflowRunner.runWorkflow).not.toHaveBeenCalled();
+    expect(admissionDb.brand.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: [expect.objectContaining({ id: { in: [] } }), { id: 'brand-1' }],
+        }),
+      }),
+    );
+  });
+  it('preserves authenticated key identity and current role cap on the queued request', async () => {
+    runtime.cloud = true;
+    admissionDb.member.findFirst.mockResolvedValue({
+      role: { key: MemberRole.OWNER },
+      brands: [{ id: 'brand-1' }],
+    });
+    await controller.executeItem(
+      {
+        ...mockUser,
+        isApiKey: true,
+        apiKeyId: 'key',
+        scopes: ['admin', 'read'],
+      } as User,
+      'brand-1',
+      'item-1',
+    );
+    const captured =
+      systemWorkflowRunner.runWorkflow.mock.calls[0][0].inputValues
+        .initiatingActor;
+    expect(captured).toEqual({
+      organizationId: orgId,
+      userId,
+      isApiKey: true,
+      apiKeyId: 'key',
+      scopes: ['read'],
+    });
+    expect(captured).not.toHaveProperty('role');
+    expect(admissionDb.apiKey.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'key',
+          organizationId: orgId,
+          userId,
+          isRevoked: false,
+        }),
+      }),
+    );
+  });
 });

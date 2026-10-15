@@ -2,8 +2,15 @@ import { ContentGeneratorService } from '@api/collections/content-intelligence/s
 import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatcher.service';
 import { ContentWritingHandler } from '@api/services/skill-executor/handlers/content-writing.handler';
 import { LoggerService } from '@libs/logger/logger.service';
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 describe('ContentWritingHandler', () => {
   let handler: ContentWritingHandler;
@@ -28,6 +35,7 @@ describe('ContentWritingHandler', () => {
   };
 
   beforeEach(async () => {
+    runtime.cloud = false;
     vi.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -137,5 +145,66 @@ describe('ContentWritingHandler', () => {
 
     expect(result.content).toBe('Refined for twitter');
     expect(mockContentGeneratorService.generateContent).toHaveBeenCalled();
+  });
+  it('rejects missing server admission before generating a Cloud draft', async () => {
+    runtime.cloud = true;
+    await expect(
+      handler.execute(baseContext, { topic: 'Topic' }),
+    ).rejects.toThrow('Brand access denied');
+    expect(mockContentGeneratorService.generateContent).not.toHaveBeenCalled();
+  });
+  it('rechecks revoked admission before refinement without returning a fallback success', async () => {
+    runtime.cloud = true;
+    mockContentGeneratorService.generateContent.mockResolvedValue([
+      { content: 'Base', hashtags: [] },
+    ]);
+    const admission = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new ForbiddenException('Brand access denied'));
+    await expect(
+      handler.execute(baseContext, { topic: 'Topic' }, admission),
+    ).rejects.toThrow('Brand access denied');
+    expect(admission).toHaveBeenCalledTimes(2);
+    expect(mockLlmDispatcherService.chatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('keeps captured actor and proof out of generator and refinement provider payloads', async () => {
+    runtime.cloud = true;
+    mockContentGeneratorService.generateContent.mockResolvedValue([
+      { content: 'Draft', hashtags: [], patternUsed: 'freeform' },
+    ]);
+    mockLlmDispatcherService.chatCompletion.mockResolvedValue({
+      choices: [{ message: { content: 'Refined' } }],
+    });
+    const admission = vi.fn().mockResolvedValue(undefined);
+    const actor = {
+      organizationId: baseContext.organizationId,
+      userId: 'private-user',
+      isApiKey: true,
+      apiKeyId: 'private-key',
+      scopes: ['admin'],
+    };
+    await handler.execute(
+      { ...baseContext, initiatingActor: actor },
+      { topic: 'Public topic' },
+      admission,
+    );
+    expect(admission).toHaveBeenCalledTimes(2);
+    expect(mockContentGeneratorService.generateContent).toHaveBeenCalledOnce();
+    expect(mockLlmDispatcherService.chatCompletion).toHaveBeenCalledOnce();
+    const providerPayload = JSON.stringify([
+      mockContentGeneratorService.generateContent.mock.calls[0],
+      mockLlmDispatcherService.chatCompletion.mock.calls[0],
+    ]);
+    for (const privateValue of [
+      'private-user',
+      'private-key',
+      'initiatingActor',
+      'initiatingActorKey',
+      'initiatingRequestKey',
+    ]) {
+      expect(providerPayload).not.toContain(privateValue);
+    }
   });
 });

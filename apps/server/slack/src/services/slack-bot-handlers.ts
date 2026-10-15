@@ -1,4 +1,5 @@
 import {
+  type BotAccountLinkEvent,
   IMAGE_MODELS,
   isBotUserAuthorized,
   type OrgIntegration,
@@ -26,6 +27,7 @@ interface SlackBotHandlers {
   getUserSettings(userId: string): UserSettings | undefined;
   handleCancelCommand(userId: string, respond: SlackRespond): Promise<void>;
   handleEdit(userId: string, respond: SlackRespond): Promise<void>;
+  handleLink(event: BotAccountLinkEvent, reply: SlackReply): Promise<void>;
   handleRun(
     userId: string,
     orgId: string,
@@ -146,8 +148,40 @@ export function registerSlackBotHandlers(
   });
 
   app.message(async ({ message, say }) => {
-    const msg = message as { user?: string; text?: string };
+    const msg = message as {
+      user?: string;
+      text?: string;
+      channel?: string;
+      channel_type?: string;
+      ts?: string;
+    };
     if (!msg.user || !msg.text) {
+      return;
+    }
+
+    if (/^\/?link$/i.test(msg.text.trim())) {
+      if (msg.channel_type !== 'im') {
+        await say(
+          'Start account linking in a private conversation with this bot.',
+        );
+        return;
+      }
+      if (!msg.channel || !msg.ts) {
+        await say('Account linking is unavailable. Send a new link request.');
+        return;
+      }
+      await handlers.handleLink(
+        {
+          integrationId: integration.id,
+          organizationId: orgId,
+          platform: 'SLACK',
+          remoteUserId: msg.user,
+          channelId: msg.channel,
+          sourceEventId: msg.ts,
+          isPrivate: true,
+        },
+        say,
+      );
       return;
     }
 

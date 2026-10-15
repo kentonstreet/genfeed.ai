@@ -68,4 +68,97 @@ describe('WorkflowExecutionSerializer', () => {
     expect(output.data.attributes.workflowId).toBe(WORKFLOW_ID);
     expect(output.included ?? []).toEqual([]);
   });
+  it.each(['inputValues', 'nodeResults', 'metadata', 'result'] as const)(
+    'recursively removes only reserved server authorization proof from %s',
+    (field) => {
+      const source = {
+        initiatingActor: { userId: 'private-actor', scopes: ['admin'] },
+        initiatingActorKey: 'private-actor-proof',
+        initiatingRequestKey: 'private-request-proof',
+        publicCount: 0,
+        publicFlag: false,
+        publicNull: null,
+        actor: { label: 'Public attribution' },
+        items: [
+          {
+            citation: 'Source citation',
+            nested: {
+              initiatingActor: { apiKeyId: 'private-key' },
+              text: 'Public result',
+            },
+          },
+        ],
+      };
+      const output = WorkflowExecutionSerializer.serialize({
+        ...makeExecution(),
+        [field]: source,
+      }) as SerializedDocument;
+      expect(output.data.attributes[field]).toEqual({
+        publicCount: 0,
+        publicFlag: false,
+        publicNull: null,
+        actor: { label: 'Public attribution' },
+        items: [
+          { citation: 'Source citation', nested: { text: 'Public result' } },
+        ],
+      });
+      expect(source.initiatingActor.userId).toBe('private-actor');
+      expect(source.items[0].nested.initiatingActor.apiKeyId).toBe(
+        'private-key',
+      );
+    },
+  );
+
+  it('preserves execution JSON scalars and nested arrays', () => {
+    const output = WorkflowExecutionSerializer.serialize({
+      ...makeExecution(),
+      inputValues: 0,
+      nodeResults: [['public', null, false]],
+      metadata: null,
+      result: 'Public result',
+    }) as SerializedDocument;
+    expect(output.data.attributes).toMatchObject({
+      inputValues: 0,
+      nodeResults: [['public', null, false]],
+      metadata: null,
+      result: 'Public result',
+    });
+  });
+
+  it.each(['inputValues', 'nodeResults', 'metadata', 'result'] as const)(
+    'preserves similarly named public proof labels and values while stripping only exact reserved keys in %s',
+    (field) => {
+      const source = {
+        initiatingActorLabel: 'Public author label',
+        initiatingActorKeyLabel: 'Public receipt label',
+        initiatingRequestKeyLabel: 'Public request label',
+        citation: {
+          title: 'initiatingActor',
+          url: 'https://example.test/initiatingRequestKey',
+        },
+        groups: [
+          [
+            {
+              initiatingActor: { userId: 'private' },
+              initiatingActorKey: 'private',
+              initiatingRequestKey: 'private',
+              value: 'initiatingActorKey',
+            },
+          ],
+        ],
+      };
+      const output = WorkflowExecutionSerializer.serialize({
+        ...makeExecution(),
+        [field]: source,
+      }) as SerializedDocument;
+      expect(output.data.attributes[field]).toEqual({
+        initiatingActorLabel: source.initiatingActorLabel,
+        initiatingActorKeyLabel: source.initiatingActorKeyLabel,
+        initiatingRequestKeyLabel: source.initiatingRequestKeyLabel,
+        citation: source.citation,
+        groups: [[{ value: 'initiatingActorKey' }]],
+      });
+      expect(source.groups[0][0].initiatingActor.userId).toBe('private');
+    },
+  );
 });

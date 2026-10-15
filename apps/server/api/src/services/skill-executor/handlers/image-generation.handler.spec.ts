@@ -5,8 +5,15 @@ import { LeonardoAIService } from '@api/services/integrations/leonardoai/service
 import { ReplicateService } from '@api/services/integrations/replicate/services/replicate.service';
 import { ImageGenerationHandler } from '@api/services/skill-executor/handlers/image-generation.handler';
 import { ImageTaskModel } from '@genfeedai/contracts';
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
+
+const runtime = vi.hoisted(() => ({ cloud: false }));
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => runtime.cloud,
+}));
 
 describe('ImageGenerationHandler', () => {
   let handler: ImageGenerationHandler;
@@ -39,6 +46,7 @@ describe('ImageGenerationHandler', () => {
   };
 
   beforeEach(async () => {
+    runtime.cloud = false;
     vi.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -260,5 +268,40 @@ describe('ImageGenerationHandler', () => {
       provider: 'fal',
     });
     expect(mockFalService.generateImage).not.toHaveBeenCalled();
+  });
+  it('rejects missing trusted Cloud admission before private provider resolution', async () => {
+    runtime.cloud = true;
+    await expect(
+      handler.execute(baseContext, {
+        model: ImageTaskModel.FAL,
+        prompt: 'City',
+      }),
+    ).rejects.toThrow('Brand access denied');
+    expect(
+      mockByokProviderFactoryService.resolveProvider,
+    ).not.toHaveBeenCalled();
+  });
+  it('rechecks admission after resolving provider credentials and before network dispatch', async () => {
+    runtime.cloud = true;
+    mockByokProviderFactoryService.resolveProvider.mockResolvedValue({
+      apiKey: 'fal-key',
+      source: 'byok',
+    });
+    const admission = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new ForbiddenException('Brand access denied'));
+    await expect(
+      handler.execute(
+        baseContext,
+        { model: ImageTaskModel.FAL, prompt: 'City' },
+        admission,
+      ),
+    ).rejects.toThrow('Brand access denied');
+    expect(
+      mockByokProviderFactoryService.resolveProvider,
+    ).toHaveBeenCalledOnce();
+    expect(mockFalService.generateImage).not.toHaveBeenCalled();
+    expect(mockReplicateService.runModel).not.toHaveBeenCalled();
   });
 });

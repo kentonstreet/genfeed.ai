@@ -15,6 +15,7 @@ describe('AgentWorkflowToolExecuteService setWorkflowSchedule', () => {
   const ctx = {
     organizationId: 'org-1',
     userId: 'user-1',
+    apiKeyContext: { isApiKey: false, scopes: [] },
   } as ToolExecutionContext;
 
   let handler: AgentWorkflowToolExecuteService;
@@ -66,7 +67,12 @@ describe('AgentWorkflowToolExecuteService setWorkflowSchedule', () => {
       '0 9 * * 1-5',
       'Europe/Malta',
       true,
-      undefined,
+      {
+        userId: 'user-1',
+        organizationId: 'org-1',
+        isApiKey: false,
+        scopes: [],
+      },
     );
     expect(result).toEqual({
       creditsUsed: 0,
@@ -99,7 +105,12 @@ describe('AgentWorkflowToolExecuteService setWorkflowSchedule', () => {
       null,
       'UTC',
       false,
-      undefined,
+      {
+        userId: 'user-1',
+        organizationId: 'org-1',
+        isApiKey: false,
+        scopes: [],
+      },
     );
     expect(result.data).toEqual({
       enabled: false,
@@ -134,7 +145,12 @@ describe('AgentWorkflowToolExecuteService setWorkflowSchedule', () => {
       '0 9 * * 1-5',
       'America/New_York',
       false,
-      undefined,
+      {
+        userId: 'user-1',
+        organizationId: 'org-1',
+        isApiKey: false,
+        scopes: [],
+      },
     );
     expect(result.data).toEqual({
       enabled: false,

@@ -473,38 +473,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
       });
     });
 
-    it('rejects a 502 HeyGen credentials failure with its error code and no auth flag', async () => {
-      const data = {
-        errors: [
-          {
-            code: 'HEYGEN_CREDENTIALS_INVALID',
-            detail: 'Reconnect the integration in Settings and try again.',
-            status: '502',
-          },
-        ],
-      };
-      const error: Partial<AxiosError> = {
-        config: {} as InternalAxiosRequestConfig,
-        isAxiosError: true,
-        message: 'Request failed with status code 502',
-        name: 'AxiosError',
-        response: {
-          config: {} as InternalAxiosRequestConfig,
-          data,
-          headers: {},
-          status: 502,
-          statusText: 'Bad Gateway',
-        },
-        toJSON: () => ({}),
-      };
-
-      const rejection = await service
-        .handleError(error as AxiosError)
-        .catch((caught: unknown) => caught);
-      expect(rejection).toEqual(data);
-      expect(rejection).not.toHaveProperty('isAuthError');
-    });
-
     it('sanitizes errors in production', async () => {
       vi.mocked(EnvironmentService.isProduction).mockReturnValue(true);
 
@@ -744,99 +712,6 @@ describe('HTTPBaseService (InterceptorService)', () => {
           (globalThis as { window?: unknown }).window = previousWindow;
         }
       }
-    });
-  });
-
-  describe('out-of-credits responses in the browser', () => {
-    function creditsError(code: string): Partial<AxiosError> {
-      return {
-        code: 'ERR_BAD_REQUEST',
-        config: {
-          baseURL: mockBaseURL,
-          method: 'POST',
-          url: '/images',
-        } as InternalAxiosRequestConfig,
-        isAxiosError: true,
-        message: 'Request failed with status code 422',
-        name: 'AxiosError',
-        response: {
-          config: {} as InternalAxiosRequestConfig,
-          data: {
-            errors: [
-              {
-                code,
-                detail: 'Insufficient credits: 10 required, 0 available',
-                status: '422',
-                title: 'Business Logic Error',
-              },
-            ],
-          },
-          headers: {},
-          status: 422,
-          statusText: 'Unprocessable Entity',
-        },
-        toJSON: () => ({}),
-      };
-    }
-
-    async function withBrowserWindow(run: () => Promise<void>) {
-      const previousWindow = (globalThis as { window?: unknown }).window;
-      const productionDescriptor = Object.getOwnPropertyDescriptor(
-        EnvironmentService,
-        'isProduction',
-      );
-      (globalThis as { window?: unknown }).window = {};
-      Object.defineProperty(EnvironmentService, 'isProduction', {
-        configurable: true,
-        value: true,
-      });
-      try {
-        await run();
-      } finally {
-        if (productionDescriptor) {
-          Object.defineProperty(
-            EnvironmentService,
-            'isProduction',
-            productionDescriptor,
-          );
-        }
-        if (previousWindow === undefined) {
-          delete (globalThis as { window?: unknown }).window;
-        } else {
-          (globalThis as { window?: unknown }).window = previousWindow;
-        }
-      }
-    }
-
-    it('opens the credits prompt and still rejects for the caller', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { ModalEnum } = await import('@genfeedai/contracts');
-
-      await withBrowserWindow(async () => {
-        const error = creditsError('INSUFFICIENT_CREDITS');
-        await expect(service.handleError(error as AxiosError)).rejects.toEqual(
-          error.response?.data,
-        );
-        expect(openModal).toHaveBeenCalledWith(ModalEnum.CREDITS_REQUIRED);
-      });
-    });
-
-    it('leaves other business errors to their surface', async () => {
-      const { openModal } = await import(
-        '@genfeedai/helpers/ui/modal/modal.helper'
-      );
-      const { ModalEnum } = await import('@genfeedai/contracts');
-
-      await withBrowserWindow(async () => {
-        await expect(
-          service.handleError(
-            creditsError('BUSINESS_LOGIC_ERROR') as AxiosError,
-          ),
-        ).rejects.toBeDefined();
-        expect(openModal).not.toHaveBeenCalledWith(ModalEnum.CREDITS_REQUIRED);
-      });
     });
   });
 

@@ -9,6 +9,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -98,7 +99,6 @@ const runtimeKeys = new Set([
   'HOME',
   'PATH',
   'SENTRY_ENABLED',
-  'CHECKPOINT_DISABLE',
 ]);
 export function validateEnvironment(env) {
   demand(
@@ -116,7 +116,6 @@ export function validateEnvironment(env) {
     env.SENTRY_ENABLED === undefined || env.SENTRY_ENABLED === 'false',
     'TELEMETRY_ENABLED',
   );
-  demand(env.CHECKPOINT_DISABLE === '1', 'PRISMA_TELEMETRY_ENABLED');
   const db = new URL(env.DATABASE_URL);
   demand(
     db.protocol === 'postgresql:' &&
@@ -333,52 +332,43 @@ const command = (exe, args, options = {}) =>
 function inspect(id) {
   return JSON.parse(command('docker', ['inspect', id]))[0];
 }
-export function readProcessNetworkNamespace(pid, runCommand = command) {
-  demand(Number.isSafeInteger(pid) && pid > 0, 'INVALID_NAMESPACE_PID');
-  // Docker's namespace owner runs as root. The runner cannot read its
-  // procfs namespace link without the same privilege used by nsenter.
-  try {
-    return runCommand('sudo', ['-n', 'readlink', `/proc/${pid}/ns/net`]);
-  } catch {
-    throw new Error('NETWORK_NAMESPACE_READ');
-  }
-}
-export function readJourneyFailure(output) {
-  const lines = output.split('\n');
-  const principalFailure = lines.find((line) =>
-    /^B01_REAL_PRINCIPALS_(SIGNIN|SIGNIN_IDENTITY|SIGNIN_HTTP_[1-5][0-9]{2}(?:_(INVALID_EMAIL_OR_PASSWORD|INVALID_ORIGIN|EMAIL_NOT_VERIFIED|USER_BANNED))?|COOKIE|TOKEN|CONTEXT|TRANSPORT|KEY_MINT|KEY_MINT_HTTP_[1-5][0-9]{2}|KEY_SERIALIZER|KEY_BINDING) failed$/.test(
-      line,
-    ),
-  );
-  if (principalFailure) return principalFailure.slice(0, -' failed'.length);
-  const mutationFailure = lines.find((line) =>
-    /^B11_PROVIDER_NOT_STARTED_(NEGATIVE_MUTATION_STARTED|PROVIDER_SUBMISSION_ATTEMPTED|(?:MUTATION_SNAPSHOT|NEGATIVE_MUTATION)_(WORKFLOW_EXECUTIONS|INGREDIENTS|CRUN_GENERATION_TASKS|POSTS|BRANDED_GENERATION_RECEIPTS|CREDIT_RESERVATIONS|CREDIT_TRANSACTIONS|CREDIT_BALANCES|BILLING_REVENUE_EVENTS|CONTEXT_BASES|CONTEXT_ENTRIES|KNOWLEDGE_SOURCES|KNOWLEDGE_SOURCE_VERSIONS|KNOWLEDGE_CAPTURE_REQUESTS)) failed$/.test(
-      line,
-    ),
-  );
-  if (mutationFailure) return mutationFailure.slice(0, -' failed'.length);
-  for (const id of CONTRACT.cases)
-    for (const code of [
-      'INVALID_RESPONSE_SHAPE',
-      'PROTECTED_READ_FAILED',
-      'VISIBLE_BRAND_MISSING',
-      'HIDDEN_BRAND_DISCLOSED',
-      'REST_LIST',
-      'REST_COUNT_METADATA',
-      'REST_FOREIGN_SCOPE',
-    ])
-      if (lines.includes(`${id}_${code} failed`)) return `${id}_${code}`;
-  return (
-    CONTRACT.cases.find((id) => lines.includes(`${id} failed`)) ??
-    'JOURNEY_INFRASTRUCTURE'
-  );
-}
-
 function processStart(pid) {
   const text = readFileSync(`/proc/${pid}/stat`, 'utf8');
   return text.slice(text.lastIndexOf(')') + 2).split(' ')[19];
 }
+export function pruneArchiveTooling(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name);
+    if (['.agents', '.codex', '.claude'].includes(entry.name)) {
+      // This is called only on the fresh archive, before dependency copies.
+      // Unlink a tooling symlink itself; never follow or modify its target.
+      rmSync(file, { recursive: true, force: true });
+    } else if (entry.isDirectory()) pruneArchiveTooling(file);
+  }
+}
+export function validateExportLinks(directory, destination = directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const file = join(directory, entry.name);
+    if (entry.name.startsWith('.env')) {
+      rmSync(file, { recursive: true, force: true });
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      let target;
+      try {
+        target = realpathSync(file);
+      } catch {
+        throw new Error('INVALID_EXPORT_SYMLINK');
+      }
+      demand(
+        target === destination || target.startsWith(`${destination}/`),
+        'OUTSIDE_EXPORT_SYMLINK',
+      );
+    } else if (entry.isDirectory()) validateExportLinks(file, destination);
+  }
+}
 function cleanInputs(source, destination) {
+  pruneArchiveTooling(destination);
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (
@@ -396,13 +386,17 @@ function cleanInputs(source, destination) {
           mkdirSync(target, { recursive: true });
           // Generated inputs may already exist in the exact git archive.
           // Replace only destination leaves before linking the built inputs.
-          command('cp', [
-            '-a',
-            '-l',
-            '--remove-destination',
-            `${file}/.`,
-            target,
-          ]);
+          try {
+            command('cp', [
+              '-a',
+              '-l',
+              '--remove-destination',
+              `${file}/.`,
+              target,
+            ]);
+          } catch {
+            throw new Error('SOURCE_BUILT_INPUT_EXPORT');
+          }
         }
         continue;
       }
@@ -410,30 +404,7 @@ function cleanInputs(source, destination) {
     }
   };
   walk(source);
-  scrubRuntimeExport(destination);
-}
-
-export function scrubRuntimeExport(destination) {
-  const scrub = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const file = join(directory, entry.name);
-      if (
-        entry.name.startsWith('.env') ||
-        ['.agents', '.codex', '.claude', '.turbo'].includes(entry.name)
-      ) {
-        rmSync(file, { recursive: true, force: true });
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        const target = realpathSync(file);
-        demand(
-          target === destination || target.startsWith(`${destination}/`),
-          'OUTSIDE_EXPORT_SYMLINK',
-        );
-      } else if (entry.isDirectory()) scrub(file);
-    }
-  };
-  scrub(destination);
+  validateExportLinks(destination);
 }
 function stopOwnedChild(handle) {
   if (!Number.isSafeInteger(handle.child.pid) || handle.result) return;
@@ -581,10 +552,14 @@ export async function runRuntime(options) {
     } finally {
       closeSync(fd);
     }
-    command('tar', ['-xf', archive, '-C', clean]);
+    await safeStage('SOURCE_ARCHIVE_EXPORT', () =>
+      command('tar', ['-xf', archive, '-C', clean]),
+    );
     rmSync(archive);
     cleanInputs(ROOT, clean);
-    report.lockDigest = hash(join(clean, 'bun.lock'));
+    report.lockDigest = await safeStage('SOURCE_LOCK_INPUT', () =>
+      hash(join(clean, 'bun.lock')),
+    );
     report.apiDigest = hash(join(clean, 'apps/server/dist/apps/api/main.js'));
     report.mcpDigest = hash(join(clean, 'apps/server/dist/apps/mcp/main.js'));
     report.journeyDigest = hash(
@@ -620,8 +595,6 @@ export async function runRuntime(options) {
           'exec',
           pg,
           'pg_isready',
-          '-h',
-          '127.0.0.1',
           '-U',
           user,
           '-d',
@@ -640,7 +613,7 @@ export async function runRuntime(options) {
       pid: pgState.State.Pid,
       startedAt: pgState.State.StartedAt,
       start: processStart(pgState.State.Pid),
-      namespace: readProcessNetworkNamespace(pgState.State.Pid),
+      namespace: readlinkSync(`/proc/${pgState.State.Pid}/ns/net`),
     };
     const redis = command('docker', [
       'run',
@@ -668,8 +641,6 @@ export async function runRuntime(options) {
       'exec',
       pg,
       'psql',
-      '-h',
-      '127.0.0.1',
       '-U',
       user,
       '-d',
@@ -697,7 +668,6 @@ export async function runRuntime(options) {
     Object.assign(env, {
       GITHUB_ACTIONS: 'true',
       SENTRY_ENABLED: 'false',
-      CHECKPOINT_DISABLE: '1',
       DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:5432/${CONTRACT.database}`,
       REDIS_URL: 'redis://127.0.0.1:6379',
       REDIS_QUEUE_DB: '0',
@@ -735,7 +705,8 @@ export async function runRuntime(options) {
       validateContainer(inspect(pg), pgIdentity);
       demand(
         processStart(pgIdentity.pid) === pgIdentity.start &&
-          readProcessNetworkNamespace(pgIdentity.pid) === pgIdentity.namespace,
+          readlinkSync(`/proc/${pgIdentity.pid}/ns/net`) ===
+            pgIdentity.namespace,
         'NAMESPACE_OWNER_CHANGED',
       );
       const base = [
@@ -826,14 +797,11 @@ export async function runRuntime(options) {
       const handle = launch(stage, exe, args, settings);
       const result = await handle.done;
       clearTimeout(handle.timer);
-      const output = readFileSync(
+      assertChildOutcome(result);
+      return readFileSync(
         join(options.state, `${stage}.private.log`),
         'utf8',
       ).trim();
-      if (stage === 'journey' && result.code !== 0)
-        process.stderr.write(`${readJourneyFailure(output)} failed\n`);
-      assertChildOutcome(result);
-      return output;
     };
     const requireFromPrisma = createRequire(
       join(clean, 'packages/prisma/package.json'),
@@ -862,6 +830,8 @@ export async function runRuntime(options) {
         [
           '--preload',
           guard,
+          '--tsconfig-override',
+          join(clean, 'apps/server/api/tsconfig.json'),
           join(
             clean,
             'apps/server/api/test/integration/mcp/mcp-auth-runtime.fixture.ts',
@@ -931,6 +901,8 @@ export async function runRuntime(options) {
         [
           '--preload',
           guard,
+          '--tsconfig-override',
+          join(clean, 'apps/server/api/tsconfig.json'),
           join(
             clean,
             'apps/server/api/test/integration/mcp/mcp-brand-access.journey.ts',

@@ -1,3 +1,4 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import type { BrandMemoryService } from '@api/collections/brand-memory/services/brand-memory.service';
 import type { ContentPlanItemsService } from '@api/collections/content-plan-items/services/content-plan-items.service';
 import type { ContentPlansService } from '@api/collections/content-plans/services/content-plans.service';
@@ -18,6 +19,11 @@ import { LoggerService } from '@libs/logger/logger.service';
 import { BadRequestException } from '@nestjs/common';
 import type { ModuleRef } from '@nestjs/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@genfeedai/config', async (original) => ({
+  ...(await original<typeof import('@genfeedai/config')>()),
+  isCloudDeployment: () => false,
+}));
 
 const BRIEF = {
   evaluationCriteria: [],
@@ -150,6 +156,10 @@ describe('ExpertFirstSystemService', () => {
       harnessProfilesService as unknown as HarnessProfilesService,
       logger,
       moduleRef,
+      new BrandAccessService({
+        brand: brandDelegate,
+        credential: credentialDelegate,
+      } as unknown as PrismaService),
     );
   });
 

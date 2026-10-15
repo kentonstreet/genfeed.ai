@@ -1,3 +1,4 @@
+import { admitWorkflowDispatch } from '@api/authorization/brand-access/workflow-actor.util';
 import { ManagedInferenceProvider } from '@api/endpoints/v1/managed-inference/dto/managed-inference-request.dto';
 import { ManagedInferenceClientService } from '@api/endpoints/v1/managed-inference/managed-inference-client.service';
 import { ByokProviderFactoryService } from '@api/services/byok/byok-provider-factory.service';
@@ -12,7 +13,7 @@ import type {
 } from '@api/services/skill-executor/interfaces/skill-executor.interfaces';
 import { ByokProvider, ImageTaskModel } from '@genfeedai/contracts';
 import type { ByokResolutionResult } from '@genfeedai/contracts/interfaces';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 /**
  * Detects provider capacity/availability errors that warrant failover.
@@ -48,6 +49,7 @@ export class ImageGenerationHandler implements SkillHandler {
   async execute(
     context: SkillExecutionContext,
     params: Record<string, unknown>,
+    admission?: () => Promise<void>,
   ): Promise<GeneratedContent> {
     const prompt = typeof params.prompt === 'string' ? params.prompt : '';
     if (!prompt) {
@@ -73,6 +75,7 @@ export class ImageGenerationHandler implements SkillHandler {
         ? compiled.dispatch.prompt
         : prompt;
 
+    await admitWorkflowDispatch(admission);
     let imageUrl = '';
     let fallbackUsed = false;
     let resolvedProvider = model;
@@ -83,6 +86,7 @@ export class ImageGenerationHandler implements SkillHandler {
         ByokProvider.LEONARDOAI,
       );
 
+      await admitWorkflowDispatch(admission);
       if (provider.source === 'managed') {
         imageUrl = await this.generateManagedImage(provider, {
           input: {
@@ -112,10 +116,12 @@ export class ImageGenerationHandler implements SkillHandler {
           ByokProvider.REPLICATE,
         );
 
+        await admitWorkflowDispatch(admission);
         const modelId =
           model === ImageTaskModel.IMAGEN4
             ? 'google/imagen-4'
             : 'stability-ai/sdxl:latest';
+        await admitWorkflowDispatch(admission);
         const input = {
           prompt: compiledPrompt,
           resolution: `${width}:${height}`,
@@ -134,7 +140,11 @@ export class ImageGenerationHandler implements SkillHandler {
                 provider.apiKey,
               );
       } catch (error: unknown) {
-        if (!isProviderCapacityError(error)) throw error;
+        if (
+          error instanceof ForbiddenException ||
+          !isProviderCapacityError(error)
+        )
+          throw error;
 
         const falProvider =
           await this.byokProviderFactoryService.resolveProvider(
@@ -142,11 +152,13 @@ export class ImageGenerationHandler implements SkillHandler {
             ByokProvider.FAL,
           );
 
+        await admitWorkflowDispatch(admission);
         const falModelId =
           model === ImageTaskModel.IMAGEN4
             ? 'fal-ai/flux-pro'
             : 'fal-ai/flux/dev';
 
+        await admitWorkflowDispatch(admission);
         const input = { image_size: { height, width }, prompt: compiledPrompt };
 
         if (falProvider.source === 'managed') {
@@ -173,8 +185,10 @@ export class ImageGenerationHandler implements SkillHandler {
           ByokProvider.FAL,
         );
 
+        await admitWorkflowDispatch(admission);
         const input = { image_size: { height, width }, prompt: compiledPrompt };
 
+        await admitWorkflowDispatch(admission);
         if (provider.source === 'managed') {
           imageUrl = await this.generateManagedImage(provider, {
             input,
@@ -190,7 +204,11 @@ export class ImageGenerationHandler implements SkillHandler {
           imageUrl = result.url;
         }
       } catch (error: unknown) {
-        if (!isProviderCapacityError(error)) throw error;
+        if (
+          error instanceof ForbiddenException ||
+          !isProviderCapacityError(error)
+        )
+          throw error;
 
         const repProvider =
           await this.byokProviderFactoryService.resolveProvider(
@@ -198,6 +216,7 @@ export class ImageGenerationHandler implements SkillHandler {
             ByokProvider.REPLICATE,
           );
 
+        await admitWorkflowDispatch(admission);
         const input = {
           prompt: compiledPrompt,
           resolution: `${width}:${height}`,

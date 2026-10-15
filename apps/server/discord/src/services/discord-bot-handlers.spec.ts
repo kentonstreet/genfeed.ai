@@ -1,6 +1,6 @@
 import { registerDiscordBotHandlers } from '@discord/services/discord-bot-handlers';
 import type { OrgIntegration, WorkflowSession } from '@genfeedai/integrations';
-import type { Client, Message } from 'discord.js';
+import { ChannelType, type Client, type Message } from 'discord.js';
 
 type ListenerFn = (...args: unknown[]) => Promise<void> | void;
 
@@ -9,6 +9,7 @@ interface HandlerMocks {
   handleAttachmentInput: ReturnType<typeof vi.fn>;
   handleButtonInteraction: ReturnType<typeof vi.fn>;
   handleCancelCommand: ReturnType<typeof vi.fn>;
+  handleLink: ReturnType<typeof vi.fn>;
   handleSettingsCommand: ReturnType<typeof vi.fn>;
   handleStatusCommand: ReturnType<typeof vi.fn>;
   handleTextInput: ReturnType<typeof vi.fn>;
@@ -51,6 +52,7 @@ function createContext(): HandlerTestContext {
     handleAttachmentInput: vi.fn().mockResolvedValue(undefined),
     handleButtonInteraction: vi.fn().mockResolvedValue(undefined),
     handleCancelCommand: vi.fn().mockResolvedValue(undefined),
+    handleLink: vi.fn().mockResolvedValue(undefined),
     handleSettingsCommand: vi.fn().mockResolvedValue(undefined),
     handleStatusCommand: vi.fn().mockResolvedValue(undefined),
     handleTextInput: vi.fn().mockResolvedValue(undefined),
@@ -260,4 +262,51 @@ describe('registerDiscordBotHandlers', () => {
       expect(ctx.mocks.handleAttachmentInput).not.toHaveBeenCalled();
     });
   });
+});
+
+describe('private Discord account linking', () => {
+  it('captures the actual private SDK sender and event without creating a workflow session', async () => {
+    const { listeners, mocks } = createContext();
+    const message = {
+      author: { bot: false, id: 'user-1' },
+      content: '/link',
+      channel: { type: ChannelType.DM },
+      channelId: 'private-1',
+      id: 'event-1',
+      reply: vi.fn(),
+    };
+    await listeners.get('messageCreate')?.(message);
+    expect(mocks.handleLink).toHaveBeenCalledWith(
+      {
+        integrationId: 'int-1',
+        organizationId: 'org-1',
+        platform: 'DISCORD',
+        remoteUserId: 'user-1',
+        channelId: 'private-1',
+        sourceEventId: 'event-1',
+        isPrivate: true,
+      },
+      message,
+    );
+    expect(mocks.getSession).not.toHaveBeenCalled();
+  });
+  it.each([ChannelType.GuildText, ChannelType.GroupDM])(
+    'does not issue a challenge in public or group channels %s',
+    async (type) => {
+      const { listeners, mocks } = createContext();
+      const message = {
+        author: { bot: false, id: 'user-1' },
+        content: 'link',
+        channel: { type },
+        channelId: 'other',
+        id: 'event-1',
+        reply: vi.fn(),
+      };
+      await listeners.get('messageCreate')?.(message);
+      expect(mocks.handleLink).not.toHaveBeenCalled();
+      expect(message.reply).toHaveBeenCalledWith(
+        'Start account linking in a private conversation with this bot.',
+      );
+    },
+  );
 });

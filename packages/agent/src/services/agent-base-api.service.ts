@@ -138,12 +138,7 @@ export class AgentBaseApiService {
     try {
       return deserializeResource<T>(document);
     } catch (cause) {
-      throw new AgentApiDecodeError({
-        cause,
-        message,
-        reason:
-          document?.data === null ? 'missing-resource' : 'invalid-document',
-      });
+      throw new AgentApiDecodeError({ cause, message });
     }
   }
 

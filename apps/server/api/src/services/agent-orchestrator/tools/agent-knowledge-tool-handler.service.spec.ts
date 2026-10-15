@@ -119,6 +119,9 @@ describe('AgentKnowledgeToolHandler', () => {
     expect(
       knowledgeContentRetrievalService.retrieveBrandContentMemory,
     ).toHaveBeenCalledWith({
+      userId: ctx.userId,
+      isApiKey: ctx.apiKeyContext?.isApiKey,
+      scopes: ctx.apiKeyContext?.scopes,
       brandId: 'brand-1',
       knowledgePurposes: [KnowledgeSourcePurpose.BRAND_TRUTH],
       knowledgeSourceIds: ['source-1'],
@@ -126,9 +129,6 @@ describe('AgentKnowledgeToolHandler', () => {
       minRelevance: 0,
       organizationId: 'org-1',
       query: 'pricing',
-      userId: 'user-1',
-      isApiKey: undefined,
-      scopes: undefined,
     });
     expect(result.success).toBe(true);
     expect(result.data?.passages).toEqual([
@@ -184,9 +184,6 @@ describe('AgentKnowledgeToolHandler', () => {
         brandId: 'brand-explicit',
         organizationId: 'org-1',
         query: 'pricing',
-        userId: 'user-1',
-        isApiKey: undefined,
-        scopes: undefined,
       }),
     );
   });

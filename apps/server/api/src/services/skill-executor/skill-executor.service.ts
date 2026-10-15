@@ -1,3 +1,14 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  denyWorkflowActor,
+  parseWorkflowActor,
+  readPinnedWorkflowInput,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+  workflowActorKey,
+  workflowRequestKey,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { isExecutableBuiltInSkillIdentity } from '@api/collections/skills/constants/skill-validation.constant';
 import { SkillLibraryService } from '@api/collections/skills/services/skill-library.service';
 import { SkillsService } from '@api/collections/skills/services/skills.service';
@@ -26,6 +37,8 @@ import {
   SKILL_ACTION_IDS,
   SKILL_WORKFLOW_IDS,
 } from '@api/services/skill-executor/skill-workflow-definition';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import { Injectable, type OnModuleInit, Optional } from '@nestjs/common';
 
 @Injectable()
@@ -40,6 +53,8 @@ export class SkillWorkflowService implements OnModuleInit {
     imageGenerationHandler: ImageGenerationHandler,
     trendDiscoveryHandler: TrendDiscoveryHandler,
     trendRemixHandler: TrendRemixHandler,
+    private readonly brandAccess: BrandAccessService,
+    private readonly prisma: PrismaService,
     @Optional() private readonly skillLibrary?: SkillLibraryService,
   ) {
     this.handlers = {
@@ -68,21 +83,44 @@ export class SkillWorkflowService implements OnModuleInit {
     context: SkillExecutionContext,
     params: Record<string, unknown> = {},
     userId?: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<SkillExecutionResult> {
     if (!isExecutableSkillSlug(skillSlug)) {
       throw new NotFoundException(`Skill not found: ${skillSlug}`);
     }
 
+    let actor: WorkflowInitiatingActor | undefined;
+    if (initiatingActor) {
+      if (
+        initiatingActor.organizationId !== context.organizationId ||
+        initiatingActor.userId !== userId
+      )
+        denyWorkflowActor();
+      actor = await this.admit(initiatingActor, context.brandId);
+    } else if (isCloudDeployment()) denyWorkflowActor();
     const startedAt = Date.now();
     const pinnedContext = await this.contextWithPins(
       skillSlug,
       context,
       userId,
     );
+    const persistedContext = {
+      ...pinnedContext,
+      ...(actor ? { initiatingActor: captureWorkflowActor(actor) } : {}),
+    };
+    const inputValues = { context: persistedContext, params };
     const execution = await this.workflowRunner.runWorkflow<GeneratedContent>({
       actionType: SKILL_ACTION_IDS[skillSlug],
       canonicalId: SKILL_WORKFLOW_IDS[skillSlug],
-      inputValues: { context: pinnedContext, params },
+      inputValues,
+      ...(actor
+        ? {
+            metadata: {
+              initiatingActorKey: workflowActorKey(actor),
+              initiatingRequestKey: workflowRequestKey(inputValues),
+            },
+          }
+        : {}),
       organizationId: context.organizationId,
       source: 'SkillWorkflowService.execute',
       userId,
@@ -100,7 +138,33 @@ export class SkillWorkflowService implements OnModuleInit {
     skillSlug: ExecutableSkillSlug,
     request: SystemWorkflowActionRequest,
   ): Promise<GeneratedContent> {
-    const context = this.readContext(request.input.context);
+    let persistedInput = request.input;
+    let actor: WorkflowInitiatingActor | undefined;
+    if (isCloudDeployment()) {
+      const proof = await readPinnedWorkflowInput(
+        this.prisma,
+        request,
+        SKILL_WORKFLOW_IDS[skillSlug],
+        ['SkillWorkflowService.execute'],
+        [SKILL_ACTION_IDS[skillSlug]],
+      );
+      persistedInput = proof.inputValues;
+      actor = parseWorkflowActor(
+        this.readRecord(persistedInput.context, 'context').initiatingActor,
+        request.context.organizationId,
+      );
+      if (
+        actor.userId !== request.context.userId ||
+        proof.metadata.initiatingActorKey !== workflowActorKey(actor) ||
+        proof.metadata.initiatingRequestKey !==
+          workflowRequestKey(persistedInput) ||
+        workflowRequestKey(request.input) !== workflowRequestKey(persistedInput)
+      )
+        denyWorkflowActor();
+    }
+    const context = this.readContext(persistedInput.context);
+    if (actor)
+      context.initiatingActor = await this.admit(actor, context.brandId);
     if (context.organizationId !== request.context.organizationId) {
       throw new Error('Skill workflow organization context mismatch');
     }
@@ -109,12 +173,35 @@ export class SkillWorkflowService implements OnModuleInit {
       context.brandId,
       skillSlug,
       request.context.userId,
-      this.readRecord(request.input.context, 'context'),
+      this.readRecord(persistedInput.context, 'context'),
     );
+    if (context.initiatingActor)
+      context.initiatingActor = await this.admit(
+        context.initiatingActor,
+        context.brandId,
+      );
     return this.handlers[skillSlug].execute(
       context,
-      this.readRecord(request.input.params, 'params'),
+      this.readRecord(persistedInput.params, 'params'),
+      async () => {
+        if (actor) await this.admit(actor, context.brandId);
+        else if (isCloudDeployment()) denyWorkflowActor();
+      },
     );
+  }
+
+  private async admit(
+    actor: WorkflowInitiatingActor,
+    brandId: string,
+  ): Promise<WorkflowInitiatingActor> {
+    const fresh = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      actor,
+      actor.organizationId,
+    );
+    await this.brandAccess.assert(fresh, brandId);
+    return fresh;
   }
 
   private async contextWithPins(

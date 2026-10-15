@@ -29,7 +29,7 @@ export class ExpertCorpusService {
         versions: {
           select: { processingState: true },
           take: 1,
-          where: { isCurrent: true, isDeleted: false },
+          where: { organizationId, isCurrent: true, isDeleted: false },
         },
       },
       where: scopedWhere(organizationId, {

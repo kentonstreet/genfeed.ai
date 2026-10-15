@@ -1,4 +1,5 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { captureWorkflowActor } from '@api/authorization/brand-access/workflow-actor.util';
 import { CreateWorkflowDto } from '@api/collections/workflows/dto/create-workflow.dto';
 import { WorkflowQueryDto } from '@api/collections/workflows/dto/query-workflow.dto';
 import { UpdateWorkflowDto } from '@api/collections/workflows/dto/update-workflow.dto';
@@ -11,9 +12,7 @@ import { WorkflowSchedulerService } from '@api/collections/workflows/services/wo
 import { WorkflowsService } from '@api/collections/workflows/services/workflows.service';
 import { buildWorkflowListWhere } from '@api/collections/workflows/utils/workflow-list-where.util';
 import { withNextRunAt } from '@api/collections/workflows/utils/workflow-next-run.util';
-import { toWorkflowSchedulePrincipal } from '@api/collections/workflows/utils/workflow-schedule-actor.util';
 import { assertCanIncludeSystemWorkflows } from '@api/collections/workflows/utils/workflow-system-access.util';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { RolesDecorator } from '@api/helpers/decorators/roles/roles.decorator';
@@ -73,7 +72,6 @@ export interface WorkflowStatisticsResponse {
  */
 @AutoSwagger()
 @FeatureFlag('automation')
-@OrganizationModule('automation')
 @Controller('workflows')
 @UseGuards(RolesGuard)
 export class WorkflowCrudController {
@@ -100,7 +98,13 @@ export class WorkflowCrudController {
         user.organizationId,
         createWorkflowDto,
         user.brandId || undefined,
-        toWorkflowSchedulePrincipal(user),
+        captureWorkflowActor({
+          userId: user.id,
+          organizationId: user.organizationId,
+          isApiKey: user.isApiKey,
+          apiKeyId: user.apiKeyId,
+          scopes: user.scopes,
+        }),
       );
 
       return serializeSingle(
@@ -319,7 +323,13 @@ export class WorkflowCrudController {
           nextSchedule,
           nextTimezone,
           nextEnabled,
-          toWorkflowSchedulePrincipal(user),
+          captureWorkflowActor({
+            userId: user.id,
+            organizationId: user.organizationId,
+            isApiKey: user.isApiKey,
+            apiKeyId: user.apiKeyId,
+            scopes: user.scopes,
+          }),
         );
 
         const updated = await this.workflowsService.findVisibleOrThrow(

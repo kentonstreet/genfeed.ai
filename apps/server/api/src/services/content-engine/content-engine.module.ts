@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { AdPerformanceModule } from '@api/collections/ad-performance/ad-performance.module';
 import { AdWatchedAdvertisersCoreModule } from '@api/collections/ad-watched-advertisers/ad-watched-advertisers-core.module';
 import { BrandsModule } from '@api/collections/brands/brands.module';
@@ -23,6 +24,7 @@ import { Module } from '@nestjs/common';
   controllers: [ContentEngineController],
   exports: [ContentPlannerService, ContentExecutionService],
   imports: [
+    BrandAccessModule,
     AdPerformanceModule,
     AdWatchedAdvertisersCoreModule,
     ContentPerformanceModule,

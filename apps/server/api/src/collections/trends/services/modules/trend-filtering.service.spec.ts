@@ -61,6 +61,8 @@ describe('TrendFilteringService', () => {
     expect(service).toBeDefined();
   });
 
+  // ─── calculateViralityScore ────────────────────────────────────────────────
+
   describe('calculateViralityScore', () => {
     it('should return 0 for zero-value trend', () => {
       const oldDate = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -108,6 +110,8 @@ describe('TrendFilteringService', () => {
       expect(service.calculateViralityScore(trend)).toBe(20);
     });
   });
+
+  // ─── filterTrendsByBrandDescription ───────────────────────────────────────
 
   describe('filterTrendsByBrandDescription', () => {
     const trends = [
@@ -162,6 +166,8 @@ describe('TrendFilteringService', () => {
       expect(result).toHaveLength(3);
     });
   });
+
+  // ─── filterTrendsByPreferences ────────────────────────────────────────────
 
   describe('filterTrendsByPreferences', () => {
     const trends = [
@@ -222,6 +228,8 @@ describe('TrendFilteringService', () => {
     });
   });
 
+  // ─── getRelatedTrends ─────────────────────────────────────────────────────
+
   describe('getRelatedTrends', () => {
     it('should return empty array when topic has no meaningful keywords', async () => {
       const result = await service.getRelatedTrends('in on at', 'tiktok');
@@ -273,5 +281,28 @@ describe('TrendFilteringService', () => {
       expect(results).toHaveLength(1);
       expect(results[0]).toBeInstanceOf(TrendEntity);
     });
+  });
+  it('filters the private related-trend query before fetching its rows and leaves the public query global', async () => {
+    const brandWhere = {
+      organizationId: 'org',
+      isDeleted: false,
+      id: { in: [] },
+    };
+    await expect(
+      service.getRelatedTrends('AI marketing', 'tiktok', 'org', 5, brandWhere),
+    ).resolves.toEqual([]);
+    const calls = prisma.trend.findMany.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0][0].where).toEqual(
+      expect.objectContaining({
+        organizationId: 'org',
+        isDeleted: false,
+        OR: [{ brandId: null }, { brand: brandWhere }],
+      }),
+    );
+    expect(calls[1][0].where).toEqual(
+      expect.objectContaining({ organizationId: null, isDeleted: false }),
+    );
+    expect(calls[1][0].where).not.toHaveProperty('brand');
   });
 });

@@ -8,6 +8,7 @@ import { formatAgentFailureMessage } from '@genfeedai/agent/server';
 import { IntegrationPlatform } from '@genfeedai/contracts';
 import {
   BaseBotManager,
+  BotAccountLinkClient,
   type BotHttpAdapter,
   BotInternalApiClient,
   IMAGE_MODELS,
@@ -214,6 +215,29 @@ export class DiscordBotManager
         this.handleButtonInteraction(interaction, targetOrgId),
       handleCancelCommand: (interaction) =>
         this.handleCancelCommand(interaction),
+      handleLink: async (event, message) => {
+        try {
+          const linkClient = new BotAccountLinkClient({
+            apiUrl: this.configService.API_URL,
+            apiKey: this.configService.API_KEY,
+            installation: {
+              id: integration.id,
+              organizationId: integration.orgId,
+              platform: 'DISCORD',
+              botToken: integration.botToken,
+            },
+            http: makeBotHttpAdapter(this.httpService),
+          });
+          const challenge = await linkClient.beginChallenge(event);
+          await message.reply(
+            `Confirm your Genfeed account: ${challenge.confirmationUrl}`,
+          );
+        } catch {
+          await message.reply(
+            'Account linking is unavailable. Send a new private link request.',
+          );
+        }
+      },
       handleSettingsCommand: (interaction) =>
         this.handleSettingsCommand(interaction),
       handleStatusCommand: (interaction) =>

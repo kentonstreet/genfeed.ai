@@ -6,6 +6,7 @@
 import type { ApiKeysService } from '@api/collections/api-keys/services/api-keys.service';
 import type { ChatAuthContext } from '@api/services/telegram-bot/telegram-bot.types';
 import { extractCommandArgs } from '@api/services/telegram-bot/telegram-command-args.util';
+import { isCloudDeployment } from '@genfeedai/config';
 import { ParseMode } from '@genfeedai/contracts';
 import type { Context } from 'grammy';
 
@@ -28,7 +29,10 @@ export class TelegramAuthContextService {
   }
 
   resolveAuthContext(chatId: number): ChatAuthContext | null {
-    return this.chatAuthContexts.get(chatId) ?? this.defaultAuthContext;
+    return (
+      this.chatAuthContexts.get(chatId) ??
+      (isCloudDeployment() ? null : this.defaultAuthContext)
+    );
   }
 
   /**
@@ -44,7 +48,7 @@ export class TelegramAuthContextService {
     }
 
     if (cached.authType !== 'api_key' || !cached.apiKeyId) {
-      return cached;
+      return isCloudDeployment() ? null : cached;
     }
 
     if (!this.apiKeysService) {
@@ -53,7 +57,12 @@ export class TelegramAuthContextService {
     }
 
     const live = await this.apiKeysService.findActiveById(cached.apiKeyId);
-    if (!live) {
+    if (
+      !live ||
+      (isCloudDeployment() &&
+        (live.userId !== cached.userId ||
+          live.organizationId !== cached.organizationId))
+    ) {
       this.dropApiKeyContext(chatId, cached.apiKeyId);
       return null;
     }
@@ -62,7 +71,11 @@ export class TelegramAuthContextService {
       apiKeyId: live.id,
       authType: 'api_key',
       organizationId: live.organizationId,
-      scopes: live.scopes ?? [],
+      scopes: isCloudDeployment()
+        ? (cached.scopes ?? []).filter((scope) =>
+            (live.scopes ?? []).includes(scope),
+          )
+        : (live.scopes ?? []),
       userId: live.userId,
     };
 
@@ -94,6 +107,13 @@ export class TelegramAuthContextService {
     if (args.toLowerCase() === 'disconnect') {
       this.chatAuthContexts.delete(chatId);
       await ctx.reply('🔌 Disconnected API key context for this chat.');
+      return;
+    }
+
+    if (args.toLowerCase() === 'default' && isCloudDeployment()) {
+      await ctx.reply(
+        'Cloud Telegram requires a verified API key. Use /connect <api_key>.',
+      );
       return;
     }
 

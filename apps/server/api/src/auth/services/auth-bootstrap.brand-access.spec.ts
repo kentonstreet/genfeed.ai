@@ -39,11 +39,7 @@ function fixture() {
     brands: [{ id: 'brand-a' }],
   };
   const findMember = vi.fn().mockResolvedValue(member);
-  const findKey = vi
-    .fn()
-    .mockResolvedValue({ scopes: ['read', 'write', 'admin'] });
   const policy = new BrandAccessService({
-    apiKey: { findFirst: findKey },
     member: { findFirst: findMember },
   } as unknown as PrismaService);
   const rows = [
@@ -104,30 +100,8 @@ function fixture() {
         .fn()
         .mockResolvedValue({ id: 'opaque-user', isOnboardingCompleted: true }),
     } as unknown as Dependencies[7],
-    {
-      canAffordDefaultGeneration: vi.fn().mockResolvedValue(true),
-    } as unknown as Dependencies[8],
-    {
-      getState: vi
-        .fn()
-        .mockResolvedValue({ isTrialExpired: false, trialEndsAt: null }),
-    } as unknown as Dependencies[9],
-    {
-      resolve: vi
-        .fn()
-        .mockResolvedValue({ isTrialSubject: false, threshold: null }),
-    } as unknown as Dependencies[10],
   );
-  return {
-    member,
-    findKey,
-    findMember,
-    service,
-    findForOrganization,
-    review,
-    get,
-    set,
-  };
+  return { member, findMember, service, findForOrganization, review, get, set };
 }
 
 describe('Cloud bootstrap live brand policy across warmed caches', () => {
@@ -181,7 +155,6 @@ describe('Cloud bootstrap live brand policy across warmed caches', () => {
       organizationId: 'org-a',
       brandId: 'brand-a',
       isApiKey: true,
-      apiKeyId: 'key-a',
       scopes: ['read'],
     };
     const keyRequest = Object.assign({}, request, { user: keyUser });
@@ -194,37 +167,5 @@ describe('Cloud bootstrap live brand policy across warmed caches', () => {
       }),
     );
     expect(admin.brands).toHaveLength(2);
-  });
-  it('binds warmed bootstrap reads to the live key and intersects current scopes', async () => {
-    const f = fixture();
-    f.member.role.key = MemberRole.OWNER;
-    f.member.brands = [];
-    await f.service.getBootstrap(request);
-    f.findKey.mockResolvedValue({ scopes: ['read'] });
-    const keyRequest = Object.assign({}, request, {
-      user: {
-        ...request.user,
-        isApiKey: true,
-        apiKeyId: 'key-a',
-        scopes: ['admin'],
-      },
-    });
-    const result = await f.service.getBootstrap(keyRequest);
-    expect(result.brands).toEqual([]);
-    expect(result.access.memberRole).toBe(MemberRole.USER);
-    expect(f.findKey).toHaveBeenCalledWith({
-      where: {
-        id: 'key-a',
-        userId: 'opaque-user',
-        organizationId: 'org-a',
-        isRevoked: false,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
-      },
-      select: { scopes: true },
-    });
-    f.findKey.mockResolvedValue(null);
-    await expect(f.service.getBootstrap(keyRequest)).rejects.toThrow(
-      'Brand access denied',
-    );
   });
 });

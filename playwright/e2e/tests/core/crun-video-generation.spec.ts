@@ -152,8 +152,6 @@ async function installFixture(
         category: 'VIDEO',
         status: 'GENERATED',
         scope: 'USER',
-        brandId: 'brand-1',
-        organizationId: 'mock-org-id-e2e-test',
         cdnUrl: ownedUrl,
         width: 320,
         height: 180,
@@ -373,8 +371,6 @@ async function installFixture(
               category: 'IMAGE',
               status: 'GENERATED',
               scope: 'USER',
-              brandId: 'brand-1',
-              organizationId: 'mock-org-id-e2e-test',
               cdnUrl: `https://cdn.genfeed.ai/mock/${id}.png`,
               createdAt: '2026-10-01T12:00:00.000Z',
               metadata: {
@@ -401,10 +397,10 @@ async function installFixture(
       }),
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto(brandPath(APP_ROUTES.STUDIO.PLAYGROUND));
-  const composer = page.getByTestId('studio-playground-composer-shell');
+  await page.goto(brandPath(APP_ROUTES.STUDIO.GENERATE));
+  const composer = page.getByTestId('studio-generate-composer-shell');
   const editor = page
-    .getByTestId('studio-playground-prompt')
+    .getByTestId('studio-generate-prompt')
     .getByRole('textbox');
   await expect(editor).toBeVisible();
   await editor.fill('A ceramic bird on a desk');
@@ -412,7 +408,7 @@ async function installFixture(
 }
 async function openGenerationSetup(page: Page, summary: string) {
   const setup = page.getByRole('button', { name: /^Generation setup:/ });
-  await expect(setup).toHaveAccessibleName(`Generation setup: ${summary}`);
+  await expect(setup).toContainText(summary);
   await setup.click();
 }
 async function openConfiguration(page: Page, section: string) {
@@ -420,28 +416,13 @@ async function openConfiguration(page: Page, section: string) {
     .getByRole('button', { name: `Configure ${section}`, exact: true })
     .click();
 }
-// #6775: per-model Crun controls live in the setup popover's Output section
-// (Advanced mode), not in the prompt-bar toolbar.
-async function openOutputControls(page: Page) {
-  const setup = page.getByRole('button', { name: /^Generation setup:/ });
-  await setup.click();
-  await openConfiguration(page, 'Output');
-}
-async function closeGenerationSetup(page: Page) {
-  // Two layers: the Output submenu, then the setup popover itself.
-  await page.keyboard.press('Escape');
-  await page.keyboard.press('Escape');
-  await expect(
-    page.getByRole('button', { name: 'Configure Output', exact: true }),
-  ).toHaveCount(0);
-}
 async function expectSubmitTooltip(page: Page, statusName: string) {
   const generate = page
-    .getByTestId('studio-playground-composer-shell')
+    .getByTestId('studio-generate-composer-shell')
     .getByRole('button', { name: 'Generate', exact: true });
   await expect(
     page
-      .getByTestId('studio-playground-composer-shell')
+      .getByTestId('studio-generate-composer-shell')
       .getByText(statusName, { exact: true }),
   ).toHaveCount(0);
   await generate.focus();
@@ -473,9 +454,7 @@ async function expectPlayableOwnedVideo(
   const card = page.getByTestId(`studio-asset-${ownedId}`);
   await expect(card).toBeVisible();
   await card.click();
-  const video = page
-    .getByTestId('studio-playground-inspector')
-    .locator('video');
+  const video = page.getByTestId('studio-generate-inspector').locator('video');
   await expect(video).toHaveAttribute('src', ownedUrl);
   await expect
     .poll(() =>
@@ -513,27 +492,26 @@ for (const key of [klingKey, veoKey]) {
     authenticatedPage: page,
   }) => {
     const fixture = await installFixture(page, key);
-    await openOutputControls(page);
-    const durationControl = page.getByRole('combobox', {
-      name: 'Duration',
-      exact: true,
-    });
-    await expect(durationControl).toHaveCount(1);
+    await expect(
+      fixture.composer.getByRole('combobox', { name: 'Duration', exact: true }),
+    ).toHaveCount(1);
     if (key === klingKey) {
       await selectValue(page, 'Duration', '10s');
-      await page
+      await fixture.composer
         .getByRole('textbox', { name: 'Negative prompt', exact: true })
         .fill(' blur ');
-      await page
+      await fixture.composer
         .getByRole('spinbutton', { name: 'Guidance', exact: true })
         .fill('0');
     } else {
-      await durationControl.click();
+      await fixture.composer
+        .getByRole('combobox', { name: 'Duration', exact: true })
+        .click();
       await expect(page.getByRole('option', { name: /4s/ })).toBeDisabled();
       await expect(page.getByRole('option', { name: /6s/ })).toBeDisabled();
       await page.keyboard.press('Escape');
       await selectValue(page, 'Resolution', '4k');
-      await page
+      await fixture.composer
         .getByRole('checkbox', { name: 'Translate prompt', exact: true })
         .uncheck();
       await expect(
@@ -544,7 +522,6 @@ for (const key of [klingKey, veoKey]) {
       ).toHaveCount(0);
     }
     await selectValue(page, 'Aspect ratio', '9:16');
-    await closeGenerationSetup(page);
     await expectSubmitTooltip(page, '3 credits');
     const generate = fixture.composer.getByRole('button', {
       name: 'Generate',
@@ -603,13 +580,12 @@ test('Kling binds ordered authorized frames and clears them on Veo switch before
   expect(fixture.previews.at(-1)?.crunControls).not.toHaveProperty(
     'aspectRatio',
   );
-  await openGenerationSetup(page, 'Kling 2.5 Turbo Pro · 16:9 · 5s');
-  await openConfiguration(page, 'Output');
   await expect(
-    page.getByText('Aspect ratio comes from the frames', { exact: true }),
+    fixture.composer.getByText('Aspect ratio comes from the frames', {
+      exact: true,
+    }),
   ).toBeVisible();
-  // Close the Output submenu before opening Model's.
-  await page.keyboard.press('Escape');
+  await openGenerationSetup(page, 'Kling 2.5 Turbo Pro');
   await openConfiguration(page, 'Model');
   await page.getByRole('option', { name: /Veo 3.1 Fast/ }).click();
   await page.keyboard.press('Escape');
@@ -678,15 +654,10 @@ test('expired video admission reports the error and never retries automatically'
   await expect(errorToast).toHaveCount(1);
   await expect(errorToast).toBeVisible();
   await expect(page.getByTestId(/^studio-asset-failed-/)).toBeVisible();
-  const errorDialog = page.getByRole('dialog', {
-    name: 'Request failed',
-    exact: true,
-  });
-  await expect(errorDialog).toHaveCount(0);
   await expect(fixture.editor).toHaveText('A ceramic bird on a desk');
   await expect(
     page
-      .getByTestId('studio-playground-results')
+      .getByTestId('studio-generate-results')
       .getByTestId('studio-asset-crun-owned-kling'),
   ).toHaveCount(0);
   expect(fixture.consumes).toHaveLength(1);

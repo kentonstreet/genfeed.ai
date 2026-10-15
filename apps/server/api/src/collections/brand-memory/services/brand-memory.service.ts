@@ -5,13 +5,14 @@ import type {
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { BaseService } from '@api/shared/services/base/base.service';
 import { scopedWhere } from '@api/tenancy/scoped-where';
+import { isCloudDeployment } from '@genfeedai/config';
 import {
   type Prisma,
   type BrandMemory as PrismaBrandMemory,
   toPrismaJson,
 } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 export interface BrandMemoryEntryInput {
   type: string;
@@ -45,6 +46,10 @@ export interface BrandMemoryTypedEntryInput {
   content: string;
   metadata?: Record<string, unknown>;
 }
+
+export type BrandMemoryWriteAdmission = (
+  tx: Prisma.TransactionClient,
+) => Promise<void>;
 
 export interface BrandMemoryDateRange {
   from?: Date;
@@ -254,34 +259,42 @@ export class BrandMemoryService extends BaseService<
     organizationId: string,
     brandId: string,
     entry: BrandMemoryTypedEntryInput,
+    admission?: BrandMemoryWriteAdmission,
   ): Promise<PrismaBrandMemory> {
-    const existing = await this.prisma.brandMemory.findFirst({
-      orderBy: { updatedAt: 'desc' },
-      where: scopedWhere(organizationId, { brandId, type: entry.type }),
-    });
-
-    const data = {
-      content: entry.content,
-      date: new Date(),
-      ...(entry.metadata ? { metadata: toPrismaJson(entry.metadata) } : {}),
-    };
-
-    if (existing) {
-      return this.prisma.brandMemory.update({
-        data,
-        where: scopedWhere(organizationId, { id: existing.id }),
-      });
+    if (!admission && isCloudDeployment()) {
+      throw new ForbiddenException('Brand access denied');
     }
-
-    return this.prisma.brandMemory.create({
-      data: {
-        ...data,
-        brandId,
-        isDeleted: false,
-        organizationId,
-        type: entry.type,
-      },
-    });
+    const write = async (tx: Prisma.TransactionClient) => {
+      await admission?.(tx);
+      const existing = await tx.brandMemory.findFirst({
+        orderBy: { updatedAt: 'desc' },
+        where: scopedWhere(organizationId, { brandId, type: entry.type }),
+      });
+      const data = {
+        content: entry.content,
+        date: new Date(),
+        ...(entry.metadata ? { metadata: toPrismaJson(entry.metadata) } : {}),
+      };
+      // The lookup may await while membership, assignment or key access changes.
+      await admission?.(tx);
+      if (existing) {
+        return tx.brandMemory.update({
+          data,
+          where: scopedWhere(organizationId, { id: existing.id }),
+        });
+      }
+      return tx.brandMemory.create({
+        data: {
+          ...data,
+          brandId,
+          isDeleted: false,
+          organizationId,
+          type: entry.type,
+        },
+      });
+    };
+    // Preserve the original self-hosted path; Cloud admission and writes share a transaction.
+    return admission ? this.prisma.$transaction(write) : write(this.prisma);
   }
 
   /** Typed rows whose `type` starts with `typePrefix`, newest first. */
@@ -358,6 +371,7 @@ export class BrandMemoryService extends BaseService<
     const now = new Date();
     const fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
+    // Fetch last 30 days of memory rows
     const rows = await this.delegate.findMany({
       where: scopedWhere(organizationId, {
         brandId,
@@ -365,6 +379,7 @@ export class BrandMemoryService extends BaseService<
       }),
     });
 
+    // Compute top performing formats in-memory
     const formatMap = new Map<
       string,
       { totalEngagement: number; count: number }

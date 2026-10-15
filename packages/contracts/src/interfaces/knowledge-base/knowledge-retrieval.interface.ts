@@ -5,7 +5,6 @@ import type { KnowledgeRetrievalCitation } from './knowledge-record.interface';
 export interface BrandContentMemoryRetrievalParams {
   userId: string;
   isApiKey?: boolean;
-  apiKeyId?: string;
   scopes?: string[];
   brandId: string;
   organizationId: string;

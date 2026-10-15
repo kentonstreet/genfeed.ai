@@ -4,6 +4,7 @@ import {
   hasAgentFirstOnboarding,
   isCloudDeployment,
 } from '@genfeedai/config/deployment';
+import { hasOrganizationBillingHint } from '@genfeedai/config/license';
 import { useAccessState } from '@genfeedai/contexts/providers/access-state/access-state.provider';
 import { useBrand } from '@genfeedai/contexts/user/brand-context/brand-context';
 import {
@@ -33,6 +34,7 @@ export function useOnboardingRouteAccess(pathname: string) {
   const { currentUser, isLoading: isUserLoading } = useCurrentUser();
   const {
     accessState,
+    hasPaygCredits,
     isLoading: isAccessStateLoading,
     isSubscribed,
     isSuperAdmin,
@@ -48,6 +50,7 @@ export function useOnboardingRouteAccess(pathname: string) {
     accessState?.memberRole !== MemberRole.ADMIN;
   const brand = selectedBrand ?? brands[0];
   const isOnboardingRoute = pathname.startsWith('/onboarding');
+  const isBillingEnabled = hasOrganizationBillingHint();
 
   const redirectTarget = useMemo(() => {
     if (!effectiveIsAuthLoaded) {
@@ -110,10 +113,10 @@ export function useOnboardingRouteAccess(pathname: string) {
       return `/onboarding/${resumeStep}`;
     }
 
-    // Funnel: signup -> onboarding (above) -> the app. Running out of credits
-    // never locks routes: Library, Brand Kit and settings stay readable so the
-    // org can see what it made. Credit-spending actions are refused by the API
-    // and answered with the credits prompt (ModalEnum.CREDITS_REQUIRED).
+    if (isBillingEnabled && !isSuperAdmin && !isSubscribed && !hasPaygCredits) {
+      return '/onboarding/summary';
+    }
+
     return null;
   }, [
     accessState,
@@ -123,7 +126,9 @@ export function useOnboardingRouteAccess(pathname: string) {
     currentUser,
     effectiveIsAuthLoaded,
     effectiveIsSignedIn,
+    hasPaygCredits,
     isAccessStateLoading,
+    isBillingEnabled,
     isOnboardingRoute,
     isSubscribed,
     isSuperAdmin,

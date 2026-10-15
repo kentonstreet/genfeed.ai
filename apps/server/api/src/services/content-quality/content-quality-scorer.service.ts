@@ -26,6 +26,8 @@ import { readIngredientMediaUrl } from '@libs/media/media-url.util';
 import { Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 
+// ─── Interfaces ──────────────────────────────────────────────────────
+
 export interface ContentQualityResult {
   score: number; // 1-10
   category: 'excellent' | 'good' | 'needs_work' | 'poor';
@@ -39,6 +41,8 @@ export interface QualityScoreResult {
   feedback: string[];
   status: QualityStatus;
 }
+
+// ─── Service ─────────────────────────────────────────────────────────
 
 @Injectable()
 export class ContentQualityScorerService {

@@ -1,3 +1,4 @@
+import { admitWorkflowDispatch } from '@api/authorization/brand-access/workflow-actor.util';
 import { GenerateContentDto } from '@api/collections/content-intelligence/dto/generate-content.dto';
 import { ContentGeneratorService } from '@api/collections/content-intelligence/services/content-generator.service';
 import { LlmDispatcherService } from '@api/services/integrations/llm/llm-dispatcher.service';
@@ -9,7 +10,7 @@ import type {
 import { ContentIntelligencePlatform } from '@genfeedai/contracts';
 import { LLM_DEFAULTS } from '@genfeedai/contracts/constants';
 import { LoggerService } from '@libs/logger/logger.service';
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 
 @Injectable()
 export class ContentWritingHandler implements SkillHandler {
@@ -22,6 +23,7 @@ export class ContentWritingHandler implements SkillHandler {
   async execute(
     context: SkillExecutionContext,
     params: Record<string, unknown>,
+    admission?: () => Promise<void>,
   ): Promise<GeneratedContent> {
     const topic = typeof params.topic === 'string' ? params.topic : '';
     const platform =
@@ -41,6 +43,7 @@ export class ContentWritingHandler implements SkillHandler {
         typeof params.variationsCount === 'number' ? params.variationsCount : 1,
     };
 
+    await admitWorkflowDispatch(admission);
     const generated = await this.contentGeneratorService.generateContent(
       context.organizationId,
       generationDto,
@@ -50,6 +53,7 @@ export class ContentWritingHandler implements SkillHandler {
 
     let refinedContent = firstDraft.content;
 
+    await admitWorkflowDispatch(admission);
     try {
       const completion = await this.llmDispatcherService.chatCompletion(
         {
@@ -78,6 +82,7 @@ export class ContentWritingHandler implements SkillHandler {
         refinedContent = rewritten;
       }
     } catch (error: unknown) {
+      if (error instanceof ForbiddenException) throw error;
       this.loggerService.warn(
         'content-writing refinement failed, using base draft',
         {

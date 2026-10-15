@@ -1,3 +1,4 @@
+import { BrandAccessModule } from '@api/authorization/brand-access/brand-access.module';
 import { ApiKeysModule } from '@api/collections/api-keys/api-keys.module';
 import { BrandsCoreModule } from '@api/collections/brands/brands-core.module';
 import { CredentialsCoreModule } from '@api/collections/credentials/credentials-core.module';
@@ -64,6 +65,7 @@ import { Module } from '@nestjs/common';
     TrendReferenceCorpusService,
   ],
   imports: [
+    BrandAccessModule,
     PlatformSettingsModule,
     ApifyModule,
     ApiKeysModule,

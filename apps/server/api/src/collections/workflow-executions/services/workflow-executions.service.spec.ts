@@ -487,7 +487,10 @@ describe('WorkflowExecutionsService', () => {
     ]);
 
     await expect(
-      service.getExecutionStats('workflow-1', 'org-1'),
+      service.getExecutionStats('workflow-1', 'org-1', {
+        organizationId: 'org-1',
+        isDeleted: false,
+      }),
     ).resolves.toEqual({
       avgDurationMs: 2000,
       completed: 2,
@@ -496,10 +499,14 @@ describe('WorkflowExecutionsService', () => {
     });
     expect(prisma.workflowExecution.findMany).toHaveBeenCalledWith({
       select: { durationMs: true, status: true },
-      where: scopedWhere(
-        'org-1',
-        buildCustomerExecutionWhere('org-1', { workflowId: 'workflow-1' }),
-      ),
+      where: scopedWhere('org-1', {
+        organizationId: 'org-1',
+        isDeleted: false,
+        AND: [
+          buildCustomerExecutionWhere('org-1', { workflowId: 'workflow-1' }),
+          { organizationId: 'org-1', isDeleted: false },
+        ],
+      }),
     });
   });
 
@@ -1134,6 +1141,8 @@ describe('WorkflowExecutionsService', () => {
       'lifecycle-email.enqueue-delivery',
       'lifecycle-email.sweep',
       'lifecycle-email.organization',
+      'email-product-signals.reconcile',
+      'email-product-signals.organization',
     ].flatMap((canonicalId) => [
       {
         canonicalId,

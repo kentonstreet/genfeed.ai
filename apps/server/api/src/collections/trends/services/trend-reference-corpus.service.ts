@@ -1,3 +1,9 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import type {
   TrendCorpusFreshnessResult,
   TrendPromptReferencePackResult,
@@ -25,6 +31,7 @@ import { normalizeTrendSourceClassification } from '@api/collections/trends/util
 import { normalizeTrendSourceUrl } from '@api/collections/trends/utils/trend-source-url.util';
 import { scopedWhere } from '@api/index';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import { Prisma } from '@genfeedai/prisma';
 import { LoggerService } from '@libs/logger/logger.service';
 import { BadRequestException, Injectable } from '@nestjs/common';
@@ -70,6 +77,7 @@ export class TrendReferenceCorpusService {
     private readonly loggerService: LoggerService,
     private readonly trendCorpusFreshnessService: TrendCorpusFreshnessService,
     private readonly trendReferenceSyncService: TrendReferenceSyncService,
+    private readonly brandAccess: BrandAccessService,
   ) {}
 
   async syncTrendReferences(
@@ -124,6 +132,7 @@ export class TrendReferenceCorpusService {
       }
     }
 
+    // Find existing lineage record
     const existing = await this.prisma.trendRemixLineage.findFirst({
       where: scopedWhere(payload.organizationId, {
         postId: payload.postId,
@@ -223,11 +232,40 @@ export class TrendReferenceCorpusService {
     }));
   }
 
+  private async admitPrivateRead(
+    organizationId: string | undefined,
+    brandId: string | undefined,
+    actor?: WorkflowInitiatingActor,
+  ) {
+    if (!organizationId) {
+      if (brandId) denyWorkflowActor();
+      return undefined;
+    }
+    if (!actor) {
+      if (isCloudDeployment()) denyWorkflowActor();
+      return undefined;
+    }
+    const fresh = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      actor,
+      organizationId,
+    );
+    if (brandId) await this.brandAccess.assert(fresh, brandId);
+    return this.brandAccess.resolve(fresh);
+  }
+
   async getReferenceCorpus(
     organizationId: string | undefined,
     brandId: string | undefined,
     options: ReferenceQueryOptions = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendSourceReferenceResult> {
+    const admission = await this.admitPrivateRead(
+      organizationId,
+      brandId,
+      actor,
+    );
     const limit = this.normalizeLimit(
       options.limit,
       DEFAULT_REFERENCE_CORPUS_LIMIT,
@@ -236,12 +274,17 @@ export class TrendReferenceCorpusService {
     let sourceReferenceIds: string[] | undefined;
     if (options.trendId) {
       // Verify the trend is visible to the caller before fetching its references.
-      // Trends with a matching organizationId are org-owned; if organizationId is
-      // undefined the caller is in an unauthenticated/internal path (allow all).
+      // Organization-only trends remain visible within the tenant; brand-owned
+      // rows require admission, and actorless lookups are limited to global rows.
       if (organizationId) {
         const trend = await this.prisma.trend.findFirst({
           select: { id: true },
-          where: scopedWhere(organizationId, { id: options.trendId }),
+          where: scopedWhere(organizationId, {
+            id: options.trendId,
+            ...(admission
+              ? { OR: [{ brandId: null }, { brand: admission.where }] }
+              : {}),
+          }),
         });
 
         if (!trend) {
@@ -249,6 +292,16 @@ export class TrendReferenceCorpusService {
           // org's trend.
           return { hasMore: false, items: [], totalReferences: 0 };
         }
+      } else {
+        const trend = await this.prisma.trend.findFirst({
+          where: {
+            id: options.trendId,
+            organizationId: null,
+            isDeleted: false,
+          },
+          select: { id: true },
+        });
+        if (!trend) return { hasMore: false, items: [], totalReferences: 0 };
       }
 
       const links = await this.prisma.trendSourceReferenceLink.findMany({
@@ -309,6 +362,7 @@ export class TrendReferenceCorpusService {
       filteredDocs.map((doc) => doc.id),
       organizationId,
       brandId,
+      actor,
     );
 
     return {
@@ -329,8 +383,10 @@ export class TrendReferenceCorpusService {
     organizationId: string | undefined,
     brandId: string | undefined,
     options: PromptReferencePackQueryOptions = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendPromptReferencePackResult> {
     const generatedAt = new Date();
+    await this.admitPrivateRead(organizationId, brandId, actor);
     const limit = this.normalizeLimit(
       options.limit,
       DEFAULT_PROMPT_REFERENCE_PACK_LIMIT,
@@ -384,6 +440,7 @@ export class TrendReferenceCorpusService {
       selectedReferences.map((reference) => reference.id),
       organizationId,
       brandId,
+      actor,
     );
     for (const reference of selectedReferences) {
       reference.remixCount = remixCounts.get(reference.id) ?? 0;
@@ -418,7 +475,9 @@ export class TrendReferenceCorpusService {
       limit?: number;
       platform?: string;
     } = {},
+    actor?: WorkflowInitiatingActor,
   ): Promise<TrendSourceAccountResult> {
+    await this.admitPrivateRead(organizationId, brandId, actor);
     const limit = this.normalizeLimit(
       options.limit,
       DEFAULT_REFERENCE_ACCOUNT_LIMIT,
@@ -449,6 +508,7 @@ export class TrendReferenceCorpusService {
       organizationId,
       brandId,
       options.platform,
+      actor,
     );
 
     const accounts: TrendSourceAccountSummary[] = (
@@ -636,11 +696,13 @@ export class TrendReferenceCorpusService {
     sourceReferenceIds: string[],
     organizationId?: string,
     brandId?: string,
+    actor?: WorkflowInitiatingActor,
   ): Promise<Map<string, number>> {
     if (sourceReferenceIds.length === 0 || !organizationId || !brandId) {
       return new Map();
     }
 
+    await this.admitPrivateRead(organizationId, brandId, actor);
     // sql-risk-audit: ignore raw-sql-review -- #629 EXPLAIN harness covers remixCountsForPage; refs.B ANY is capped by the current reference page and lineage org/brand/isDeleted index constrains tenant rows.
     const rows = await this.prisma.$queryRaw<
       Array<{
@@ -674,11 +736,13 @@ export class TrendReferenceCorpusService {
     organizationId?: string,
     brandId?: string,
     platform?: string,
+    actor?: WorkflowInitiatingActor,
   ): Promise<Map<string, number>> {
     if (!organizationId || !brandId) {
       return new Map();
     }
 
+    await this.admitPrivateRead(organizationId, brandId, actor);
     const platformFilter = platform
       ? Prisma.sql`AND source_ref."platform" = ${platform}`
       : Prisma.empty;

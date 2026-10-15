@@ -2,6 +2,7 @@ import { formatAgentFailureMessage } from '@genfeedai/agent/server';
 import { IntegrationPlatform } from '@genfeedai/contracts';
 import {
   BaseBotManager,
+  BotAccountLinkClient,
   type BotHttpAdapter,
   BotInternalApiClient,
   extractWorkflowExecutionSnapshot,
@@ -172,6 +173,29 @@ export class SlackBotManager
       handleCancelCommand: (userId, respond) =>
         this.handleCancelCommand(userId, respond),
       handleEdit: (userId, respond) => this.handleEdit(userId, respond),
+      handleLink: async (event, reply) => {
+        try {
+          const client = new BotAccountLinkClient({
+            apiUrl: this.configService.API_URL,
+            apiKey: this.configService.API_KEY,
+            installation: {
+              id: integration.id,
+              organizationId: integration.orgId,
+              platform: 'SLACK',
+              botToken: integration.botToken,
+            },
+            http: makeBotHttpAdapter(this.httpService),
+          });
+          const challenge = await client.beginChallenge(event);
+          await reply(
+            `Confirm your Genfeed account: ${challenge.confirmationUrl}`,
+          );
+        } catch {
+          await reply(
+            'Account linking is unavailable. Send a new private link request.',
+          );
+        }
+      },
       handleRun: (userId, targetOrgId, respond) =>
         this.handleRun(userId, targetOrgId, respond),
       handleSettingsCommand: (userId, respond) =>

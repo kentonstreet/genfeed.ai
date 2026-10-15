@@ -2,6 +2,7 @@ import { formatAgentFailureMessage } from '@genfeedai/agent/server';
 import { IntegrationPlatform, ParseMode } from '@genfeedai/contracts';
 import {
   BaseBotManager,
+  BotAccountLinkClient,
   type BotHttpAdapter,
   BotInternalApiClient,
   extractWorkflowExecutionSnapshot,
@@ -210,6 +211,50 @@ export class TelegramBotManager
           '/cancel - Cancel current workflow',
         { parse_mode: ParseMode.MARKDOWN },
       );
+    });
+
+    bot.command('link', async (ctx) => {
+      if (ctx.chat?.type !== 'private') {
+        await ctx.reply(
+          'Start account linking in a private conversation with this bot.',
+        );
+        return;
+      }
+      if (!ctx.from || !ctx.message) {
+        await ctx.reply(
+          'Account linking is unavailable. Send a new private link request.',
+        );
+        return;
+      }
+      try {
+        const linkClient = new BotAccountLinkClient({
+          apiUrl: this.configService.API_URL,
+          apiKey: this.configService.API_KEY,
+          installation: {
+            id: integration.id,
+            organizationId: integration.orgId,
+            platform: 'TELEGRAM',
+            botToken: integration.botToken,
+          },
+          http: makeBotHttpAdapter(this.httpService),
+        });
+        const challenge = await linkClient.beginChallenge({
+          integrationId: integration.id,
+          organizationId: integration.orgId,
+          platform: 'TELEGRAM',
+          remoteUserId: String(ctx.from.id),
+          channelId: String(ctx.chat.id),
+          sourceEventId: String(ctx.message.message_id),
+          isPrivate: true,
+        });
+        await ctx.reply(
+          `Confirm your Genfeed account: ${challenge.confirmationUrl}`,
+        );
+      } catch {
+        await ctx.reply(
+          'Account linking is unavailable. Send a new private link request.',
+        );
+      }
     });
 
     bot.command('workflows', async (ctx) => {

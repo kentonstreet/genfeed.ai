@@ -1,3 +1,10 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import {
+  captureWorkflowActor,
+  denyWorkflowActor,
+  refreshWorkflowActor,
+  type WorkflowInitiatingActor,
+} from '@api/authorization/brand-access/workflow-actor.util';
 import { BrandsService } from '@api/collections/brands/services/brands.service';
 import { ReviewablePostsService } from '@api/collections/posts/services/reviewable-posts.service';
 import { SkillsService } from '@api/collections/skills/services/skills.service';
@@ -7,6 +14,8 @@ import type {
   ContentSignal,
 } from '@api/services/content-gateway/interfaces/content-gateway.interfaces';
 import { SkillWorkflowService } from '@api/services/skill-executor/skill-executor.service';
+import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
+import { isCloudDeployment } from '@genfeedai/config';
 import { LoggerService } from '@libs/logger/logger.service';
 import { Injectable } from '@nestjs/common';
 
@@ -18,9 +27,17 @@ export class ContentGatewayService {
     private readonly skillWorkflowService: SkillWorkflowService,
     private readonly reviewablePostsService: ReviewablePostsService,
     private readonly logger: LoggerService,
+    private readonly brandAccess: BrandAccessService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async routeSignal(signal: ContentSignal): Promise<ContentGatewayResult> {
+    const actor = await this.admit(
+      signal.organizationId,
+      signal.brandId,
+      signal.userId,
+      signal.initiatingActor,
+    );
     await this.assertBrand(signal.organizationId, signal.brandId);
 
     const requestedSkillSlugs = this.resolveSkillSlugs(signal.payload);
@@ -44,10 +61,17 @@ export class ContentGatewayService {
         },
         signal.payload,
         signal.userId,
+        actor,
       );
 
       executions.push(execution.executionId);
 
+      await this.admit(
+        signal.organizationId,
+        signal.brandId,
+        signal.userId,
+        actor,
+      );
       const createdPosts =
         await this.reviewablePostsService.createFromSkillExecution({
           brandId: signal.brandId,
@@ -79,7 +103,14 @@ export class ContentGatewayService {
     skillSlug: string,
     params?: Record<string, unknown>,
     userId?: string,
+    initiatingActor?: WorkflowInitiatingActor,
   ): Promise<ContentGatewayResult> {
+    const actor = await this.admit(
+      organizationId,
+      brandId,
+      userId,
+      initiatingActor,
+    );
     await this.assertBrand(organizationId, brandId);
 
     const execution = await this.skillWorkflowService.execute(
@@ -92,8 +123,10 @@ export class ContentGatewayService {
       },
       params,
       userId,
+      actor,
     );
 
+    await this.admit(organizationId, brandId, userId, actor);
     const posts = await this.reviewablePostsService.createFromSkillExecution({
       brandId,
       campaignId: this.readCampaignId(params),
@@ -108,6 +141,28 @@ export class ContentGatewayService {
       executions: [execution.executionId],
       posts,
     };
+  }
+
+  private async admit(
+    organizationId: string,
+    brandId: string,
+    userId: string | undefined,
+    actor: WorkflowInitiatingActor | undefined,
+  ): Promise<WorkflowInitiatingActor | undefined> {
+    if (!actor) {
+      if (isCloudDeployment()) denyWorkflowActor();
+      return undefined;
+    }
+    if (actor.organizationId !== organizationId || actor.userId !== userId)
+      denyWorkflowActor();
+    const fresh = await refreshWorkflowActor(
+      this.prisma,
+      this.brandAccess,
+      captureWorkflowActor(actor),
+      organizationId,
+    );
+    await this.brandAccess.assert(fresh, brandId);
+    return fresh;
   }
 
   private readCampaignId(

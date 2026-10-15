@@ -7,7 +7,6 @@ import {
   type ToolExecutionContext,
 } from '@api/services/agent-orchestrator/tools/agent-tool-executor.service';
 import { AgentToolMutationAuthorizationService } from '@api/services/agent-orchestrator/tools/agent-tool-mutation-authorization.service';
-import { resolveToolSchedulePrincipal } from '@api/services/agent-orchestrator/utils/agent-initiating-principal.util';
 import { UNSUPPORTED_APPROVAL_ERROR } from '@genfeedai/actions';
 import { buildLogicalWriteKey } from '@genfeedai/actions/server';
 import { ApiKeyScope } from '@genfeedai/contracts';
@@ -91,14 +90,6 @@ describe('AgentToolExecutorService mutation policy', () => {
   };
   const xActionsHandler = {
     handles: vi.fn(() => false),
-    execute: vi.fn(),
-  };
-  const threadHandler = {
-    handles: vi.fn((toolName: string) =>
-      ['draft_thread', 'add_thread_posts', 'add_first_comment'].includes(
-        toolName,
-      ),
-    ),
     execute: vi.fn(),
   };
 
@@ -187,7 +178,6 @@ describe('AgentToolExecutorService mutation policy', () => {
       brandAccessService: brandAccessFixture(),
       workObjects: { assertReady: vi.fn().mockResolvedValue(undefined) },
       generationSettingsHandler: { handles: vi.fn().mockReturnValue(false) },
-      threadHandler,
     });
     service.onModuleInit();
   });
@@ -218,7 +208,6 @@ describe('AgentToolExecutorService mutation policy', () => {
         .success,
     ).toBe(true);
     member.brands = [];
-    findMember.mockClear();
     authorize.mockClear();
     publishHandler.createPost.mockClear();
     const denied = await service.executeTool(
@@ -231,7 +220,7 @@ describe('AgentToolExecutorService mutation policy', () => {
     expect(authorize).not.toHaveBeenCalled();
     expect(mcpApprovals.claimExecution).not.toHaveBeenCalled();
     expect(publishHandler.createPost).not.toHaveBeenCalled();
-    expect(findMember).toHaveBeenCalledOnce();
+    expect(findMember).toHaveBeenCalledTimes(2);
     authorize.mockRestore();
   });
 
@@ -253,11 +242,6 @@ describe('AgentToolExecutorService mutation policy', () => {
     );
     Object.assign(service, {
       brandAccessService: new BrandAccessService({
-        apiKey: {
-          findFirst: vi.fn().mockResolvedValue({
-            scopes: ['brands:read', ApiKeyScope.POSTS_DRAFT],
-          }),
-        },
         member: { findFirst: findMember },
         brand: { findFirst: brandLookup },
       } as never),
@@ -269,7 +253,6 @@ describe('AgentToolExecutorService mutation policy', () => {
         brandId: testId('brand'),
         apiKeyContext: {
           isApiKey: true,
-          apiKeyId: testId('key'),
           scopes: ['brands:read', ApiKeyScope.POSTS_DRAFT],
         },
       }),
@@ -406,107 +389,6 @@ describe('AgentToolExecutorService mutation policy', () => {
     authorize.mockRestore();
   });
 
-  it.each([
-    ['add_thread_posts', { postId: 'post-1', posts: ['One', 'Two'] }],
-    ['add_first_comment', { postId: 'post-1', comment: 'Link below' }],
-  ])(
-    'queues %s for approval and saves nothing until it is approved',
-    async (toolName, params) => {
-      const result = await service.executeTool(
-        toolName as never,
-        params,
-        context({ hostSupportsApproval: true, threadId: testId('thread') }),
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.requiresConfirmation).toBe(true);
-      expect(result.approvalStatus).toBe('pending');
-      expect(mcpApprovals.createPending).toHaveBeenCalledTimes(1);
-      expect(threadHandler.execute).not.toHaveBeenCalled();
-    },
-  );
-
-  it('rejects add_thread_posts on a host with no approval mechanism', async () => {
-    const result = await service.executeTool(
-      'add_thread_posts',
-      { postId: 'post-1', posts: ['One'] },
-      context({ hostSupportsApproval: false }),
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.error).toBe(UNSUPPORTED_APPROVAL_ERROR);
-    expect(threadHandler.execute).not.toHaveBeenCalled();
-  });
-
-  it('runs draft_thread without an approval record because it adds nothing to the thread', async () => {
-    threadHandler.execute.mockResolvedValue({ success: true, creditsUsed: 0 });
-    const result = await service.executeTool(
-      'draft_thread',
-      { postId: 'post-1', count: 3 },
-      context({ hostSupportsApproval: true, threadId: testId('thread') }),
-    );
-
-    expect(result.success).toBe(true);
-    expect(threadHandler.execute).toHaveBeenCalledWith(
-      'draft_thread',
-      { postId: 'post-1', count: 3 },
-      expect.objectContaining({ organizationId: testId('org') }),
-    );
-    expect(mcpApprovals.createPending).not.toHaveBeenCalled();
-  });
-
-  it('executes add_thread_posts once its exact approval is redeemed', async () => {
-    const params = { postId: 'post-1', posts: ['One', 'Two'] };
-    mcpApprovals.findOwned.mockResolvedValue({
-      id: 'apr-1',
-      arguments: params,
-      isDeleted: false,
-      status: 'APPROVED',
-      userId: testId('user'),
-      toolName: 'add_thread_posts',
-      idempotencyKey: buildLogicalWriteKey({
-        arguments: params,
-        organizationId: testId('org'),
-        userId: testId('user'),
-        toolName: 'add_thread_posts',
-      }),
-    });
-    threadHandler.execute.mockResolvedValue({ success: true, creditsUsed: 0 });
-
-    const result = await service.executeTool(
-      'add_thread_posts',
-      params,
-      context({ approvedApprovalId: 'apr-1' }),
-    );
-
-    expect(result.success).toBe(true);
-    expect(threadHandler.execute).toHaveBeenCalledTimes(1);
-  });
-
-  it('replays a stored partial failure instead of saving the same replies again', async () => {
-    mcpApprovals.findActiveByIdempotencyKey.mockResolvedValue({
-      id: 'apr-1',
-      status: 'APPROVED',
-      toolName: 'add_thread_posts',
-      result: {
-        creditsUsed: 0,
-        data: { remainingPosts: ['Two'] },
-        error: 'Saved 1 of 2 replies before a save failed.',
-        success: false,
-      },
-    });
-
-    const result = await service.executeTool(
-      'add_thread_posts',
-      { postId: 'post-1', posts: ['One', 'Two'] },
-      context({ hostSupportsApproval: true }),
-    );
-
-    expect(result.success).toBe(false);
-    expect(result.data).toEqual({ remainingPosts: ['Two'] });
-    expect(threadHandler.execute).not.toHaveBeenCalled();
-  });
-
   it('rejects approval-required tools on a host with no approval mechanism', async () => {
     const result = await service.executeTool(
       'create_post',
@@ -608,16 +490,10 @@ describe('AgentToolExecutorService mutation policy', () => {
       'create_post',
       { content: 'hello' },
       {
-        generationContext: {
-          attachmentUrls: undefined,
-          generationModelOverride: undefined,
-          generationSettings: undefined,
-        },
-        threadId: testId('thread'),
+        threadId: expect.any(String),
         scope: expect.objectContaining({
           brandId: 'brand-1',
           contextVersion: 1,
-          threadId: testId('thread'),
         }),
       },
     );
@@ -913,105 +789,6 @@ describe('AgentToolExecutorService mutation policy', () => {
         });
       },
     );
-
-    describe('schedule authority of a reviewer redemption (#6689)', () => {
-      const principalOf = (userId: string) => ({
-        isApiKey: false,
-        organizationId: testId('org'),
-        scopes: [] as string[],
-        userId,
-      });
-      const dispatchedContext = () =>
-        publishHandler.createPost.mock.calls[0][1] as ToolExecutionContext;
-
-      it('binds schedules to the approving admin, not the requester the tool runs as', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        const result = await redeem({
-          initiatingPrincipal: principalOf(testId('org-admin')),
-        });
-        expect(result.success).toBe(true);
-        expect(dispatchedContext().userId).toBe(testId('requester'));
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toEqual(
-          principalOf(testId('org-admin')),
-        );
-        expect(resolveToolSchedulePrincipal(dispatchedContext())).toEqual(
-          principalOf(testId('org-admin')),
-        );
-      });
-
-      it('binds a super admin reviewer only while they are an active member', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        const result = await redeem({
-          approvalReviewerAuthorized: true,
-          initiatingPrincipal: principalOf(testId('member')),
-          userId: testId('member'),
-        });
-        expect(result.success).toBe(true);
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toEqual(
-          principalOf(testId('member')),
-        );
-      });
-
-      it('leaves schedules unbound when a super admin who is not a member redeems', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        const result = await redeem({
-          approvalReviewerAuthorized: true,
-          initiatingPrincipal: principalOf(testId('outsider')),
-          userId: testId('outsider'),
-        });
-        expect(result.success).toBe(true);
-        expect(dispatchedContext().userId).toBe(testId('requester'));
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toBeUndefined();
-        expect(
-          resolveToolSchedulePrincipal(dispatchedContext()),
-        ).toBeUndefined();
-      });
-
-      it('never falls back to the requester when the reviewer has no captured principal', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        await redeem({});
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toBeUndefined();
-        expect(
-          resolveToolSchedulePrincipal(dispatchedContext()),
-        ).toBeUndefined();
-      });
-
-      it('ignores a principal captured for somebody other than the approving reviewer', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        await redeem({
-          initiatingPrincipal: principalOf(testId('requester')),
-        });
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toBeUndefined();
-        expect(
-          resolveToolSchedulePrincipal(dispatchedContext()),
-        ).toBeUndefined();
-      });
-
-      it('keeps the requester as the actor when they redeem their own approval', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        await redeem({
-          initiatingPrincipal: principalOf(testId('requester')),
-          userId: testId('requester'),
-        });
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toBeUndefined();
-        expect(resolveToolSchedulePrincipal(dispatchedContext())).toEqual(
-          principalOf(testId('requester')),
-        );
-      });
-
-      it('discards a schedule authority injected by the caller', async () => {
-        mcpApprovals.findOwned.mockResolvedValue(queued());
-        await redeem({
-          initiatingPrincipal: principalOf(testId('org-admin')),
-          scheduleAuthorityPrincipal: principalOf(testId('attacker')),
-          userId: testId('requester'),
-        });
-        expect(dispatchedContext().scheduleAuthorityPrincipal).toBeUndefined();
-        expect(JSON.stringify(dispatchedContext())).not.toContain(
-          testId('attacker'),
-        );
-      });
-    });
 
     it('lets the requesting member redeem their own approval as themselves', async () => {
       mcpApprovals.findOwned.mockResolvedValue(queued());

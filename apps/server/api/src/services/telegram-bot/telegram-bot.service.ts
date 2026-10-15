@@ -1,3 +1,5 @@
+import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
+import { isCloudDeployment } from '@genfeedai/config';
 /**
  * Telegram Bot Service
  *
@@ -57,6 +59,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     private readonly loggerService: LoggerService,
     private readonly systemWorkflowRunner: SystemWorkflowRunnerService,
     private readonly prisma: PrismaService,
+    private readonly brandAccess: BrandAccessService,
     @Optional() private readonly apiKeysService?: ApiKeysService,
     @Optional() private readonly filesClientService?: FilesClientService,
   ) {
@@ -65,6 +68,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       this.loggerService,
       this.systemWorkflowRunner,
       this.prisma,
+      this.brandAccess,
       (chatId) => this.authContexts.resolveLiveAuthContext(chatId),
     );
     this.conversation = new TelegramConversationService(this.runner);
@@ -94,6 +98,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Parse allowed user IDs
     const allowedIds = this.configService.get(
       TELEGRAM_BOT_ENV.ALLOWED_USER_IDS,
     );
@@ -118,7 +123,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const defaultUserId = this.configService.get(
       TELEGRAM_BOT_ENV.DEFAULT_USER_ID,
     );
-    if (defaultOrganizationId && defaultUserId) {
+    if (defaultOrganizationId && defaultUserId && !isCloudDeployment()) {
       this.authContexts.setDefaultAuthContext({
         authType: 'better_auth',
         organizationId: String(defaultOrganizationId),

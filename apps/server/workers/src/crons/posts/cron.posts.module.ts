@@ -13,7 +13,6 @@ import {
   PublishApprovalsService,
   SERVER_TOKENS,
 } from '@api/index';
-import { BrandedPublishHoldService } from '@api/services/branded-text-generation/branded-publish-hold.service';
 import { PublishersModule } from '@api/services/integrations/publishers/publishers.module';
 import { MediaReadinessModule } from '@api/services/media-readiness/media-readiness.module';
 import { MediaReadinessService } from '@api/services/media-readiness/media-readiness.service';
@@ -120,7 +119,6 @@ import { ThreadCommentDeliveryService } from '@workers/services/thread-comment-d
           artifactReferenceService,
           logger,
           mediaReadinessService,
-          new BrandedPublishHoldService(prisma),
         ),
     },
   ],
