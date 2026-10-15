@@ -1,10 +1,7 @@
 import {
-  parseStoryboardLegacyConfig,
   type StoryboardLegacyConfig,
   type StoryboardStoredRunConfig,
-  storyboardHasUnresolvedAssemblyJobs,
   storyboardLegacyConfigSchema,
-  storyboardLegacyStages,
   storyboardStoredRunConfigSchema,
 } from '@api/collections/content-runs/services/storyboard-imported-run-state.schema';
 import type { StoryboardMigrationIssue } from '@genfeedai/contracts/api-types/contracts/storyboard-migration.contract';
@@ -12,7 +9,6 @@ import {
   type StoryboardPlan,
   storyboardImportedPlanSchema,
 } from '@genfeedai/contracts/api-types/contracts/storyboard-plan.contract';
-import { storyboardIdSchema } from '@genfeedai/contracts/api-types/contracts/storyboard-source.contract';
 
 export { storyboardConfigHash } from '@api/collections/content-runs/services/storyboard-config-hash';
 
@@ -69,9 +65,6 @@ export function storyboardLegacySceneInputHash(
         : undefined) ??
       config.draft.identity,
     references: config.draft.references,
-    stageReferenceAssetIds: scene.id
-      ? (config.scenePipeline?.scenes[scene.id]?.referenceAssetIds ?? [])
-      : [],
   });
 }
 
@@ -121,7 +114,7 @@ export function convertStoryboardRun(
     issues.push({ code: 'LEGACY_PLAN_UNREPRESENTABLE', path: 'config' });
     return unchanged('unsupported');
   }
-  const legacy = parseStoryboardLegacyConfig(record.config);
+  const legacy = parsed.data;
   const original = record.config as StoryboardLegacyConfig;
   const scenes = [...(legacy.concept?.storyboard ?? [])].sort(
     (a, b) => a.ordinal - b.ordinal,
@@ -129,32 +122,9 @@ export function convertStoryboardRun(
   const pipeline = legacy.scenePipeline;
   const addIssue = (code: StoryboardMigrationIssue['code'], path: string) =>
     issues.push({ code, path });
-  const stageEntries = storyboardLegacyStages(pipeline);
-  const recordedStages = stageEntries.map(({ stage }) => stage);
-  const acceptedPipelineEvidence = Boolean(
-    pipeline?.receipts.length ||
-      pipeline?.assembly?.mergeJobId ||
-      pipeline?.assembly?.captionJobId ||
-      pipeline?.assembly?.assetId ||
-      pipeline?.assembly?.mergedAssetId ||
-      recordedStages.some(
-        (stage) =>
-          ['claimed', 'submitted', 'uncertain', 'ready'].includes(
-            stage.state,
-          ) ||
-          stage.groupId ||
-          stage.claimToken ||
-          stage.assetId,
-      ),
-  );
   const paid = Boolean(
-    pipeline?.operation ||
-      legacy.execution ||
-      legacy.generationClaim ||
-      acceptedPipelineEvidence,
+    pipeline?.operation || legacy.execution || legacy.generationClaim,
   );
-  if (acceptedPipelineEvidence && !pipeline?.operation)
-    addIssue('LEGACY_STAGE_IDENTITY_MISSING', 'scenePipeline.operation');
   const identities = new Map<string, StoryboardPlan['cast'][number]>();
   const castFor = (scene: LegacyScene) => {
     const identity =
@@ -270,26 +240,15 @@ export function convertStoryboardRun(
         `draft.references.${index}.assetId`,
       );
   });
-  stageEntries.forEach(({ path, stage }) => {
-    if (
-      (stage.state === 'claimed' && !stage.claimToken) ||
-      (['submitted', 'uncertain'].includes(stage.state) && !stage.groupId)
-    )
-      addIssue('LEGACY_STAGE_IDENTITY_MISSING', path);
+  Object.entries(pipeline?.scenes ?? {}).forEach(([id, scene]) => {
+    for (const stage of [scene.image, scene.video]) {
+      if (
+        (stage.state === 'claimed' && !stage.claimToken) ||
+        (['submitted', 'uncertain'].includes(stage.state) && !stage.groupId)
+      )
+        addIssue('LEGACY_STAGE_IDENTITY_MISSING', `scenePipeline.scenes.${id}`);
+    }
   });
-  for (const scene of scenes) {
-    const stage = scene.id ? pipeline?.scenes[scene.id] : undefined;
-    const identity = scene.identity ?? stage?.identity ?? legacy.draft.identity;
-    const representedReferences = new Set([
-      ...legacy.draft.references.map((reference) => reference.assetId),
-      ...('avatarAssetId' in identity ? [identity.avatarAssetId] : []),
-    ]);
-    if (stage?.referenceAssetIds.some((id) => !representedReferences.has(id)))
-      addIssue(
-        'LEGACY_PLAN_UNREPRESENTABLE',
-        `scenePipeline.scenes.${scene.id}.referenceAssetIds`,
-      );
-  }
   const candidate = {
     title: legacy.sourceSnapshot.title,
     logline: legacy.concept?.hook ?? '',
@@ -302,22 +261,6 @@ export function convertStoryboardRun(
     cast: [...identities.values()],
     shots,
   };
-  const projectedIds = [
-    ...shots.flatMap((shot) => [shot.id, shot.stillAssetId]),
-    ...candidate.styleReferenceAssetIds,
-    ...candidate.cast.flatMap((member) => [
-      member.voiceId,
-      member.avatarAssetId,
-      ...member.referenceAssetIds,
-    ]),
-  ].filter((id): id is string => id !== undefined);
-  if (
-    projectedIds.some((id) => {
-      const parsedId = storyboardIdSchema.safeParse(id);
-      return !parsedId.success || parsedId.data !== id;
-    })
-  )
-    addIssue('LEGACY_PLAN_UNREPRESENTABLE', 'plan.identifiers');
   const planResult = storyboardImportedPlanSchema.safeParse(candidate);
   const representationIssues =
     issues.some((issue) =>
@@ -342,7 +285,6 @@ export function convertStoryboardRun(
           scene.video.assetId,
           ...scene.replacedAssetIds,
         ]),
-        ...(pipeline?.replacedAssetIds ?? []),
         pipeline?.assembly?.assetId,
         pipeline?.assembly?.mergedAssetId,
       ].filter(
@@ -351,16 +293,17 @@ export function convertStoryboardRun(
       ),
     ),
   ];
+  const stageStates = Object.values(pipeline?.scenes ?? {}).flatMap((scene) => [
+    scene.image.state,
+    scene.video.state,
+  ]);
   const unresolved =
-    recordedStages.some(
-      (stage) =>
-        ['claimed', 'submitted', 'uncertain'].includes(stage.state) ||
-        (stage.groupId && !stage.assetId && stage.state !== 'ready'),
+    stageStates.some((state) =>
+      ['claimed', 'submitted', 'uncertain'].includes(state),
     ) ||
     pipeline?.receipts.some((receipt) =>
       ['reserved', 'uncertain'].includes(receipt.state),
-    ) ||
-    storyboardHasUnresolvedAssemblyJobs(pipeline);
+    );
   const recover =
     pipeline?.operation &&
     (unresolved || !['ready', 'cancelled'].includes(pipeline.state));
@@ -429,17 +372,8 @@ export function convertStoryboardRun(
     storyboardConfigHash(config.importedState?.originalConfig) === sourceHash;
   report.preservationChecks.creativeRevisionUnchanged =
     config.revision === legacy.revision;
-  const activeEvidence = structuredClone(config.importedState?.activeConfig);
-  if (
-    activeEvidence?.scenePipeline?.operation &&
-    original.scenePipeline?.operation
-  )
-    activeEvidence.scenePipeline.operation.sequence =
-      original.scenePipeline.operation.sequence;
   report.preservationChecks.paidIdentitiesUnchanged =
-    storyboardConfigHash(
-      activeEvidence ?? config.importedState?.originalConfig,
-    ) === sourceHash;
+    report.preservationChecks.originalArchiveUnchanged;
   return {
     status: issues.length ? 'needs_review' : 'converted',
     config,

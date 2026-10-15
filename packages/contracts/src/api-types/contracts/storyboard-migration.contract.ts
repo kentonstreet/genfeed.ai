@@ -1,12 +1,5 @@
 import { z } from 'zod';
-
-// Read-only imported references retain legacy bytes; native creation IDs stay strict.
-export const storyboardImportedReferenceIdSchema = z
-  .string()
-  .refine(
-    (value) => value.trim().length > 0 && value.trim().length <= 255,
-    'Invalid legacy reference ID',
-  );
+import { storyboardIdSchema } from './storyboard-source.contract';
 
 export const storyboardMigrationIssueSchema = z
   .object({
@@ -47,16 +40,16 @@ export const storyboardImportedPresentationSchema = z
     shots: z.array(
       z
         .object({
-          id: storyboardImportedReferenceIdSchema.nullable(),
+          id: storyboardIdSchema.nullable(),
           ordinal: z.number().int().positive(),
           action: z.string(),
           dialogue: z.string().nullable(),
           durationSeconds: z.number().finite().positive().nullable(),
-          stillAssetId: storyboardImportedReferenceIdSchema.nullable(),
+          stillAssetId: storyboardIdSchema.nullable(),
         })
         .strict(),
     ),
-    outputAssetIds: z.array(storyboardImportedReferenceIdSchema),
+    outputAssetIds: z.array(storyboardIdSchema),
   })
   .strict();
 export type StoryboardMigrationIssue = z.infer<

@@ -28,7 +28,6 @@ const apiSrc = path.resolve(here, '../../../api/src');
 
 /** A tool that dispatches through the agent-executor to a single shared route. */
 const BASE_CRUD_LIST = '__BASE_CRUD_LIST__';
-const BASE_CRUD_CREATE = '__BASE_CRUD_CREATE__';
 
 /**
  * Controllers the MCP proxy depends on. `prefix` is the `@Controller(...)`
@@ -64,9 +63,33 @@ const API_CONTROLLERS: Record<string, { file: string; prefix: string }> = {
     file: 'collections/mcp-approvals/controllers/mcp-approvals.controller.ts',
     prefix: 'mcp-approvals',
   },
+  videos: {
+    file: 'collections/videos/controllers/videos.controller.ts',
+    prefix: 'videos',
+  },
+  images: {
+    file: 'collections/images/controllers/images.controller.ts',
+    prefix: 'images',
+  },
+  avatars: {
+    file: 'collections/avatars/controllers/avatars.controller.ts',
+    prefix: 'avatars',
+  },
+  musics: {
+    file: 'collections/musics/controllers/musics.controller.ts',
+    prefix: 'musics',
+  },
   articles: {
     file: 'collections/articles/controllers/articles.controller.ts',
     prefix: 'articles',
+  },
+  articleOperations: {
+    file: 'collections/articles/controllers/operations/articles-operations.controller.ts',
+    prefix: 'articles',
+  },
+  credits: {
+    file: 'collections/credits/controllers/credits.controller.ts',
+    prefix: 'credits',
   },
   credentials: {
     file: 'collections/credentials/controllers/credentials.controller.ts',
@@ -76,9 +99,21 @@ const API_CONTROLLERS: Record<string, { file: string; prefix: string }> = {
     file: 'collections/credentials/controllers/credentials-publishing.controller.ts',
     prefix: 'credentials',
   },
+  contentIntelGenerate: {
+    file: 'collections/content-intelligence/controllers/generate.controller.ts',
+    prefix: 'content-intelligence/generate',
+  },
   contentPerformance: {
     file: 'collections/content-performance/controllers/content-performance.controller.ts',
     prefix: 'content-performance',
+  },
+  brands: {
+    file: 'collections/brands/controllers/brands.controller.ts',
+    prefix: 'brands',
+  },
+  authWhoami: {
+    file: 'auth/controllers/auth-whoami.controller.ts',
+    prefix: 'auth',
   },
   ingredients: {
     file: 'collections/ingredients/controllers/ingredients-relationships.controller.ts',
@@ -107,10 +142,6 @@ const API_CONTROLLERS: Record<string, { file: string; prefix: string }> = {
   clipProjects: {
     file: 'collections/clip-projects/clip-projects.controller.ts',
     prefix: 'clip-projects',
-  },
-  editorProjects: {
-    file: 'collections/editor-projects/editor-projects.controller.ts',
-    prefix: 'editor-projects',
   },
   clipProjectGeneration: {
     file: 'collections/clip-projects/clip-project-generation.controller.ts',
@@ -172,18 +203,6 @@ interface ContractRoute {
  * route below plus the coverage assertion.
  */
 const ROUTE_CONTRACT: ContractRoute[] = [
-  {
-    method: 'Post',
-    sub: '',
-    controller: 'storyboardRuns',
-    tools: ['create_storyboard_remix'],
-  },
-  {
-    method: 'Post',
-    sub: ':runId/shots/:shotId/character-replacement',
-    controller: 'storyboardRuns',
-    tools: ['replace_storyboard_character'],
-  },
   {
     method: 'Get',
     sub: ':runId/capabilities',
@@ -312,7 +331,7 @@ const ROUTE_CONTRACT: ContractRoute[] = [
   },
 
   // ── Agent executor (shared route for all CuratedActionName tools) ──
-  // `get_content_analytics` is a catalog REST tool, not an `CuratedActionName`, but
+  // `get_content_analytics` is a legacy-switch tool, not an `CuratedActionName`, but
   // its article/image branch proxies to the agent executor — so it is named here
   // explicitly rather than being covered by the blanket agent-executor entry.
   {
@@ -320,14 +339,6 @@ const ROUTE_CONTRACT: ContractRoute[] = [
     sub: ':name/execute',
     controller: 'agentTools',
     tools: ['get_content_analytics'],
-  },
-  // onboard_brand is MCP-only; each action proxies onto an onboarding agent
-  // tool through the same execute route (#6268).
-  {
-    method: 'Post',
-    sub: ':name/execute',
-    controller: 'agentTools',
-    tools: ['onboard_brand'],
   },
 
   // ── Agent chat ──
@@ -357,33 +368,32 @@ const ROUTE_CONTRACT: ContractRoute[] = [
   // ── Legacy media / content ──
   {
     method: 'Get',
-    sub: BASE_CRUD_LIST,
-    controller: 'articles',
-    tools: ['get_articles'],
+    sub: ':videoId',
+    controller: 'videos',
+    tools: ['get_video_status'],
   },
-  {
-    method: 'Get',
-    sub: ':id',
-    controller: 'articles',
-    tools: ['get_articles'],
-  },
+  { method: 'Get', sub: '', controller: 'videos', tools: ['list_videos'] },
+  { method: 'Get', sub: '', controller: 'images', tools: ['list_images'] },
+  { method: 'Get', sub: '', controller: 'avatars', tools: ['list_avatars'] },
+  { method: 'Get', sub: '', controller: 'musics', tools: ['list_music'] },
   {
     method: 'Post',
-    sub: BASE_CRUD_CREATE,
-    controller: 'articles',
-    tools: ['create_article_draft'],
+    sub: 'generations',
+    controller: 'articleOperations',
+    tools: ['create_article'],
   },
   {
     method: 'Get',
-    sub: ':articleId/preview-links',
+    sub: BASE_CRUD_LIST,
     controller: 'articles',
-    tools: ['get_article_preview'],
+    tools: ['search_articles'],
   },
+  { method: 'Get', sub: ':id', controller: 'articles', tools: ['get_article'] },
   {
-    method: 'Patch',
-    sub: ':articleId',
-    controller: 'articles',
-    tools: ['publish_article'],
+    method: 'Get',
+    sub: 'usage',
+    controller: 'credits',
+    tools: ['get_usage_stats'],
   },
 
   // ── Analytics → content-performance (video/content analytics) ──
@@ -408,6 +418,12 @@ const ROUTE_CONTRACT: ContractRoute[] = [
 
   // ── LinkedIn ──
   {
+    method: 'Post',
+    sub: '',
+    controller: 'contentIntelGenerate',
+    tools: ['generate_linkedin_content'],
+  },
+  {
     method: 'Get',
     sub: 'mentions',
     controller: 'credentialsPublishing',
@@ -417,12 +433,24 @@ const ROUTE_CONTRACT: ContractRoute[] = [
   // ── Account management ──
   {
     method: 'Get',
+    sub: 'whoami',
+    controller: 'authWhoami',
+    tools: ['get_account_info'],
+  },
+  {
+    method: 'Get',
+    sub: '',
+    controller: 'brands',
+    tools: ['list_brands', 'get_brand'],
+  },
+  {
+    method: 'Get',
     sub: ':ingredientId/metadata',
     controller: 'ingredients',
     tools: ['get_job_status'],
   },
 
-  // ── Workflows (control + status) ──
+  // ── Workflows (control + legacy) ──
   {
     method: 'Get',
     sub: ':workflowId',
@@ -551,12 +579,6 @@ const ROUTE_CONTRACT: ContractRoute[] = [
     controller: 'clipProjects',
     tools: ['list_clip_projects'],
   },
-  {
-    method: 'Post',
-    sub: '',
-    controller: 'editorProjects',
-    tools: ['open_in_editor'],
-  },
 
   // ── Scheduler releases ──
   {
@@ -588,7 +610,7 @@ const ROUTE_CONTRACT: ContractRoute[] = [
     method: 'Get',
     sub: 'channel-capabilities',
     controller: 'schedules',
-    tools: ['get_scheduler_capabilities'],
+    tools: ['list_scheduler_capabilities'],
   },
   {
     method: 'Get',
@@ -600,7 +622,7 @@ const ROUTE_CONTRACT: ContractRoute[] = [
     method: 'Get',
     sub: 'channel-capabilities/:platform',
     controller: 'schedules',
-    tools: ['get_scheduler_capabilities'],
+    tools: ['get_scheduler_capability'],
   },
   {
     method: 'Post',
@@ -788,18 +810,9 @@ describe('MCP → API route contract', () => {
     for (const route of ROUTE_CONTRACT) {
       const src = readController(route.controller);
       const mounted =
-        route.sub === BASE_CRUD_CREATE
-          ? src.includes('extends BaseCRUDController') &&
-            readFileSync(
-              path.join(
-                apiSrc,
-                'shared/controllers/base-crud/base-crud.controller.ts',
-              ),
-              'utf8',
-            ).includes('@Post()')
-          : route.sub === BASE_CRUD_LIST
-            ? src.includes('extends BaseCRUDController')
-            : src.includes(decoratorFor(route));
+        route.sub === BASE_CRUD_LIST
+          ? src.includes('extends BaseCRUDController')
+          : src.includes(decoratorFor(route));
       if (!mounted) {
         const shown =
           route.sub === BASE_CRUD_LIST
@@ -820,9 +833,10 @@ describe('MCP → API route contract', () => {
         !agentExecutorNames.has(name) &&
         !contractTools.has(name) &&
         name !== 'resolve_approval' &&
-        // The tool discovery meta tool (`find_tools`) is handled entirely
-        // in-process against the registry's own catalog — it never calls out
-        // to the API, so it has no mounted route to cover.
+        // Tool discovery meta tools (`list_toolsets`, `search_tools`,
+        // `describe_tool`) are handled entirely in-process against the
+        // registry's own catalog — they never call out to the API, so they
+        // have no mounted route to cover.
         !TOOL_DISCOVERY_TOOL_NAMES.has(name),
     );
     expect(uncovered).toEqual([]);
