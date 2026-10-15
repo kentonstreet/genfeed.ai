@@ -49,12 +49,6 @@ vi.mock('@ui/audio/preview-player/AudioPreviewPlayer', () => ({
   },
 }));
 
-vi.mock('@ui/ingredients/ingredient-tile-overlays', () => ({
-  default: ({ ingredient }: { ingredient: { id: string } }) => (
-    <div data-testid={`tile-overlays-${ingredient.id}`} />
-  ),
-}));
-
 vi.mock('@ui/lazy/masonry/LazyMasonry', () => ({
   LazyMasonryImage: (props: MasonryImageProps) => {
     masonryMocks.image(props);
@@ -385,7 +379,7 @@ describe('StudioPlaygroundCard', () => {
     const assetActions = buildAssetActions();
     const onReprompt = vi.fn();
 
-    const { container } = render(
+    render(
       <StudioPlaygroundCard
         assetActions={assetActions}
         job={job}
@@ -397,10 +391,15 @@ describe('StudioPlaygroundCard', () => {
 
     expect(screen.getByTestId('shared-masonry-image')).toBeInTheDocument();
     expect(screen.queryByText(generatedJob.prompt)).not.toBeInTheDocument();
-    // Hydrated grid cards share the Library tile overlays instead of the
-    // Studio-only hover bar.
-    expect(container.querySelector('[data-asset-hover-details]')).toBeNull();
-    expect(screen.getByTestId(`tile-overlays-${ingredient.id}`)).toBeVisible();
+    expect(
+      screen
+        .getByText(new RegExp(generatedJob.modelKey))
+        .closest('[data-asset-hover-details]'),
+    ).toHaveClass(
+      'opacity-100',
+      '[@media(hover:hover)]:opacity-0',
+      '[@media(hover:hover)]:group-focus-within:opacity-100',
+    );
 
     const imageProps = masonryMocks.image.mock.calls.at(-1)?.[0];
     expect(imageProps?.onCopyPrompt).toBe(assetActions.onCopyPrompt);
@@ -469,10 +468,11 @@ describe('StudioPlaygroundCard', () => {
     expect(props?.isActionsEnabled).toBe(true);
     expect(props?.onOpenInEditor).toBe(assetActions.onOpenInEditor);
     expect(props?.onResize).toBe(assetActions.onResize);
-    // Make clips lives in the Inspector, not on the grid card.
-    expect(
-      screen.queryByRole('link', { name: 'Make clips' }),
-    ).not.toBeInTheDocument();
+    const makeClips = screen.getByRole('link', { name: 'Make clips' });
+    expect(makeClips).toHaveAttribute(
+      'href',
+      `/my-org/my-brand/studio/clips/new?video=${ingredient.id}`,
+    );
   });
 
   it('keeps video transformations off until the clip is a persisted asset', () => {
@@ -527,7 +527,7 @@ describe('StudioPlaygroundCard', () => {
         onReprompt={vi.fn()}
         onSelect={onSelect}
         parentJob={parentJob}
-        view={ViewType.LIST}
+        view={ViewType.GRID}
       />,
     );
 
@@ -789,126 +789,4 @@ describe('persisted failed Studio recovery', () => {
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     });
   }
-});
-
-describe('brand enhancement stop', () => {
-  const stoppedJob = {
-    ...generatedJob,
-    error:
-      'Brand enhancement failed. Nothing was generated and no credits were used.',
-    failure: 'brand_enhancement' as const,
-    id: 'failed-1',
-    runId: 'run-1',
-    status: IngredientStatus.FAILED,
-    url: undefined,
-  };
-
-  it.each([ViewType.GRID, ViewType.LIST] as const)(
-    'states the stop and offers a one-click generate without brand in %s view',
-    (view) => {
-      const assetActions = buildAssetActions();
-      assetActions.onGenerateWithoutBrand = vi.fn();
-      render(
-        <StudioPlaygroundCard
-          assetActions={assetActions}
-          job={stoppedJob}
-          onReprompt={vi.fn()}
-          onSelect={vi.fn()}
-          view={view}
-        />,
-      );
-
-      expect(screen.getByText(stoppedJob.error)).toBeInTheDocument();
-      fireEvent.click(
-        screen.getByRole('button', {
-          name: 'Generate this image without brand, using the prompt exactly as typed',
-        }),
-      );
-      expect(assetActions.onGenerateWithoutBrand).toHaveBeenCalledOnce();
-      expect(assetActions.onGenerateWithoutBrand).toHaveBeenCalledWith(
-        stoppedJob,
-      );
-    },
-  );
-
-  it('offers no raw retry when the failure is not a brand stop or the action is unavailable', () => {
-    const assetActions = buildAssetActions();
-    assetActions.onGenerateWithoutBrand = vi.fn();
-    const { rerender } = render(
-      <StudioPlaygroundCard
-        assetActions={assetActions}
-        job={{ ...stoppedJob, failure: undefined }}
-        onReprompt={vi.fn()}
-        onSelect={vi.fn()}
-        view={ViewType.GRID}
-      />,
-    );
-    expect(
-      screen.queryByRole('button', { name: /without brand/ }),
-    ).not.toBeInTheDocument();
-    rerender(
-      <StudioPlaygroundCard
-        assetActions={buildAssetActions()}
-        job={stoppedJob}
-        onReprompt={vi.fn()}
-        onSelect={vi.fn()}
-        view={ViewType.GRID}
-      />,
-    );
-    expect(
-      screen.queryByRole('button', { name: /without brand/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it.each([
-    ['raw', 'Not branded'],
-    ['provisional_brand', 'Provisional brand'],
-  ] as const)(
-    'badges a %s result and not an approved one',
-    (brandMode, text) => {
-      const ingredient = {
-        id: 'ingredient-1',
-        generationHarness: {
-          appliedPacks: [],
-          brandId: 'brand-1',
-          brandMode,
-          enhancedPrompt: 'A boxer',
-          originalPrompt: 'A boxer',
-          source: 'brand',
-          status: 'skipped',
-        },
-      } as never;
-      const { rerender } = render(
-        <StudioPlaygroundCard
-          assetActions={buildAssetActions()}
-          job={{ ...generatedJob, ingredient }}
-          onReprompt={vi.fn()}
-          onSelect={vi.fn()}
-          view={ViewType.GRID}
-        />,
-      );
-      expect(screen.getByText(text)).toBeInTheDocument();
-      rerender(
-        <StudioPlaygroundCard
-          assetActions={buildAssetActions()}
-          job={{
-            ...generatedJob,
-            ingredient: {
-              ...(ingredient as object),
-              generationHarness: {
-                ...(ingredient as { generationHarness: object })
-                  .generationHarness,
-                brandMode: 'approved_brand',
-              },
-            } as never,
-          }}
-          onReprompt={vi.fn()}
-          onSelect={vi.fn()}
-          view={ViewType.GRID}
-        />,
-      );
-      expect(screen.queryByText(text)).not.toBeInTheDocument();
-      expect(screen.queryByText('Approved brand')).not.toBeInTheDocument();
-    },
-  );
 });

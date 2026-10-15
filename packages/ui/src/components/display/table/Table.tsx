@@ -580,10 +580,7 @@ export default function AppTable<T>({
                       {selectable && (
                         <td
                           className={cn(
-                            // z-10 lifts the checkbox above a row-link anchor,
-                            // which comes later in the DOM and would otherwise
-                            // paint over it and turn "select" into "navigate".
-                            'relative z-10 align-middle',
+                            'relative align-middle',
                             isCompact ? 'w-8 p-2' : 'p-4 w-12',
                           )}
                         >
@@ -628,17 +625,16 @@ export default function AppTable<T>({
                       {actions.length > 0 && (
                         <td
                           className={cn(
-                            'py-2 relative z-10 align-middle',
+                            'py-2 relative align-middle',
                             isCompact ? 'px-2' : 'px-4',
                           )}
                         >
-                          {/* Icon-only actions, shown instantly on row hover or
-                          keyboard focus inside the row (no slide or fade: the
-                          motion policy forbids animating controls). */}
                           <div
                             className={cn(
-                              'flex justify-end',
+                              'flex translate-x-0 justify-end transition-[opacity,transform] duration-200',
                               hoverRevealClassName({ at: 'lg' }),
+                              !isCompact &&
+                                '[@media(hover:hover)]:lg:translate-x-2 [@media(hover:hover)]:lg:group-hover:translate-x-0 [@media(hover:hover)]:lg:group-focus-within:translate-x-0',
                             )}
                           >
                             <div className="flex items-center gap-1">
@@ -655,18 +651,6 @@ export default function AppTable<T>({
                                   if (!isVisible) {
                                     return acc;
                                   }
-                                  const actionHref =
-                                    typeof action.href === 'function'
-                                      ? action.href(item)
-                                      : action.href;
-                                  // A link action with nowhere to go for this
-                                  // row is omitted rather than rendered dead.
-                                  if (
-                                    action.href !== undefined &&
-                                    actionHref === undefined
-                                  ) {
-                                    return acc;
-                                  }
                                   const iconContent =
                                     typeof action.icon === 'function'
                                       ? action.icon(item)
@@ -675,74 +659,36 @@ export default function AppTable<T>({
                                     typeof action.tooltip === 'function'
                                       ? action.tooltip(item)
                                       : action.tooltip;
-                                  const isActionDisabled =
-                                    action.isDisabled?.(item) ?? false;
-                                  const actionClassName = cn(
-                                    // 44px touch target on small screens; compact
-                                    // icon control on desktop. Cap glyph size so
-                                    // bare lucide icons don't render at 24px.
-                                    'inline-flex size-11 items-center justify-center p-0 lg:size-8 [&_svg]:size-3.5',
-                                    action.className,
-                                    action.getClassName?.(item),
-                                  );
 
                                   acc.push(
-                                    actionHref !== undefined &&
-                                      !isActionDisabled ? (
-                                      <Button
-                                        key={key}
-                                        asChild
-                                        ariaLabel={tooltipText}
-                                        tooltip={tooltipText}
-                                        tooltipPosition={
-                                          action.tooltipPosition || 'left'
-                                        }
-                                        data-testid="action-button"
-                                        variant={ButtonVariant.GHOST}
-                                        size={ButtonSize.ICON}
-                                        className={actionClassName}
-                                      >
-                                        {action.isExternal ? (
-                                          <a
-                                            href={actionHref}
-                                            rel="noopener noreferrer"
-                                            target="_blank"
-                                            onClick={() =>
-                                              handleActionClick(action, item)
-                                            }
-                                          >
-                                            {iconContent}
-                                          </a>
-                                        ) : (
-                                          <Link
-                                            href={actionHref}
-                                            onClick={() =>
-                                              handleActionClick(action, item)
-                                            }
-                                          >
-                                            {iconContent}
-                                          </Link>
-                                        )}
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        key={key}
-                                        icon={iconContent}
-                                        ariaLabel={tooltipText}
-                                        onClick={() =>
-                                          handleActionClick(action, item)
-                                        }
-                                        isDisabled={isActionDisabled}
-                                        tooltip={tooltipText}
-                                        tooltipPosition={
-                                          action.tooltipPosition || 'left'
-                                        }
-                                        data-testid="action-button"
-                                        variant={ButtonVariant.GHOST}
-                                        size={ButtonSize.ICON}
-                                        className={actionClassName}
-                                      />
-                                    ),
+                                    <Button
+                                      key={key}
+                                      icon={iconContent}
+                                      ariaLabel={
+                                        typeof tooltipText === 'string'
+                                          ? tooltipText
+                                          : 'Row action'
+                                      }
+                                      onClick={() =>
+                                        handleActionClick(action, item)
+                                      }
+                                      isDisabled={action.isDisabled?.(item)}
+                                      tooltip={tooltipText}
+                                      tooltipPosition={
+                                        action.tooltipPosition || 'left'
+                                      }
+                                      data-testid="action-button"
+                                      variant={ButtonVariant.GHOST}
+                                      size={ButtonSize.ICON}
+                                      className={cn(
+                                        // 44px touch target on small screens; compact
+                                        // icon control on desktop. Cap glyph size so
+                                        // bare lucide icons don't render at 24px.
+                                        'inline-flex size-11 items-center justify-center p-0 lg:size-8 [&_svg]:size-3.5',
+                                        action.className,
+                                        action.getClassName?.(item),
+                                      )}
+                                    />,
                                   );
                                   return acc;
                                 },

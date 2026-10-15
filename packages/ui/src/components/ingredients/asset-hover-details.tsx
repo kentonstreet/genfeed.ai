@@ -4,8 +4,6 @@ import type { ReactNode } from 'react';
 
 interface AssetHoverDetailsProps {
   actions?: ReactNode;
-  /** A status the reader must not miss, shown beside the type and metadata. */
-  badge?: ReactNode;
   className?: string;
   metadata?: string;
   typeLabel?: string;
@@ -18,7 +16,6 @@ interface AssetHoverDetailsProps {
  */
 export default function AssetHoverDetails({
   actions,
-  badge,
   className,
   metadata,
   typeLabel,
@@ -34,15 +31,10 @@ export default function AssetHoverDetails({
       )}
       data-asset-hover-details
     >
-      {eyebrow || badge ? (
-        <div className="flex min-w-0 items-center gap-2">
-          {eyebrow ? (
-            <p className="truncate text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-              {eyebrow}
-            </p>
-          ) : null}
-          {badge}
-        </div>
+      {eyebrow ? (
+        <p className="truncate text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+          {eyebrow}
+        </p>
       ) : null}
       {actions ? (
         <div className="mt-2 flex items-center gap-1">{actions}</div>
