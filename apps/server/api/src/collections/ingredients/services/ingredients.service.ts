@@ -13,15 +13,8 @@ import {
   toIngredientCreateData,
   toIngredientUpdateData,
 } from '@api/collections/ingredients/utils/ingredient-create-data.util';
-import {
-  ingredientGenerationUpdateTargets,
-  preserveIngredientGenerationEntry,
-  stampIngredientGenerationEntry,
-} from '@api/collections/ingredients/utils/ingredient-generation-entry.util';
-import { ingredientPopulationForContext } from '@api/collections/ingredients/utils/ingredient-population.util';
 import { canEditAssetTags } from '@api/collections/ingredients/utils/ingredient-tag-edit-access.util';
 import { AssetGateService } from '@api/collections/organization-settings/services/asset-gate.service';
-import { PersonaReferencesService } from '@api/collections/personas/services/persona-references.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import { HandleErrors } from '@api/helpers/decorators/error-handler.decorator';
 import { CategoryPrismaUtil } from '@api/helpers/utils/category-prisma/category-prisma.util';
@@ -30,13 +23,13 @@ import { persistSubmissionFailure } from '@api/helpers/utils/credits/persist-sub
 import { IngredientFilterUtil } from '@api/helpers/utils/ingredient-filter/ingredient-filter.util';
 import { LibraryShelfUtil } from '@api/helpers/utils/library-shelf/library-shelf.util';
 import { scopedWhere } from '@api/index';
-import { CacheService } from '@api/services/cache/cache.service';
 import { MediaDerivativePreparationService } from '@api/services/media-urls/media-derivative-preparation.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   BaseService,
   type PopulateInput,
 } from '@api/shared/services/base/base.service';
+import { PopulatePatterns } from '@api/shared/utils/populate/populate.util';
 import type { AggregatePaginateResult } from '@api/types/aggregate-paginate-result';
 import {
   FleetReviewStatus,
@@ -133,37 +126,41 @@ export class IngredientsService extends BaseService<
   }
 
   /**
-   * Character reference hook. A character's primary reference is mirrored to
-   * `Persona.avatarIngredientId`; moving an asset to or from the trash
-   * re-mirrors it for every character using that asset. Resolved lazily
-   * (strict:false) like the asset gate, so this widely provided service gains
-   * no constructor or module edge (it is also provided by the workers domain
-   * module). Best-effort: readers already skip trashed references, so a
-   * failure only leaves the single-image mirror stale until the next write.
+   * Get context-aware population options to prevent over-fetching
+   * @param context - The context determining which fields to populate
    */
-  protected async resyncCharacterReferences(
-    organizationId: string | null | undefined,
-    ingredientIds: readonly string[],
-  ): Promise<void> {
-    if (!organizationId || ingredientIds.length === 0) {
-      return;
-    }
-    try {
-      await this.moduleRef
-        .get(PersonaReferencesService, { strict: false })
-        .resyncForIngredients(organizationId, ingredientIds);
-    } catch (error: unknown) {
-      this.logger.warn(
-        `${this.constructorName} character reference re-sync failed`,
-        { error, ingredientIds, organizationId },
-      );
-    }
-  }
-
   protected getPopulationForContext(
     context: 'list' | 'detail' | 'minimal' | 'create' = 'minimal',
   ): PopulateOption[] {
-    return ingredientPopulationForContext(context);
+    // User details are omitted from list projections unless a caller explicitly
+    // needs them; this keeps ingredient payloads and relation queries bounded.
+    switch (context) {
+      case 'list':
+        return [
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataBasic,
+          PopulatePatterns.promptMinimal,
+          { path: 'tags', select: ['id', 'label'] },
+        ];
+      case 'detail':
+        return [
+          PopulatePatterns.organizationMinimal,
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataFull,
+          PopulatePatterns.promptFull,
+          { path: 'parent', select: ['id', 'category', 'status'] },
+          { path: 'references', select: ['id', 'category', 'status'] },
+          { path: 'tags', select: ['id', 'label'] },
+        ];
+      case 'create':
+        return [
+          PopulatePatterns.brandMinimal,
+          PopulatePatterns.metadataBasic,
+          PopulatePatterns.promptMinimal,
+        ];
+      default:
+        return [PopulatePatterns.brandId, { path: 'metadata', select: ['id'] }];
+    }
   }
 
   @HandleErrors('create ingredient', 'ingredients')
@@ -174,13 +171,9 @@ export class IngredientsService extends BaseService<
     this.logger.debug(`${this.constructorName} create`, { createDto });
 
     const result = await super.create(
-      toIngredientCreateData({
-        ...createDto,
-        providerData: stampIngredientGenerationEntry(
-          createDto.origin,
-          createDto.providerData,
-        ),
-      } as unknown as Record<string, unknown>) as CreateIngredientDto,
+      toIngredientCreateData(
+        createDto as unknown as Record<string, unknown>,
+      ) as CreateIngredientDto,
       populate,
     );
 
@@ -392,11 +385,6 @@ export class IngredientsService extends BaseService<
       const rowWhere = organizationId ? { id, organizationId } : { id };
       const current = await this.findOne(rowWhere);
       if (!current) throw new NotFoundException('Ingredient', id);
-      if (Object.hasOwn(data, 'providerData'))
-        data.providerData = preserveIngredientGenerationEntry(
-          data.providerData,
-          current.providerData,
-        );
       if (
         current.reviewStatus &&
         (updateDto.status === IngredientStatus.VALIDATED ||
@@ -430,10 +418,6 @@ export class IngredientsService extends BaseService<
         throw new NotFoundException('Ingredient', id);
       }
 
-      if (Object.hasOwn(updateDto, 'isDeleted')) {
-        await this.resyncCharacterReferences(current.organizationId, [id]);
-      }
-
       const result = await this.findOne(rowWhere, populate);
 
       if (!result) {
@@ -442,17 +426,6 @@ export class IngredientsService extends BaseService<
           { id },
         );
         throw new NotFoundException('Ingredient', id);
-      }
-
-      try {
-        await this.moduleRef
-          .get(CacheService, { strict: false })
-          .invalidateByTags(['ingredients']);
-      } catch (error: unknown) {
-        this.logger.warn(
-          `${this.constructorName} could not invalidate the Library list cache`,
-          { error },
-        );
       }
 
       this.logger.debug(`${this.constructorName} patch success`, { id });
@@ -511,15 +484,13 @@ export class IngredientsService extends BaseService<
   /** Soft-delete one ingredient, keyed by the request organization inside a request. */
   override async remove(id: string): Promise<IngredientDocument | null> {
     const organizationId = requestOrganizationId();
-    const removed = organizationId
-      ? await this.patchOneWhere(scopedWhere(organizationId, { id }), {
-          isDeleted: true,
-        })
-      : await super.remove(id);
-    if (removed) {
-      await this.resyncCharacterReferences(removed.organizationId, [id]);
+    if (!organizationId) {
+      return super.remove(id);
     }
-    return removed;
+
+    return this.patchOneWhere(scopedWhere(organizationId, { id }), {
+      isDeleted: true,
+    });
   }
 
   async patchAll(
@@ -546,43 +517,29 @@ export class IngredientsService extends BaseService<
       const data = this.normalizeData(
         updateData,
       ) as Prisma.IngredientUpdateManyMutationInput;
-      const replacesProviderData = Object.hasOwn(updateData, 'providerData');
       const owners = await this.findAll(
         {
           where,
-          select: {
-            organizationId: true,
-            ...(replacesProviderData ? { id: true, providerData: true } : {}),
-          },
+          select: { organizationId: true },
         },
         { pagination: false },
         false,
       );
       // A tenant request never writes platform rows (`organizationId: null`).
       const isTenantRequest = requestOrganizationId() !== undefined;
-      const targets = ingredientGenerationUpdateTargets(
-        owners.docs,
-        replacesProviderData,
-        isTenantRequest,
-      );
       const targetOrganizationIds = [
-        ...new Set(targets.map((target) => target.organizationId)),
+        ...new Set(
+          owners.docs
+            .map((row) => row.organizationId ?? null)
+            .filter(
+              (organizationId) => !isTenantRequest || organizationId !== null,
+            ),
+        ),
       ];
       let modifiedCount = 0;
-      for (const target of targets) {
-        const { organizationId } = target;
-        const targetData = replacesProviderData
-          ? {
-              ...data,
-              providerData: preserveIngredientGenerationEntry(
-                data.providerData,
-                target.providerData,
-              ) as Prisma.InputJsonValue,
-            }
-          : data;
+      for (const organizationId of targetOrganizationIds) {
         const ownedWhere = {
           ...where,
-          ...(target.id ? { AND: [where], id: target.id } : {}),
           organizationId,
           isDeleted: where.isDeleted ?? false,
         };
@@ -590,13 +547,13 @@ export class IngredientsService extends BaseService<
           (await persistQuoteGroupDisposition(
             this.prisma,
             ownedWhere,
-            targetData,
+            data,
             update.isGenerationFailureConfirmed === true,
           )) ??
           (await persistSubmissionFailure(
             this.prisma,
             ownedWhere,
-            targetData,
+            data,
             update.isGenerationFailureConfirmed === true,
           ));
         const result =
@@ -604,11 +561,10 @@ export class IngredientsService extends BaseService<
           (await this.prisma.ingredient.updateMany({
             where: {
               AND: [where],
-              ...(target.id ? { id: target.id } : {}),
               organizationId,
               isDeleted: where.isDeleted ?? false,
             },
-            data: targetData,
+            data,
           }));
         modifiedCount += result.count;
       }
@@ -632,49 +588,6 @@ export class IngredientsService extends BaseService<
       });
       throw error;
     }
-  }
-
-  /**
-   * Soft-delete one live ingredient the caller may edit.
-   *
-   * Missing, already-deleted, other-organization, and non-editable rows return
-   * null. The route maps that to 404 so those cases are not distinguishable.
-   * The write repeats the organization and live-row predicates.
-   */
-  async softDeleteOneScoped(params: {
-    id: string;
-    organizationId: string;
-    editor: { brandId: string; userId: string };
-  }): Promise<IngredientDocument | null> {
-    const { id, organizationId, editor } = params;
-
-    if (!id) {
-      return null;
-    }
-
-    const existing = await this.prisma.ingredient.findFirst({
-      select: { id: true, userId: true, scope: true, brandId: true },
-      where: scopedWhere(organizationId, { id }),
-    });
-
-    if (
-      !existing ||
-      !canEditAssetTags(existing, {
-        brandId: editor.brandId,
-        userIds: [editor.userId],
-      })
-    ) {
-      return null;
-    }
-
-    const deleted = await this.patchOneWhere(
-      scopedWhere(organizationId, { id }),
-      { isDeleted: true },
-    );
-    if (deleted) {
-      await this.resyncCharacterReferences(organizationId, [id]);
-    }
-    return deleted;
   }
 
   /**
@@ -731,7 +644,6 @@ export class IngredientsService extends BaseService<
         data: { isDeleted: true },
         where: scopedWhere(organizationId, { id: { in: [...permittedIds] } }),
       });
-      await this.resyncCharacterReferences(organizationId, [...permittedIds]);
     }
 
     this.logger.debug(`${this.constructorName} bulkSoftDeleteScoped success`, {

@@ -10,7 +10,6 @@ import type { IngredientsQueryDto } from '@api/collections/ingredients/dto/ingre
 import { IngredientCharacterFilterService } from '@api/collections/ingredients/services/ingredient-character-filter.service';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { ROLES_KEY } from '@api/helpers/decorators/roles/roles.decorator';
-import { encodeKeysetCursor } from '@api/helpers/utils/keyset-cursor/keyset-cursor.util';
 import {
   IngredientCategory,
   IngredientOrigin,
@@ -52,12 +51,6 @@ describe('IngredientsController — Library axes', () => {
 
   const ingredientsService = {
     findAll: vi.fn().mockResolvedValue({ docs: [] }),
-    findAllByKeyset: vi.fn().mockResolvedValue({
-      docs: [],
-      hasMore: false,
-      limit: 30,
-      nextCursor: null,
-    }),
     findByIds: vi.fn().mockResolvedValue([]),
     getLibrarySummary: vi.fn().mockResolvedValue({
       byCategory: {},
@@ -140,111 +133,7 @@ describe('IngredientsController — Library axes', () => {
     });
   });
 
-  describe('findAll — keyset paging', () => {
-    it('pages by cursor without the offset query when asked and the order allows it', async () => {
-      const cursor = encodeKeysetCursor({
-        direction: -1,
-        field: 'createdAt',
-        id: 'ing_9',
-        value: '2026-10-15T10:00:00.000Z',
-      });
-
-      await controller.findAll(
-        mockRequest,
-        {
-          cursor,
-          limit: 30,
-          paging: 'cursor',
-          sort: 'createdAt: -1',
-        } as IngredientsQueryDto,
-        mockUser,
-      );
-
-      expect(ingredientsService.findAll).not.toHaveBeenCalled();
-      const [aggregate, options] =
-        ingredientsService.findAllByKeyset.mock.calls[0];
-      expect(andBranches(aggregate)).toContainEqual({ organizationId });
-      expect(andBranches(aggregate)).toContainEqual({ brandId });
-      expect(options).toEqual({
-        cursor: {
-          direction: -1,
-          field: 'createdAt',
-          id: 'ing_9',
-          value: '2026-10-15T10:00:00.000Z',
-        },
-        limit: 30,
-        sort: { direction: -1, field: 'createdAt' },
-      });
-    });
-
-    it('falls back to page numbers for orders a cursor cannot express', async () => {
-      await controller.findAll(
-        mockRequest,
-        { paging: 'cursor', sort: 'label: 1' } as IngredientsQueryDto,
-        mockUser,
-      );
-
-      expect(ingredientsService.findAllByKeyset).not.toHaveBeenCalled();
-      expect(ingredientsService.findAll).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps page-number pagination when cursor paging is not requested', async () => {
-      await controller.findAll(
-        mockRequest,
-        { sort: 'createdAt: -1' } as IngredientsQueryDto,
-        mockUser,
-      );
-
-      expect(ingredientsService.findAllByKeyset).not.toHaveBeenCalled();
-      expect(ingredientsService.findAll).toHaveBeenCalledTimes(1);
-    });
-  });
-
   describe('findAll', () => {
-    it.each([1, -1])(
-      'sorts asset names through metadata while preserving scope and pagination (%s)',
-      async (direction) => {
-        await controller.findAll(
-          mockRequest,
-          {
-            sort: `label: ${direction}`,
-            page: 2,
-            limit: 10,
-          } as IngredientsQueryDto,
-          mockUser,
-        );
-
-        const [aggregate, options] = ingredientsService.findAll.mock.calls[0];
-        expect(aggregate.orderBy).toEqual([{ metadata: { label: direction } }]);
-        expect(andBranches(aggregate)).toContainEqual({ organizationId });
-        expect(andBranches(aggregate)).toContainEqual({ brandId });
-        expect(aggregate.where.isDeleted).toBe(false);
-        expect(options).toMatchObject({ page: 2, limit: 10 });
-      },
-    );
-
-    it.each([
-      [undefined, [{ createdAt: -1 }]],
-      ['createdAt: 1', [{ createdAt: 1 }]],
-      ['updatedAt: -1', [{ updatedAt: -1 }]],
-      [
-        'label: 1, createdAt: -1',
-        [{ metadata: { label: 1 } }, { createdAt: -1 }],
-      ],
-    ])(
-      'retains default and compound sort precedence (%s)',
-      async (sort, orderBy) => {
-        await controller.findAll(
-          mockRequest,
-          { sort } as IngredientsQueryDto,
-          mockUser,
-        );
-        expect(ingredientsService.findAll.mock.calls[0][0].orderBy).toEqual(
-          orderBy,
-        );
-      },
-    );
-
     it('always scopes the query to the authenticated organization', async () => {
       await controller.findAll(
         mockRequest,
@@ -558,23 +447,6 @@ describe('IngredientsController — Library axes', () => {
       expect(
         andBranches(aggregate).some((branch) => 'isDeleted' in branch),
       ).toBe(false);
-      expect(findBranchWith(aggregate, 'status')).toBeUndefined();
-    });
-
-    it('keeps an explicit status filter on the Trash place', async () => {
-      await controller.findAll(
-        mockRequest,
-        {
-          isDeleted: true,
-          status: [IngredientStatus.FAILED],
-        } as IngredientsQueryDto,
-        mockUser,
-      );
-
-      const [aggregate] = ingredientsService.findAll.mock.calls[0];
-      expect(findBranchWith(aggregate, 'status')).toEqual({
-        status: { in: [IngredientStatus.FAILED] },
-      });
     });
 
     it('narrows to starred assets for the Starred place', async () => {

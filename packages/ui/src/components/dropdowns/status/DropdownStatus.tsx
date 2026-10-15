@@ -181,6 +181,7 @@ export default function DropdownStatus({
       ((entity.status as unknown as PostStatus) === PostStatus.PROCESSING ||
         (entity.status as unknown as PostStatus) === PostStatus.FAILED));
 
+  // Use appropriate service
   const getIngredientsService = useAuthedService((token: string) =>
     IngredientsService.getInstance(token),
   );
@@ -232,6 +233,7 @@ export default function DropdownStatus({
           status: newStatus as ArticleStatus,
         });
 
+        // Fetch complete article with all metadata
         updatedItem = (await service.findOne(entity.id)) as
           | IArticle
           | undefined;
@@ -243,6 +245,7 @@ export default function DropdownStatus({
           mapPostStatusToCanonicalWrite(newStatus as PostStatus),
         );
 
+        // Fetch complete post with all metadata
         updatedItem = (await service.findOne(entity.id)) as IPost | undefined;
       } else {
         // For ingredients: PATCH uses IngredientsService, GET uses specific service

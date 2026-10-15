@@ -3,6 +3,7 @@
 import { useAssetSelection } from '@genfeedai/contexts/ui/asset-selection.context';
 import { useContextSidebar } from '@genfeedai/contexts/ui/context-sidebar-context';
 import {
+  ButtonSize,
   ButtonVariant,
   ComponentSize,
   categoryToString,
@@ -16,10 +17,8 @@ import {
 import { EMPTY_STATES } from '@genfeedai/contracts/constants';
 import type { IIngredient } from '@genfeedai/contracts/interfaces';
 import { useAuthorizedMediaPreview } from '@genfeedai/hooks/media/use-authorized-media-preview';
-import { useIntersectionObserver } from '@genfeedai/hooks/ui/use-intersection-observer/use-intersection-observer';
 import type { IngredientTimeGroupHeadingProps } from '@genfeedai/props/content/ingredient.props';
 import type { IngredientsListContentProps } from '@genfeedai/props/pages/ingredients-list.props';
-import { EnvironmentService } from '@genfeedai/services/core/environment.service';
 import {
   getIngredientFailureReason,
   getIngredientModelLabel,
@@ -42,7 +41,6 @@ import { CardEmptyContent } from '@ui/card/empty/CardEmpty';
 import Badge from '@ui/display/badge/Badge';
 import { SkeletonList } from '@ui/display/skeleton/skeleton';
 import AppTable from '@ui/display/table/Table';
-import VideoPlayer from '@ui/display/video-player/VideoPlayer';
 import DropdownStatus from '@ui/dropdowns/status/DropdownStatus';
 import IngredientReviewActions from '@ui/ingredients/IngredientReviewActions';
 import IngredientOriginBadge from '@ui/ingredients/ingredient-origin-badge';
@@ -54,13 +52,13 @@ import { groupIngredientsByTime } from '@ui/ingredients/list/media-grid/ingredie
 import FailedIngredientsRecovery from '@ui/ingredients/list/recovery/FailedIngredientsRecovery';
 import IngredientSound from '@ui/ingredients/sound/IngredientSound';
 import LazyLoadingFallback from '@ui/loading/fallback/LazyLoadingFallback';
-import { hoverRevealClassName } from '@ui/styles/hover-reveal';
+import { Button } from '@ui/primitives/button';
 import { format } from 'date-fns';
 import { Eye, Film, ImageIcon, Music, RefreshCw } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { useTranslations } from 'next-intl';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 // React Flow is heavier than the whole grid; only the canvas view pays for it.
 const LibraryCanvas = dynamic(
@@ -96,123 +94,17 @@ function isAudioReadyToPlay(ingredient: IIngredient): boolean {
   );
 }
 
-function IngredientTableVideoPreview({
-  url,
-  label,
-}: {
-  url: string;
-  label: string;
-}) {
-  const { ref, isIntersecting } = useIntersectionObserver<HTMLDivElement>({
-    rootMargin: '100px',
-    triggerOnce: true,
-  });
-  const [isReady, setIsReady] = useState(false);
-  const [hasError, setHasError] = useState(false);
-
-  return (
-    <div
-      ref={ref}
-      role="img"
-      aria-label={label}
-      className="relative flex size-10 items-center justify-center overflow-hidden rounded-md bg-foreground/6 text-foreground/45"
-    >
-      {!isReady || hasError ? (
-        <Film className="size-4" data-testid="ingredient-preview-fallback" />
-      ) : null}
-      {isIntersecting && !hasError ? (
-        <div
-          data-testid="ingredient-video-preview"
-          className={`pointer-events-none absolute inset-0 size-10 ${isReady ? 'opacity-100' : 'opacity-0'}`}
-        >
-          <VideoPlayer
-            src={url}
-            mediaClassName="object-cover"
-            config={{
-              autoPlay: false,
-              controls: false,
-              muted: true,
-              loop: false,
-              playsInline: true,
-              preload: 'metadata',
-            }}
-            mediaProps={{
-              'aria-hidden': true,
-              tabIndex: -1,
-              onLoadedMetadata: (event) => {
-                const video = event.currentTarget;
-                if (Number.isFinite(video.duration) && video.duration > 0) {
-                  video.currentTime = Math.min(0.05, video.duration / 2);
-                }
-              },
-              onLoadedData: () => setIsReady(true),
-              onSeeked: () => setIsReady(true),
-              onError: () => setHasError(true),
-            }}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
   const grant = useAuthorizedMediaPreview(ingredient);
+  const previewUrl = grant
+    ? isRasterPreviewUrl(grant.url)
+      ? grant.url
+      : ''
+    : getIngredientPreviewUrl(ingredient);
   const label = getIngredientDisplayLabel(ingredient) || 'Asset preview';
   const isVideo = isVideoIngredient(ingredient);
   const assetType = getLibraryAssetType(ingredient.category);
   const isAudio = isAudioIngredient(ingredient);
-  const videoAsset = isVideo || assetType?.id === 'video';
-  // Video grants can point at extensionless delivery endpoints. Only a known
-  // image suffix identifies an authorized poster; retained raw URLs never
-  // replace a pending or failed capability.
-  const imageSuffix = /\.(avif|gif|jpe?g|png|webp)(?:$|[?#])/i;
-  const grantIsPoster = Boolean(grant?.url && imageSuffix.test(grant.url));
-  const placeholderPrefix = `${EnvironmentService.assetsEndpoint}/placeholders/`;
-  const thumbnailUrl = ingredient.thumbnailUrl;
-  const legacyVideoUrl = ingredient.ingredientUrl;
-  const legacyPosterUrl = videoAsset
-    ? isRasterPreviewUrl(thumbnailUrl) &&
-      !thumbnailUrl.startsWith(placeholderPrefix)
-      ? thumbnailUrl
-      : legacyVideoUrl &&
-          imageSuffix.test(legacyVideoUrl) &&
-          !legacyVideoUrl.startsWith(placeholderPrefix)
-        ? legacyVideoUrl
-        : undefined
-    : getIngredientPreviewUrl(ingredient);
-  const previewUrl = grant
-    ? grant.state === 'READY' &&
-      (!videoAsset || grantIsPoster) &&
-      isRasterPreviewUrl(grant.url)
-      ? grant.url
-      : ''
-    : legacyPosterUrl;
-  const videoUrl =
-    videoAsset &&
-    !previewUrl &&
-    !isFailedIngredient(ingredient) &&
-    ingredient.status !== IngredientStatus.PROCESSING
-      ? grant
-        ? grant.state === 'READY'
-          ? grant.url
-          : null
-        : legacyVideoUrl &&
-            !legacyVideoUrl.startsWith(placeholderPrefix) &&
-            !imageSuffix.test(legacyVideoUrl)
-          ? legacyVideoUrl
-          : null
-      : null;
-
-  if (videoUrl) {
-    return (
-      <IngredientTableVideoPreview
-        key={videoUrl}
-        url={videoUrl}
-        label={label}
-      />
-    );
-  }
 
   if (!previewUrl) {
     return (
@@ -222,7 +114,7 @@ function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
         data-testid="ingredient-preview-fallback"
         role="img"
       >
-        {videoAsset ? (
+        {isVideo || assetType?.id === 'video' ? (
           <Film className="size-4" />
         ) : isAudio ? (
           <Music className="size-4" />
@@ -243,7 +135,7 @@ function IngredientTablePreview({ ingredient }: { ingredient: IIngredient }) {
         src={previewUrl}
         width={40}
       />
-      {videoAsset ? (
+      {isVideo || assetType?.id === 'video' ? (
         <span
           className={
             'pointer-events-none absolute inset-0 flex items-center justify-center bg-black/25' /* design-system-allow-content-color -- media overlay */
@@ -277,7 +169,7 @@ function IngredientLedgerAssetCell({
   const isAudio = isAudioIngredient(ingredient);
 
   return (
-    <div className="flex w-40 min-w-0 max-w-40 items-center gap-2">
+    <div className="flex w-64 min-w-0 max-w-64 items-center gap-3">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span
           className="truncate text-sm font-medium"
@@ -438,7 +330,7 @@ export default function IngredientsListContent({
   const columns = useMemo(
     () => [
       {
-        className: 'w-12',
+        className: 'w-14',
         header: '',
         key: 'ingredientUrl',
         render: (ingredient: IIngredient) => (
@@ -446,7 +338,7 @@ export default function IngredientsListContent({
         ),
       },
       {
-        className: 'w-44',
+        className: 'w-72',
         header: translate('browser.columns.asset'),
         key: 'metadataLabel',
         render: (ingredient: IIngredient) => (
@@ -454,7 +346,7 @@ export default function IngredientsListContent({
         ),
       },
       {
-        className: 'w-20',
+        className: 'w-40',
         header: translate('browser.columns.type'),
         key: 'category',
         render: (ingredient: IIngredient) => {
@@ -475,7 +367,7 @@ export default function IngredientsListContent({
         },
       },
       {
-        className: 'w-20',
+        className: 'w-28',
         header: translate('browser.columns.origin'),
         key: 'origin',
         render: (ingredient: IIngredient) => (
@@ -483,18 +375,18 @@ export default function IngredientsListContent({
         ),
       },
       {
-        className: 'w-16',
+        className: 'w-56',
         header: translate('browser.columns.tags'),
         key: 'tags',
         render: (ingredient: IIngredient) =>
           ingredient.tags && ingredient.tags.length > 0 ? (
-            <IngredientTagChips max={1} tags={ingredient.tags} />
+            <IngredientTagChips tags={ingredient.tags} />
           ) : (
             <span className="text-foreground/35">—</span>
           ),
       },
       {
-        className: 'w-24',
+        className: 'w-52',
         header: translate('browser.columns.model'),
         key: 'model',
         render: (ingredient: IIngredient) => {
@@ -507,7 +399,7 @@ export default function IngredientsListContent({
           const providerLabel = getIngredientProviderLabel(ingredient);
 
           return (
-            <div className="flex w-20 min-w-0 max-w-20 flex-col">
+            <div className="flex w-44 min-w-0 max-w-44 flex-col">
               <span className="truncate text-sm" title={modelLabel}>
                 {modelLabel}
               </span>
@@ -521,7 +413,7 @@ export default function IngredientsListContent({
         },
       },
       {
-        className: 'w-20',
+        className: 'w-28',
         header: translate('browser.columns.size'),
         key: 'metadataSize',
         render: (ingredient: IIngredient) => {
@@ -532,17 +424,14 @@ export default function IngredientsListContent({
           }
 
           return (
-            <span
-              className="block truncate text-xs tabular-nums text-foreground/70"
-              title={sizeLabel}
-            >
+            <span className="text-sm tabular-nums text-foreground/70">
               {sizeLabel}
             </span>
           );
         },
       },
       {
-        className: 'w-20',
+        className: 'w-28',
         header: translate('browser.columns.created'),
         key: 'createdAt',
         render: (ingredient: IIngredient) => {
@@ -556,21 +445,20 @@ export default function IngredientsListContent({
 
           return (
             <time
-              className="whitespace-nowrap text-xs tabular-nums text-foreground/70"
-              title={format(createdAt, 'd MMM yyyy')}
+              className="text-sm tabular-nums text-foreground/70"
               dateTime={createdAt.toISOString()}
             >
-              {format(createdAt, 'd MMM yy')}
+              {format(createdAt, 'd MMM yyyy')}
             </time>
           );
         },
       },
       {
-        className: 'w-32',
+        className: 'w-40',
         header: translate('browser.columns.status'),
         key: 'status',
         render: (ingredient: IIngredient) => (
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
             <DropdownStatus
               entity={ingredient}
               onStatusChange={(_newStatus, updatedIngredient) => {
@@ -580,19 +468,32 @@ export default function IngredientsListContent({
               }}
             />
             {isActionsEnabled ? (
-              // Approve/reject are row actions: shown on row hover or focus.
-              <div className={hoverRevealClassName({ at: 'lg' })}>
-                <IngredientReviewActions
-                  ingredient={ingredient}
-                  onUpdated={handleReviewUpdated}
-                />
-              </div>
+              <IngredientReviewActions
+                ingredient={ingredient}
+                onUpdated={handleReviewUpdated}
+              />
             ) : null}
+            {isFailedIngredient(ingredient) && onReprompt && (
+              <Button
+                label={translateRetry('retry')}
+                ariaLabel={translateRetry('retryAriaLabel')}
+                icon={<RefreshCw className="size-3.5" />}
+                variant={ButtonVariant.GHOST}
+                size={ButtonSize.XS}
+                onClick={() => onReprompt(ingredient)}
+              />
+            )}
           </div>
         ),
       },
     ],
-    [translate, isActionsEnabled, handleReviewUpdated],
+    [
+      onReprompt,
+      translate,
+      translateRetry,
+      isActionsEnabled,
+      handleReviewUpdated,
+    ],
   );
 
   const openIngredientPreview = useCallback(
@@ -698,19 +599,10 @@ export default function IngredientsListContent({
         isDisabled: (ingredient: IIngredient) =>
           storyboardEntry.pendingAssetId === ingredient.id,
       },
-      {
-        icon: <RefreshCw />,
-        isVisible: (ingredient: IIngredient) =>
-          Boolean(onReprompt) && isFailedIngredient(ingredient),
-        onClick: (ingredient: IIngredient) => onReprompt?.(ingredient),
-        tooltip: translateRetry('retryAriaLabel'),
-      },
     ],
     [
       handleViewIngredient,
       isActionsEnabled,
-      onReprompt,
-      translateRetry,
       scope,
       storyboardEntry.canCreateFromAsset,
       storyboardEntry.createFromAsset,
@@ -755,9 +647,6 @@ export default function IngredientsListContent({
 
       return (
         <AppTable
-          density="compact"
-          enableDragScroll
-          scrollAriaLabel={translate('scrollTable')}
           items={filteredIngredients}
           isLoading={isLoading}
           columns={columns}
@@ -874,9 +763,6 @@ export default function IngredientsListContent({
                 {translate('otherAssets')}
               </h3>
               <AppTable
-                density="compact"
-                enableDragScroll
-                scrollAriaLabel={translate('scrollTable')}
                 items={nonVisualIngredients}
                 isLoading={false}
                 columns={columns}
@@ -897,9 +783,6 @@ export default function IngredientsListContent({
 
     return (
       <AppTable
-        density="compact"
-        enableDragScroll
-        scrollAriaLabel={translate('scrollTable')}
         items={filteredIngredients}
         isLoading={isLoading}
         columns={columns}

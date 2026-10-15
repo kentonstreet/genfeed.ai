@@ -27,16 +27,16 @@ export enum LibraryShelf {
   ARCHIVED = 'archived',
 }
 
-/** Display order of shelves in the Library status filter. */
+/** Display order of shelves in the Library sidebar. */
 export const LIBRARY_SHELF_ORDER: readonly LibraryShelf[] = [
-  LibraryShelf.UNSORTED,
+  LibraryShelf.REFERENCES,
   LibraryShelf.GENERATING,
-  LibraryShelf.APPROVED,
+  LibraryShelf.UNSORTED,
   LibraryShelf.NEEDS_REVIEW,
+  LibraryShelf.APPROVED,
   LibraryShelf.REJECTED,
   LibraryShelf.FAILED,
   LibraryShelf.ARCHIVED,
-  LibraryShelf.REFERENCES,
 ] as const;
 
 /** Human labels for each shelf. */
@@ -52,9 +52,9 @@ export const LIBRARY_SHELF_LABELS: Record<LibraryShelf, string> = {
 };
 
 /**
- * Library places — views that are not generation state. Recent and Starred
- * are ownership and recency cuts. Trash is the status filter, not a place
- * in the sidebar.
+ * Library places — the non-shelf destinations in the sidebar. Unlike shelves,
+ * these are not generation state: they are ownership (`isFavorite`) and
+ * lifecycle (`isDeleted`) views over the same rows.
  */
 export enum LibraryPlace {
   ASSETS = 'assets',

@@ -1,13 +1,9 @@
-import { runWithActionOrigin } from '@api/action-origin/action-origin.context';
 import type { IngredientServerCreate } from '@api/collections/ingredients/dto/create-ingredient.dto';
 import { UpdateIngredientDto } from '@api/collections/ingredients/dto/update-ingredient.dto';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
-import { PersonaReferencesService } from '@api/collections/personas/services/persona-references.service';
 import { LibraryShelfUtil } from '@api/helpers/utils/library-shelf/library-shelf.util';
-import { CacheService } from '@api/services/cache/cache.service';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
-  ActionOrigin,
   AssetScope,
   FleetReviewStatus,
   IngredientCategory,
@@ -15,10 +11,6 @@ import {
   IngredientStatus,
   LibraryShelf,
 } from '@genfeedai/contracts';
-import {
-  GenerationEntryAttribution,
-  GenerationEntryChannel,
-} from '@genfeedai/contracts/interfaces/content/generation-entry.interface';
 import { testId } from '@helpers/testing/test-id.helper';
 import { LoggerService } from '@libs/logger/logger.service';
 import {
@@ -53,8 +45,6 @@ describe('IngredientsService', () => {
     groupBy: ReturnType<typeof vi.fn>;
   };
   let prisma: PrismaService;
-  const invalidateByTags = vi.fn();
-  const personaReferences = { resyncForIngredients: vi.fn() };
 
   const brandId = testId('brand');
   const ingredientId = testId('ingredient');
@@ -73,10 +63,6 @@ describe('IngredientsService', () => {
   };
 
   beforeEach(async () => {
-    invalidateByTags.mockReset().mockResolvedValue(1);
-    personaReferences.resyncForIngredients
-      .mockReset()
-      .mockResolvedValue(undefined);
     ingredientDelegate = {
       count: vi.fn().mockResolvedValue(1),
       create: vi.fn().mockResolvedValue(mockIngredient),
@@ -92,8 +78,6 @@ describe('IngredientsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         IngredientsService,
-        { provide: CacheService, useValue: { invalidateByTags } },
-        { provide: PersonaReferencesService, useValue: personaReferences },
         { provide: PrismaService, useValue: prisma },
         {
           provide: LoggerService,
@@ -112,98 +96,6 @@ describe('IngredientsService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
-  });
-
-  it('persists server-captured entry with generated placeholders and preserves it through completion', async () => {
-    const generationEntry = {
-      channel: GenerationEntryChannel.MCP,
-      attribution: GenerationEntryAttribution.SERVER_VERIFIED,
-    };
-    await runWithActionOrigin(
-      { origin: ActionOrigin.MCP, generationEntry },
-      () =>
-        service.create({
-          brandId,
-          category: IngredientCategory.IMAGE,
-          origin: IngredientOrigin.GENERATED,
-          status: IngredientStatus.PROCESSING,
-          providerData: {
-            compiler: 'v1',
-            generationEntry: { channel: 'spoof' },
-          },
-        }),
-    );
-    expect(ingredientDelegate.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          providerData: { compiler: 'v1', generationEntry },
-        }),
-      }),
-    );
-    ingredientDelegate.findFirst.mockResolvedValue({
-      ...mockIngredient,
-      providerData: { generationEntry },
-    });
-    await service.patch(ingredientId, { providerData: { completed: true } });
-    expect(ingredientDelegate.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          providerData: { completed: true, generationEntry },
-        }),
-      }),
-    );
-  });
-
-  it('preserves each asset entry during bulk metadata replacement under its organization', async () => {
-    const web = {
-      channel: GenerationEntryChannel.WEB,
-      attribution: GenerationEntryAttribution.CLIENT_REPORTED,
-    };
-    const api = {
-      channel: GenerationEntryChannel.API,
-      attribution: GenerationEntryAttribution.SERVER_VERIFIED,
-    };
-    ingredientDelegate.findMany.mockResolvedValue([
-      {
-        ...mockIngredient,
-        id: 'asset-web',
-        providerData: { generationEntry: web },
-      },
-      {
-        ...mockIngredient,
-        id: 'asset-api',
-        providerData: { generationEntry: api },
-      },
-      { ...mockIngredient, id: 'asset-legacy', providerData: {} },
-    ]);
-    ingredientDelegate.updateMany.mockResolvedValue({ count: 1 });
-    const result = await runWithTenantContext({ organizationId }, () =>
-      service.patchAll(
-        { brandId },
-        { providerData: { completed: true, generationEntry: api } },
-      ),
-    );
-    expect(result).toEqual({ modifiedCount: 3 });
-    for (const [id, entry] of [
-      ['asset-web', web],
-      ['asset-api', api],
-      ['asset-legacy', undefined],
-    ] as const) {
-      expect(ingredientDelegate.updateMany).toHaveBeenCalledWith({
-        where: expect.objectContaining({
-          id,
-          organizationId,
-          isDeleted: false,
-          AND: [expect.objectContaining({ brandId })],
-        }),
-        data: expect.objectContaining({
-          providerData: {
-            completed: true,
-            ...(entry ? { generationEntry: entry } : {}),
-          },
-        }),
-      });
-    }
   });
 
   describe('create', () => {
@@ -296,38 +188,6 @@ describe('IngredientsService', () => {
   });
 
   describe('patch', () => {
-    it('clears cached Library lists and counts after committing a rejection', async () => {
-      await service.patch(ingredientId, { status: IngredientStatus.REJECTED });
-
-      expect(invalidateByTags).toHaveBeenCalledWith(['ingredients']);
-      expect(invalidateByTags.mock.invocationCallOrder[0]).toBeGreaterThan(
-        ingredientDelegate.update.mock.invocationCallOrder[0],
-      );
-    });
-
-    it('does not clear the Library cache when a rejection fails', async () => {
-      ingredientDelegate.update.mockRejectedValueOnce(
-        new Error('write failed'),
-      );
-
-      await expect(
-        service.patch(ingredientId, { status: IngredientStatus.REJECTED }),
-      ).rejects.toThrow('write failed');
-      expect(invalidateByTags).not.toHaveBeenCalled();
-    });
-
-    it('keeps a committed rejection successful when cache invalidation is unavailable', async () => {
-      invalidateByTags.mockRejectedValueOnce(new Error('redis unavailable'));
-
-      await expect(
-        service.patch(ingredientId, { status: IngredientStatus.REJECTED }),
-      ).resolves.toBeDefined();
-      expect(service.logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('could not invalidate the Library list cache'),
-        { error: expect.any(Error) },
-      );
-    });
-
     it.each([
       [IngredientStatus.VALIDATED, FleetReviewStatus.APPROVED],
       [IngredientStatus.REJECTED, FleetReviewStatus.REJECTED],
@@ -812,185 +672,6 @@ describe('IngredientsService', () => {
           ).not.toThrow();
         }
       });
-    });
-  });
-
-  describe('character reference re-sync on soft delete', () => {
-    const editor = { brandId: 'brand-1', userId: 'user-1' };
-    const editable = {
-      brandId: 'brand-1',
-      id: 'ing-1',
-      scope: AssetScope.USER,
-      userId: 'user-1',
-    };
-
-    it('re-mirrors the primary reference after a single soft delete', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(editable);
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-
-      await runWithTenantContext({ organizationId: 'org-1' }, () =>
-        service.softDeleteOneScoped({
-          editor,
-          id: 'ing-1',
-          organizationId: 'org-1',
-        }),
-      );
-
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        'org-1',
-        ['ing-1'],
-      );
-    });
-
-    it('re-mirrors only the ids a bulk soft delete actually removed', async () => {
-      ingredientDelegate.findMany.mockResolvedValue([
-        editable,
-        { ...editable, id: 'ing-2', userId: 'other-user' },
-      ]);
-
-      await service.bulkSoftDeleteScoped({
-        editor,
-        ids: ['ing-1', 'ing-2'],
-        organizationId: 'org-1',
-      });
-
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        'org-1',
-        ['ing-1'],
-      );
-    });
-
-    it('re-mirrors after remove() and a PATCH of isDeleted', async () => {
-      await runWithTenantContext({ organizationId }, () =>
-        service.remove(ingredientId),
-      );
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        organizationId,
-        [ingredientId],
-      );
-
-      personaReferences.resyncForIngredients.mockClear();
-      await service.patch(ingredientId, { isDeleted: true }).catch(() => null);
-      expect(personaReferences.resyncForIngredients).toHaveBeenCalledWith(
-        organizationId,
-        [ingredientId],
-      );
-    });
-
-    it('never fails the delete when the re-sync fails', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(editable);
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-      personaReferences.resyncForIngredients.mockRejectedValue(
-        new Error('db down'),
-      );
-
-      await expect(
-        runWithTenantContext({ organizationId: 'org-1' }, () =>
-          service.softDeleteOneScoped({
-            editor,
-            id: 'ing-1',
-            organizationId: 'org-1',
-          }),
-        ),
-      ).resolves.toMatchObject({ id: 'ing-1' });
-    });
-
-    it('skips the re-sync when nothing was deleted', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue(null);
-
-      await service.softDeleteOneScoped({
-        editor,
-        id: 'missing',
-        organizationId: 'org-1',
-      });
-
-      expect(personaReferences.resyncForIngredients).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('softDeleteOneScoped', () => {
-    const editor = { brandId: 'brand-1', userId: 'user-1' };
-
-    it('soft-deletes an editable live row inside the organization', async () => {
-      ingredientDelegate.findFirst.mockResolvedValue({
-        id: 'ing-1',
-        userId: 'user-1',
-        scope: AssetScope.USER,
-        brandId: 'brand-1',
-      });
-      ingredientDelegate.update.mockResolvedValue({
-        id: 'ing-1',
-        isDeleted: true,
-        organizationId: 'org-1',
-      });
-
-      const result = await runWithTenantContext(
-        { organizationId: 'org-1' },
-        () =>
-          service.softDeleteOneScoped({
-            editor,
-            id: 'ing-1',
-            organizationId: 'org-1',
-          }),
-      );
-
-      expect(ingredientDelegate.findFirst).toHaveBeenCalledWith({
-        select: { id: true, userId: true, scope: true, brandId: true },
-        where: { id: 'ing-1', isDeleted: false, organizationId: 'org-1' },
-      });
-      expect(ingredientDelegate.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { isDeleted: true },
-          where: { id: 'ing-1', isDeleted: false, organizationId: 'org-1' },
-        }),
-      );
-      expect(result).toMatchObject({ id: 'ing-1', isDeleted: true });
-      const updateArgs = ingredientDelegate.update.mock.calls[0][0];
-      expect(() =>
-        assertTenantScopedQuery({
-          args: updateArgs,
-          isCloud: true,
-          model: 'Ingredient',
-          operation: 'update',
-          tenantModelNames: new Set(['Ingredient']),
-        }),
-      ).not.toThrow();
-    });
-
-    it('does not write when the asset is missing or not editable', async () => {
-      ingredientDelegate.findFirst.mockResolvedValueOnce(null);
-      await expect(
-        service.softDeleteOneScoped({
-          editor,
-          id: 'missing',
-          organizationId: 'org-1',
-        }),
-      ).resolves.toBeNull();
-
-      ingredientDelegate.findFirst.mockResolvedValueOnce({
-        id: 'private',
-        userId: 'other-user',
-        scope: AssetScope.USER,
-        brandId: 'brand-1',
-      });
-      await expect(
-        service.softDeleteOneScoped({
-          editor,
-          id: 'private',
-          organizationId: 'org-1',
-        }),
-      ).resolves.toBeNull();
-
-      expect(ingredientDelegate.update).not.toHaveBeenCalled();
-      expect(ingredientDelegate.updateMany).not.toHaveBeenCalled();
     });
   });
 
