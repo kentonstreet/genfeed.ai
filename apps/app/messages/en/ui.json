@@ -107,9 +107,6 @@
     "generate": "Generate draft",
     "generating": "Generating…",
     "failed": "Could not generate a draft. Please try again.",
-    "savedReady": "Draft saved with your approved brand kit.",
-    "savedNeedsReview": "Draft saved in a provisional style until you approve your own brand kit.",
-    "viewReceipt": "View receipt",
     "platform": "Channel",
     "account": "Publishing account",
     "noAccount": "Draft only — connect an account later",
@@ -182,15 +179,6 @@
     "appliedContext": "Applied context",
     "brand": "This brand",
     "brandLabel": "Brand prompt enhancement",
-    "brandMode": {
-      "approved_brand": "Approved brand",
-      "provisional_brand": "Provisional brand",
-      "raw": "Not branded"
-    },
-    "brandModeHint": {
-      "provisional_brand": "Your brand kit is not approved yet. This was generated from the draft kit and is not checked for compliance.",
-      "raw": "The prompt was sent exactly as typed. No brand was applied."
-    },
     "description": "Improve image and video prompts automatically. These preferences apply in Studio and all connected agents.",
     "enhancementSkipped": "Enhancement skipped",
     "inherit": "Inherit",
@@ -516,21 +504,6 @@
     "privacyFriends": "Friends",
     "privacyPrivate": "Only me"
   },
-  "youtubePublishing": {
-    "sectionLabel": "YouTube publishing settings",
-    "title": "Post to YouTube",
-    "privacy": "Privacy",
-    "choosePrivacy": "Choose privacy",
-    "private": "Private",
-    "unlisted": "Unlisted",
-    "public": "Public",
-    "madeForKids": "Made for kids",
-    "save": "Save YouTube settings",
-    "saving": "Saving…",
-    "saved": "YouTube settings saved",
-    "refreshFailed": "YouTube settings saved, but the view could not refresh. Reload to see the latest settings.",
-    "saveFailed": "Could not save YouTube settings."
-  },
   "seoScorecard": {
     "seoScore": "SEO score",
     "notScored": "Not scored",
@@ -621,7 +594,6 @@
     },
     "viewAria": "Inspector view",
     "tiktokSettings": "TikTok settings",
-    "youtubeSettings": "YouTube settings",
     "tiktokReady": "Ready",
     "tiktokNeedsSettings": "Needs settings",
     "performance": "Performance",
