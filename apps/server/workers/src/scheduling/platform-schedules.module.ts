@@ -20,7 +20,6 @@ import { CronBrandedDispatchRecoveryModule } from '@workers/crons/branded-dispat
 import { CronCredentialsModule } from '@workers/crons/credentials/cron.credentials.module';
 import { CronCreditsModule } from '@workers/crons/credits/cron.credits.module';
 import { CronEngagementModule } from '@workers/crons/engagement/cron.engagement.module';
-import { CronExternalVoiceCatalogModule } from '@workers/crons/external-voice-catalog/cron.external-voice-catalog.module';
 import { CronFalModelWatcherModule } from '@workers/crons/fal-model-watcher/cron.fal-model-watcher.module';
 import { CronIngredientsModule } from '@workers/crons/ingredients/cron.ingredients.module';
 import { CronLifecycleEmailsModule } from '@workers/crons/lifecycle-emails/cron.lifecycle-emails.module';
@@ -85,7 +84,6 @@ import { CrunReconcileService } from '@workers/services/crun-reconcile.service';
     CronCredentialsModule,
     CronCreditsModule,
     CronEngagementModule,
-    CronExternalVoiceCatalogModule,
     CronFalModelWatcherModule,
     CronIngredientsModule,
     CronLifecycleEmailsModule,
