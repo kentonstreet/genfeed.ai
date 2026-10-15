@@ -1,12 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { AuthenticatedUser } from '@api/auth/interfaces/authenticated-user.interface';
-import { BillingAccountsController } from '@api/collections/billing-accounts/controllers/billing-accounts.controller';
-import type { BillingAccountMigrationService } from '@api/collections/billing-accounts/services/billing-account-migration.service';
 import { BillingAccountsService } from '@api/collections/billing-accounts/services/billing-accounts.service';
 import { CreditBalanceService } from '@api/collections/credits/services/credit-balance.service';
 import { CreditReservationService } from '@api/collections/credits/services/credit-reservation.service';
 import { CreditTransactionsService } from '@api/collections/credits/services/credit-transactions.service';
-import type { RequestWithContext } from '@api/common/middleware/request-context.middleware';
 import type { CacheInvalidationService } from '@api/common/services/cache-invalidation.service';
 import { StripeWebhookBillingService } from '@api/endpoints/webhooks/stripe/stripe-webhook-billing.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
@@ -15,21 +11,17 @@ import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
   BillingAccountMemberRole,
   BillingAccountOrganizationStatus,
-  CreditTransactionCategory,
   MemberRole,
   SubscriptionStatus,
-  SubscriptionTier,
 } from '@genfeedai/contracts';
 import { PrismaClient } from '@genfeedai/prisma';
 import type { ConfigService } from '@libs/config/config.service';
 import { runWithTenantContext } from '@libs/prisma/tenant-context';
 import { TenantIsolationError } from '@libs/prisma/tenant-guard';
-import { ForbiddenException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import {
   afterAll,
   afterEach,
-  beforeAll,
   beforeEach,
   describe,
   expect,
@@ -75,7 +67,7 @@ describe.skipIf(!connectionString)(
         ],
       mediaUrlConfig: { cdnUrl: 'https://cdn.test' },
     } as unknown as ConfigService;
-    let guardedPrisma: PrismaService;
+    const guardedPrisma = new PrismaService(configService);
 
     const logger = {
       debug: vi.fn(),
@@ -83,55 +75,34 @@ describe.skipIf(!connectionString)(
       log: vi.fn(),
       warn: vi.fn(),
     };
-    let billingAccounts: BillingAccountsService;
-    let creditReservations: CreditReservationService;
-    let stripeWebhookBilling: StripeWebhookBillingService;
-    let billingAccountsController: BillingAccountsController;
-    beforeAll(() => {
-      guardedPrisma = new PrismaService(configService);
-      billingAccounts = new BillingAccountsService(
-        guardedPrisma,
-        logger as never,
-      );
-      const transactionUtil = new TransactionUtil(
-        guardedPrisma,
-        logger as never,
-      );
-      const creditBalance = new CreditBalanceService(
-        guardedPrisma,
-        logger as never,
-      );
-      const creditTransactions = new CreditTransactionsService(
-        guardedPrisma,
-        logger as never,
-        creditBalance,
-        {
-          invalidate: vi.fn().mockResolvedValue(undefined),
-        } as unknown as CacheInvalidationService,
-      );
-      creditReservations = new CreditReservationService(
-        guardedPrisma,
-        logger as never,
-        creditBalance,
-        creditTransactions,
-        transactionUtil,
-      );
-      stripeWebhookBilling = new StripeWebhookBillingService(
-        guardedPrisma,
-        billingAccounts,
-      );
-      // The real controller (#5296) — not a hand-rolled call sequence — so a
-      // regression test that drives it exercises the exact tenant-context
-      // shape a real request produces: the interceptor sets the context from
-      // the SESSION organization, and `linkOrganization`'s body carries a
-      // different TARGET organization. `migrationService` is unused by
-      // `linkOrganization`/`getCurrent` and is never constructed through Nest
-      // DI here, so a stub is safe.
-      billingAccountsController = new BillingAccountsController(
-        billingAccounts,
-        {} as BillingAccountMigrationService,
-      );
-    });
+    const billingAccounts = new BillingAccountsService(
+      guardedPrisma,
+      logger as never,
+    );
+    const transactionUtil = new TransactionUtil(guardedPrisma, logger as never);
+    const creditBalance = new CreditBalanceService(
+      guardedPrisma,
+      logger as never,
+    );
+    const creditTransactions = new CreditTransactionsService(
+      guardedPrisma,
+      logger as never,
+      creditBalance,
+      {
+        invalidate: vi.fn().mockResolvedValue(undefined),
+      } as unknown as CacheInvalidationService,
+    );
+    const creditReservations = new CreditReservationService(
+      guardedPrisma,
+      logger as never,
+      creditBalance,
+      creditTransactions,
+      transactionUtil,
+    );
+    const stripeWebhookBilling = new StripeWebhookBillingService(
+      guardedPrisma,
+      billingAccounts,
+    );
 
     let userId: string;
     let actorMemberRoleId: string;
@@ -149,13 +120,8 @@ describe.skipIf(!connectionString)(
       const db = database();
       await db.user.create({ data: { handle: userId, id: userId } });
 
-      // Authorization reads `Member.roleId -> Role.key`, so the actor holds
-      // the real owner role. Roles are shared by key across suites: upsert,
-      // never delete.
-      const role = await db.role.upsert({
-        create: { key: MemberRole.OWNER, label: 'Owner' },
-        update: {},
-        where: { key: MemberRole.OWNER },
+      const role = await db.role.create({
+        data: { key: `bag-pg-role-${suffix}`, label: 'Owner' },
       });
       actorMemberRoleId = role.id;
 
@@ -170,19 +136,8 @@ describe.skipIf(!connectionString)(
             userId,
           },
         });
-        // currentBrandId is a required per-member invariant (#5219) — every
-        // org needs at least one brand for its member row to reference.
-        const brand = await db.brand.create({
-          data: {
-            label: organizationId,
-            organizationId,
-            slug: organizationId,
-            userId,
-          },
-        });
         await db.member.create({
           data: {
-            currentBrandId: brand.id,
             isActive: true,
             organizationId,
             roleId: actorMemberRoleId,
@@ -225,9 +180,6 @@ describe.skipIf(!connectionString)(
       await db.member.deleteMany({
         where: { organizationId: { in: organizationIds } },
       });
-      await db.brand.deleteMany({
-        where: { organizationId: { in: organizationIds } },
-      });
       await db.organization.deleteMany({
         where: { id: { in: organizationIds } },
       });
@@ -237,12 +189,13 @@ describe.skipIf(!connectionString)(
       await db.billingAccount.deleteMany({
         where: { id: { in: billingAccountIds } },
       });
+      await db.role.delete({ where: { id: actorMemberRoleId } });
       await db.user.deleteMany({ where: { id: userId } });
     });
 
     afterAll(async () => {
       await prisma?.$disconnect();
-      await guardedPrisma?.$disconnect();
+      await guardedPrisma.$disconnect();
     });
 
     it('links an organization to a billing account end to end, inside a matching tenant context', async () => {
@@ -275,212 +228,6 @@ describe.skipIf(!connectionString)(
         where: { organizationId: organizationIds[0] },
       });
       expect(wallet.billingAccountId).toBe(billingAccountIds[0]);
-    });
-
-    it('links a second organization through the real controller path when the session organization differs from the target (#5296)', async () => {
-      // The session organization must already administer a billing account
-      // before it can link a second one — direct attachment, the same
-      // precondition `resolveForOrganization` expects of any caller.
-      await database().organization.update({
-        data: { billingAccountId: billingAccountIds[0] },
-        where: { id: organizationIds[0] },
-      });
-
-      const user = {
-        id: userId,
-        organizationId: organizationIds[0],
-        userId,
-      } as AuthenticatedUser;
-      const request = {
-        context: { organizationId: organizationIds[0] },
-        originalUrl: '/billing-accounts/current/organizations',
-      } as RequestWithContext;
-
-      // The tenant interceptor sets the context from the SESSION
-      // organization (organizationIds[0]) before the controller runs; the
-      // request body targets a DIFFERENT organization (organizationIds[1]).
-      // This is exactly the shape #5296 reported as broken through the real
-      // endpoint — every prior spec in this file instead ran
-      // `linkOrganization` with the tenant context set to the target
-      // organization, which hid the bug.
-      const response = await runWithTenantContext(
-        { organizationId: organizationIds[0] },
-        () =>
-          billingAccountsController.linkOrganization(user, request, {
-            organizationId: organizationIds[1],
-          }),
-      );
-      expect(response.data?.id).toBe(billingAccountIds[0]);
-
-      const db = database();
-      const targetOrganization = await db.organization.findUniqueOrThrow({
-        where: { id: organizationIds[1] },
-      });
-      expect(targetOrganization.billingAccountId).toBe(billingAccountIds[0]);
-
-      const link = await db.billingAccountOrganization.findFirstOrThrow({
-        where: {
-          billingAccountId: billingAccountIds[0],
-          organizationId: organizationIds[1],
-        },
-      });
-      expect(link.status).toBe(BillingAccountOrganizationStatus.LINKED);
-    });
-
-    it('rejects linking a target organization the actor does not administer, through the real controller path (#5296)', async () => {
-      // The session organization must already administer a billing account
-      // before it can attempt to link a second one.
-      await database().organization.update({
-        data: { billingAccountId: billingAccountIds[0] },
-        where: { id: organizationIds[0] },
-      });
-
-      // Demote the actor to a non-admin role on the TARGET organization
-      // only — they remain OWNER of the session organization (and so still
-      // pass the billing-account-admin check on its billing account); only
-      // the org-admin-on-target check, reachable only inside the explicit
-      // cross-org tenant-context switch, should reject this.
-      const userRole = await database().role.upsert({
-        create: { key: MemberRole.USER, label: 'User' },
-        update: {},
-        where: { key: MemberRole.USER },
-      });
-      await database().member.updateMany({
-        data: { roleId: userRole.id, roleKey: MemberRole.USER },
-        where: { organizationId: organizationIds[1], userId },
-      });
-
-      const user = {
-        id: userId,
-        organizationId: organizationIds[0],
-        userId,
-      } as AuthenticatedUser;
-      const request = {
-        context: { organizationId: organizationIds[0] },
-        originalUrl: '/billing-accounts/current/organizations',
-      } as RequestWithContext;
-
-      await expect(
-        runWithTenantContext({ organizationId: organizationIds[0] }, () =>
-          billingAccountsController.linkOrganization(user, request, {
-            organizationId: organizationIds[1],
-          }),
-        ),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-
-      const db = database();
-      const targetOrganization = await db.organization.findUniqueOrThrow({
-        where: { id: organizationIds[1] },
-      });
-      expect(targetOrganization.billingAccountId).toBeNull();
-    });
-
-    it('gives a VIEWER the full snapshot but a plain org member only their own organization view (#5374)', async () => {
-      const db = database();
-      const suffix = randomUUID();
-      const viewerUserId = `bag-pg-viewer-${suffix}`;
-      const memberUserId = `bag-pg-member-${suffix}`;
-      await db.user.createMany({
-        data: [
-          { handle: viewerUserId, id: viewerUserId },
-          { handle: memberUserId, id: memberUserId },
-        ],
-      });
-
-      // Link BOTH organizations to the same billing account, so a leak in
-      // the reduced view would show up as organizationIds[1]'s data reaching
-      // a caller scoped to organizationIds[0]. Scale tier lifts the
-      // single-organization plan limit so both links succeed.
-      await db.billingAccount.update({
-        data: { planTier: SubscriptionTier.SCALE },
-        where: { id: billingAccountIds[0] },
-      });
-      await runWithTenantContext({ organizationId: organizationIds[0] }, () =>
-        billingAccounts.linkOrganization({
-          actorUserId: userId,
-          billingAccountId: billingAccountIds[0],
-          organizationId: organizationIds[0],
-        }),
-      );
-      await runWithTenantContext({ organizationId: organizationIds[1] }, () =>
-        billingAccounts.linkOrganization({
-          actorUserId: userId,
-          billingAccountId: billingAccountIds[0],
-          organizationId: organizationIds[1],
-        }),
-      );
-
-      await db.creditTransaction.create({
-        data: {
-          amount: 7,
-          billingAccountId: billingAccountIds[0],
-          category: CreditTransactionCategory.DEDUCT,
-          organizationId: organizationIds[0],
-        },
-      });
-      await db.creditTransaction.create({
-        data: {
-          amount: 40,
-          billingAccountId: billingAccountIds[0],
-          category: CreditTransactionCategory.DEDUCT,
-          organizationId: organizationIds[1],
-        },
-      });
-
-      await db.billingAccountMember.create({
-        data: {
-          billingAccountId: billingAccountIds[0],
-          role: BillingAccountMemberRole.VIEWER,
-          userId: viewerUserId,
-        },
-      });
-
-      const viewerSnapshot = await runWithTenantContext(
-        { organizationId: organizationIds[0] },
-        () => billingAccounts.getSnapshot(organizationIds[0], viewerUserId),
-      );
-      expect(viewerSnapshot.kind).toBe('account');
-      if (viewerSnapshot.kind !== 'account') {
-        throw new Error('expected full account snapshot');
-      }
-      expect(
-        viewerSnapshot.linkedOrganizations
-          .map((link) => link.organizationId)
-          .sort(),
-      ).toEqual([...organizationIds].sort());
-
-      const memberSnapshot = await runWithTenantContext(
-        { organizationId: organizationIds[0] },
-        () => billingAccounts.getSnapshot(organizationIds[0], memberUserId),
-      );
-      expect(memberSnapshot).toEqual({
-        budgetPolicy: null,
-        callerRole: null,
-        capabilities: {
-          canCheckout: false,
-          canDetachOrganization: false,
-          canLinkOrganization: false,
-          canManageBudgets: false,
-          canManageMembers: false,
-          canOpenPortal: false,
-        },
-        isLinked: true,
-        id: billingAccountIds[0],
-        kind: 'organization',
-        monthlyBudgetCredits: null,
-        organizationId: organizationIds[0],
-        usage: 7,
-      });
-
-      // The shared afterEach only clears billingAccountMember rows for
-      // billingAccountIds[0]/[1] once this test returns — drop the extra
-      // members row first so deleting these extra users doesn't trip its FK.
-      await db.billingAccountMember.deleteMany({
-        where: { userId: { in: [viewerUserId, memberUserId] } },
-      });
-      await db.user.deleteMany({
-        where: { id: { in: [viewerUserId, memberUserId] } },
-      });
     });
 
     it('resolves via the LINKED BillingAccountOrganization branch, not direct attachment', async () => {
