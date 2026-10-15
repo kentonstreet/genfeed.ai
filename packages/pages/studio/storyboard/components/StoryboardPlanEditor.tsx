@@ -36,12 +36,10 @@ import {
   editStoryboardShot,
   editStoryboardStyle,
   insertStoryboardShot,
-  overlayStoryboardStills,
   removeStoryboardShot,
   reorderStoryboardShots,
   storyboardApprovalProblems,
   storyboardAssetLabel,
-  storyboardShotsNeedingStills,
 } from '@pages/studio/storyboard/utils/storyboard-plan';
 import {
   snapStoryboardDuration,
@@ -72,8 +70,6 @@ export default function StoryboardPlanEditor({
   savePlan,
   resetPlan,
   approvePlan,
-  quoteStills,
-  generateStills,
   capabilities,
   capabilityError,
   refreshCapabilities,
@@ -144,7 +140,7 @@ export default function StoryboardPlanEditor({
   useEffect(() => {
     onSaveStatusChange?.(autosave.status);
   }, [onSaveStatusChange, autosave.status]);
-  const plan = overlayStoryboardStills(autosave.value, persistedPlan);
+  const plan = autosave.value;
   const title = plan.title.trim() || translateDraft('untitled');
   useRegisterBreadcrumbLeaf(run.id, title);
   const currentCapabilities =
@@ -159,8 +155,6 @@ export default function StoryboardPlanEditor({
           (candidate) => candidate.key === plan.videoModelKey,
         );
   const supportedDurations = model?.supportedDurationsSeconds ?? [];
-  // A new shot needs a supported length; until one resolves, adding is unavailable.
-  const hasShotDuration = supportedDurations.some((seconds) => seconds > 0);
   const timingDisabled =
     autosave.status === 'saving' || !model || !currentCapabilities;
   const isDisabled =
@@ -267,29 +261,6 @@ export default function StoryboardPlanEditor({
     } finally {
       setWorking(false);
     }
-  }
-  /** Prices the stills, asks before charging, then starts them. */
-  function requestStills(shotIds?: readonly string[]) {
-    if (!quoteStills || !generateStills) return;
-    void perform(async (revision) => {
-      const quote = await quoteStills(revision, shotIds);
-      const count = quote.items.length;
-      openConfirm({
-        isOpen: true,
-        label: translate('stillQuoteTitle', { count }),
-        message:
-          quote.billingMode === 'byok'
-            ? translate('stillQuoteByok', { count })
-            : translate('stillQuoteMessage', { count, credits: quote.total }),
-        confirmLabel: translate('stillQuoteConfirm'),
-        onConfirm: () =>
-          perform(async (current) => {
-            if (current !== quote.revision)
-              throw new Error(translate('stillQuoteChanged'));
-            await generateStills(quote);
-          }),
-      });
-    });
   }
   function reset() {
     openConfirm({
@@ -428,10 +399,8 @@ export default function StoryboardPlanEditor({
       shot.sectionLabel?.trim() || translate('shot', { ordinal: shot.ordinal }),
     durationSeconds: shot.durationSeconds,
     isStillFresh: shot.stillFreshness === 'fresh',
-    stillFreshness: shot.stillFreshness,
     stillUrl: stillUrl(shot),
   }));
-  const missingStillCount = storyboardShotsNeedingStills(plan).length;
 
   return (
     <>
@@ -581,11 +550,6 @@ export default function StoryboardPlanEditor({
                         onDelete={() =>
                           edit(removeStoryboardShot(plan, shot.id))
                         }
-                        onGenerateStill={
-                          quoteStills && generateStills
-                            ? () => requestStills([shot.id])
-                            : undefined
-                        }
                         onMove={(offset) =>
                           edit(reorderStoryboardShots(plan, shot.id, offset))
                         }
@@ -611,9 +575,7 @@ export default function StoryboardPlanEditor({
                       />
                       {next ? (
                         <StoryboardShotJoint
-                          canAddShot={
-                            plan.shots.length < MAX_SHOTS && hasShotDuration
-                          }
+                          canAddShot={plan.shots.length < MAX_SHOTS}
                           index={index}
                           interpolationAvailable={Boolean(
                             model?.hasInterpolation &&
@@ -638,10 +600,7 @@ export default function StoryboardPlanEditor({
                 icon={<Plus className="size-4" />}
                 variant={ButtonVariant.SECONDARY}
                 disabled={
-                  isDisabled ||
-                  plan.shots.length >= MAX_SHOTS ||
-                  timingDisabled ||
-                  !hasShotDuration
+                  isDisabled || plan.shots.length >= MAX_SHOTS || timingDisabled
                 }
                 onClick={() => addShot()}
               />
@@ -665,28 +624,15 @@ export default function StoryboardPlanEditor({
               label={translateDraft('emptyTitle')}
               description={translateDraft('emptyDescription')}
               actions={
-                <div className="mt-1 flex flex-wrap justify-center gap-2">
-                  {sourceBrief && onDraftFromBrief ? (
-                    <Button
-                      label={translateDraft('draftFromBrief')}
-                      variant={ButtonVariant.SECONDARY}
-                      disabled={isDisabled}
-                      onClick={onDraftFromBrief}
-                    />
-                  ) : null}
+                sourceBrief && onDraftFromBrief ? (
                   <Button
-                    label={translate('addShot')}
-                    icon={<Plus className="size-4" />}
-                    variant={ButtonVariant.GHOST}
-                    disabled={isDisabled || timingDisabled || !hasShotDuration}
-                    tooltip={
-                      hasShotDuration
-                        ? undefined
-                        : translate('durationUntilResolved')
-                    }
-                    onClick={() => addShot()}
+                    className="mt-1"
+                    label={translateDraft('draftFromBrief')}
+                    variant={ButtonVariant.SECONDARY}
+                    disabled={isDisabled}
+                    onClick={onDraftFromBrief}
                   />
-                </div>
+                ) : undefined
               }
             />
           )}
@@ -719,11 +665,6 @@ export default function StoryboardPlanEditor({
             />
           }
           castCount={plan.cast.length}
-          isStillActionDisabled={isDisabled}
-          missingStillCount={missingStillCount}
-          onGenerateMissingStills={
-            quoteStills && generateStills ? () => requestStills() : undefined
-          }
           details={
             <StoryboardDetailsPanel
               isDisabled={isDisabled}

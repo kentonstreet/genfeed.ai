@@ -60,12 +60,7 @@ describe('brand-scoped durable storyboard loading', () => {
   });
   it('passes brand, run and cancellation signal and hides an old-brand response', async () => {
     let resolveOld:
-      | ((run: {
-          id: string;
-          brandId: string;
-          organizationId: string;
-          config: { revision: number; plan: null };
-        }) => void)
+      | ((run: { id: string; brandId: string; organizationId: string }) => void)
       | undefined;
     mocks.get
       .mockImplementationOnce(
@@ -78,7 +73,6 @@ describe('brand-scoped durable storyboard loading', () => {
         id: 'run',
         brandId: 'brand-two',
         organizationId: 'org',
-        config: { revision: 1, plan: null },
       });
     const { result, rerender } = renderHook(() =>
       useDurableStoryboardRun('run'),
@@ -91,12 +85,7 @@ describe('brand-scoped durable storyboard loading', () => {
     await waitFor(() => expect(result.current.run?.brandId).toBe('brand-two'));
     expect(oldSignal.aborted).toBe(true);
     await act(async () => {
-      resolveOld?.({
-        id: 'run',
-        brandId: 'brand-one',
-        organizationId: 'org',
-        config: { revision: 1, plan: null },
-      });
+      resolveOld?.({ id: 'run', brandId: 'brand-one', organizationId: 'org' });
     });
     expect(result.current.run?.brandId).toBe('brand-two');
   });

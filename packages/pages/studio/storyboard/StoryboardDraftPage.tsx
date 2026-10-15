@@ -42,8 +42,6 @@ export default function StoryboardDraftPage({
   capabilities,
   capabilityError,
   refreshCapabilities,
-  quoteStills,
-  generateStills,
 }: StoryboardDraftPageProps) {
   const translate = useTranslations('pages.studioStoryboard');
   const translateAction = useTranslations('ui.quickActions');
@@ -187,8 +185,6 @@ export default function StoryboardDraftPage({
       savePlan={savePlan}
       resetPlan={resetPlan}
       approvePlan={approvePlan}
-      quoteStills={quoteStills}
-      generateStills={generateStills}
       capabilities={capabilities}
       capabilityError={capabilityError}
       refreshCapabilities={refreshCapabilities}

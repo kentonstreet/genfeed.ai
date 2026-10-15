@@ -1,11 +1,11 @@
 'use client';
 
-import { ButtonSize, ButtonVariant } from '@genfeedai/contracts';
+import { ButtonVariant } from '@genfeedai/contracts';
 import type { StoryboardInspectorProps } from '@genfeedai/props/studio/storyboard.props';
 import { cn } from '@helpers/formatting/cn/cn.util';
 import Tabs from '@ui/navigation/tabs/Tabs';
 import { Button } from '@ui/primitives/button';
-import { ImagePlus, LoaderCircle, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import NextImage from 'next/image';
 import { useTranslations } from 'next-intl';
 import { useState } from 'react';
@@ -17,9 +17,6 @@ export default function StoryboardInspector({
   cast,
   castCount,
   details,
-  isStillActionDisabled = false,
-  missingStillCount = 0,
-  onGenerateMissingStills,
   onSelectShot,
   references,
   referenceCount,
@@ -103,12 +100,7 @@ export default function StoryboardInspector({
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   {shot.name}
                 </span>
-                {shot.stillFreshness === 'generating' ? (
-                  <LoaderCircle
-                    className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-                    aria-label={translate('stillGenerating')}
-                  />
-                ) : shot.isStillFresh ? null : (
+                {shot.isStillFresh ? null : (
                   <TriangleAlert
                     className="size-3.5 shrink-0 text-warning"
                     aria-label={translate('stillOutOfDate')}
@@ -123,19 +115,6 @@ export default function StoryboardInspector({
                 </span>
               </Button>
             ))}
-            {onGenerateMissingStills && missingStillCount > 0 ? (
-              <Button
-                className="mt-2 self-start"
-                icon={<ImagePlus className="size-4" />}
-                isDisabled={isStillActionDisabled}
-                label={translate('generateMissingStills', {
-                  count: missingStillCount,
-                })}
-                onClick={onGenerateMissingStills}
-                size={ButtonSize.SM}
-                variant={ButtonVariant.SECONDARY}
-              />
-            ) : null}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
