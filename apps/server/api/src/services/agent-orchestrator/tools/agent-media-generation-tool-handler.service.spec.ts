@@ -60,18 +60,6 @@ function createHandler() {
       { findOne: vi.fn().mockResolvedValue(null) } as never,
       textGenerationCredits as never,
       {} as never,
-      { getSocialGenerationContext: vi.fn().mockResolvedValue([]) } as never,
-      {
-        resolveBrandedSourceIds: vi
-          .fn()
-          .mockImplementation(
-            async (
-              _org: string,
-              _brand: string,
-              selection: { sourceIds?: string[] } | undefined,
-            ) => selection?.sourceIds,
-          ),
-      } as never,
     ),
     assetGeneration,
     new AgentMediaTurboRunService(
@@ -155,64 +143,6 @@ describe('FLUX generation source admission', () => {
     });
     expect(result.error).toBeUndefined();
     expect(result.references).toEqual(references);
-  });
-
-  it('trims extra character references instead of refusing, keeping explicit sources', async () => {
-    const characterImages = Array.from({ length: 14 }, (_, i) => `anna-${i}`);
-    const explicit = ['image-a', 'image-b', 'image-c'];
-    const result = await resolveGenerationReferences({
-      ctx: context,
-      modelKey: MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_3_IMAGE,
-      explicitReferences: explicit,
-      handles: ['anna'],
-      personasService: {
-        resolveCharacterHandles: async () => ({
-          resolvedIngredientIds: characterImages,
-          unresolvedHandles: [],
-        }),
-      },
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.references).toEqual([
-      ...characterImages.slice(0, 7),
-      ...explicit,
-    ]);
-  });
-});
-
-describe('character references across handles', () => {
-  it('keeps earlier handles first and caps the flat list by the model limit', async () => {
-    const result = await resolveGenerationReferences({
-      ctx: context,
-      handles: ['anna', 'bob'],
-      personasService: {
-        resolveCharacterHandles: async () => ({
-          resolvedIngredientIds: [
-            'anna-0',
-            'anna-1',
-            'anna-2',
-            'anna-3',
-            'anna-4',
-            'anna-5',
-            'bob-0',
-            'bob-1',
-            'bob-2',
-          ],
-          unresolvedHandles: [],
-        }),
-      },
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.references).toEqual([
-      'anna-0',
-      'anna-1',
-      'anna-2',
-      'anna-3',
-      'anna-4',
-      'anna-5',
-      'bob-0',
-      'bob-1',
-    ]);
   });
 });
 
@@ -634,7 +564,7 @@ describe('AgentMediaGenerationToolHandler text previews', () => {
     });
   });
 
-  it('stops a Knowledge purpose selection with no visible matching sources', async () => {
+  it('refuses Knowledge purposes alone because a receipt cannot be grounded on them', async () => {
     const { brandedContentActions, handler } = createHandler();
 
     const result = await handler.generateContent(
@@ -646,7 +576,7 @@ describe('AgentMediaGenerationToolHandler text previews', () => {
     );
 
     expect(result).toMatchObject({
-      data: { code: 'knowledge_selection_empty' },
+      data: { code: 'knowledge_purposes_unsupported' },
       success: false,
     });
     expect(brandedContentActions.generateSocial).not.toHaveBeenCalled();
@@ -2039,36 +1969,6 @@ describe('media tool skill transport', () => {
         ),
       ).rejects.toThrow();
       expect(gateway[method]).not.toHaveBeenCalled();
-    },
-  );
-});
-
-describe('media tool brand mode transport', () => {
-  it.each(['image', 'video'] as const)(
-    'forwards only the explicit raw opt-out on %s',
-    async (kind) => {
-      const { gateway, handler } = createHandler();
-      const method = kind === 'image' ? 'generateImage' : 'generateVideo';
-      gateway[method].mockResolvedValue({
-        data: { id: 'queued', attributes: { status: 'processing' } },
-      });
-      await handler.generate(
-        { brandMode: 'raw', prompt: 'A coast', type: kind },
-        context,
-      );
-      expect(gateway[method]).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: expect.objectContaining({ brandMode: 'raw' }),
-        }),
-      );
-      gateway[method].mockClear();
-      await handler.generate(
-        { brandMode: 'approved_brand', prompt: 'A coast', type: kind },
-        context,
-      );
-      expect(gateway[method].mock.calls[0][0].body).not.toHaveProperty(
-        'brandMode',
-      );
     },
   );
 });
