@@ -55,6 +55,8 @@ export class MetaAdsOptimizationController {
     private readonly credentialsService: CredentialsService,
   ) {}
 
+  // ─── Recommendations ──────────────────────────────────────────────────────
+
   @TenantReadPolicy('selected')
   @Get('recommendations')
   @RolesDecorator(MemberRole.OWNER, MemberRole.ADMIN, MemberRole.ANALYTICS)

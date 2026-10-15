@@ -11,7 +11,6 @@ import { ReplyBotConfigsQueryDto } from '@api/collections/reply-bot-configs/dto/
 import { UpdateReplyBotConfigDto } from '@api/collections/reply-bot-configs/dto/update-reply-bot-config.dto';
 import type { ReplyBotConfigDocument } from '@api/collections/reply-bot-configs/schemas/reply-bot-config.schema';
 import { ReplyBotConfigsService } from '@api/collections/reply-bot-configs/services/reply-bot-configs.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
@@ -44,7 +43,6 @@ import type { Request } from 'express';
 @ApiTags('Reply Bot Configs')
 @AutoSwagger()
 @FeatureFlag(REPLY_BOT_FEATURE_FLAG)
-@OrganizationModule('messages')
 @Controller('reply-bot-configs')
 export class ReplyBotConfigsController extends BaseCRUDController<
   ReplyBotConfigDocument,
@@ -261,6 +259,12 @@ export class ReplyBotConfigsController extends BaseCRUDController<
 
     return { jobId };
   }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Wildcard param routes — keep last. Nest matches in declaration order, so a
+  // `:id` route declared earlier swallows every static sibling path
+  // (`GET /reply-bot-configs/queue-status` would resolve to findOne).
+  // ────────────────────────────────────────────────────────────────────────────
 
   @TenantReadPolicy('selected')
   @Get(':id')

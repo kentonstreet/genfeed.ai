@@ -1,5 +1,4 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
@@ -15,7 +14,6 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 @ApiTags('agent-workflows')
 @ApiBearerAuth()
 @FeatureFlag('automation')
-@OrganizationModule('automation')
 @Controller('agent-workflows')
 export class AgentWorkflowsController {
   constructor(private readonly agentWorkflowsService: AgentWorkflowsService) {}

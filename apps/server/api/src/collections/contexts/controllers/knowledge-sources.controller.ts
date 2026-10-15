@@ -14,17 +14,14 @@ import { KnowledgeLegacyBackfillService } from '@api/collections/contexts/servic
 import { KnowledgeRecordsService } from '@api/collections/contexts/services/knowledge-records.service';
 import { KnowledgeRefreshService } from '@api/collections/contexts/services/knowledge-refresh.service';
 import { resolveKnowledgeActor } from '@api/collections/contexts/utils/knowledge-actor.util';
-import { RolesDecorator } from '@api/helpers/decorators/roles/roles.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
-import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import {
   serializeCollection,
   serializeSingle,
 } from '@api/helpers/utils/response/response.util';
-import { MemberRole } from '@genfeedai/contracts';
 import {
   KnowledgeSourceSerializer,
   KnowledgeSourceVersionSerializer,
@@ -41,7 +38,6 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiQuery } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -100,18 +96,14 @@ export class KnowledgeSourcesController {
    * the latest report replaces the previous one.
    */
   @Post('backfill-legacy')
-  @UseGuards(RolesGuard)
-  @RolesDecorator(MemberRole.OWNER, MemberRole.ADMIN)
   async backfillLegacy(@CurrentUser() user: AuthenticatedUser) {
-    return this.legacyBackfill.run(resolveKnowledgeActor(user));
+    return this.legacyBackfill.run(user.organizationId);
   }
 
   /** Queue ingestion for every current version that is not ready yet. */
   @Post('backfill')
-  @UseGuards(RolesGuard)
-  @RolesDecorator(MemberRole.OWNER, MemberRole.ADMIN)
   async backfill(@CurrentUser() user: AuthenticatedUser) {
-    return this.capture.backfill(resolveKnowledgeActor(user));
+    return this.capture.backfill(user.organizationId);
   }
 
   @TenantReadPolicy('selected')

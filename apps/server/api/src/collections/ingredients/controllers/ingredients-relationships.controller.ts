@@ -215,7 +215,7 @@ export class IngredientsRelationshipsController {
     const isDeleted = QueryDefaultsUtil.getIsDeletedDefault(query.isDeleted);
     const aggregate = {
       where: {
-        ingredientLinks: { some: { ingredientId } },
+        ingredients: { some: { id: ingredientId } },
         isDeleted,
         // Keep the scope explicit even for unowned shared ingredients because
         // `normalizeWhere` drops undefined values and would widen the query.

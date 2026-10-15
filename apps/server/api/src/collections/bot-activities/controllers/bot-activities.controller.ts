@@ -4,7 +4,6 @@ import {
   BotActivitiesService,
   type BotActivityStats,
 } from '@api/collections/bot-activities/services/bot-activities.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
@@ -24,7 +23,6 @@ import type { Request } from 'express';
 @ApiTags('Bot Activities')
 @AutoSwagger()
 @FeatureFlag(REPLY_BOT_FEATURE_FLAG)
-@OrganizationModule('messages')
 @Controller('bot-activities')
 export class BotActivitiesController {
   constructor(

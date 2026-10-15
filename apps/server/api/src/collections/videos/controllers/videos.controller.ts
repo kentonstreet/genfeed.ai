@@ -10,7 +10,6 @@ import { VideoGenerationService } from '@api/collections/videos/services/video-g
 import { VideosService } from '@api/collections/videos/services/videos.service';
 import { VotesService } from '@api/collections/votes/services/votes.service';
 import type { RequestWithContext as ExpressRequest } from '@api/common/middleware/request-context.middleware';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { Cache } from '@api/helpers/decorators/cache/cache.decorator';
 import {
   Credits,
@@ -25,6 +24,7 @@ import {
   ValidateModel,
 } from '@api/helpers/guards/models/models.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
@@ -246,16 +246,17 @@ export class VideosController {
         ),
       }),
       [
-        // Metadata has no organizationId; the scoped parent ingredient query
-        // already bounds which metadata row can be reached.
-        PopulatePatterns.metadataFull,
+        {
+          ...PopulatePatterns.metadataFull,
+          where: scopedWhere(readScope.organizationId),
+        },
         PopulatePatterns.promptFull,
         PopulatePatterns.userMinimal,
         PopulatePatterns.brandMinimal,
         PopulatePatterns.organizationMinimal,
         { path: 'captions', where: scopedWhere(readScope.organizationId) },
         // Vote status is loaded via VotesService below. `votes` and `posts`
-        // are not Ingredient relations (`postLinks` is the post link).
+        // are not Ingredient relations (`postIngredients` is the post link).
       ],
     );
 
@@ -424,8 +425,7 @@ export class VideosController {
   })
   @DeferCreditsUntilModelResolution()
   @ValidateModel({ category: ModelCategory.VIDEO })
-  @OrganizationModule('playground')
-  @UseGuards(CreditsGuard, ModelsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard, ModelsGuard)
   @UseInterceptors(CreditsInterceptor)
   @RateLimit({ limit: 30, scope: 'organization', windowMs: 60 * 1000 })
   @LogMethod({ logEnd: false, logError: true, logStart: true })

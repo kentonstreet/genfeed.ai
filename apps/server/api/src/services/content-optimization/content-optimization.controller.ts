@@ -1,5 +1,4 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { AbTestSuggestionHarnessService } from '@api/services/content-optimization/ab-test-suggestion-harness.service';
@@ -41,7 +40,6 @@ export class ExecuteAbTestSuggestionDto {
   variantB!: string;
 }
 
-@OrganizationModule('analytics')
 @Controller('brands/:brandId/optimization')
 export class ContentOptimizationController {
   constructor(
@@ -53,7 +51,6 @@ export class ContentOptimizationController {
    * GET v1/brands/:brandId/optimization/analysis
    * Returns performance analysis with insights.
    */
-  @OrganizationModule('analytics', 'write')
   @Get('analysis')
   async getAnalysis(
     @Param('brandId') brandId: string,
@@ -81,7 +78,6 @@ export class ContentOptimizationController {
    * POST v1/brands/:brandId/optimization/optimize-prompt
    * Optimizes a content prompt based on performance data.
    */
-  @OrganizationModule('playground')
   @Post('optimize-prompt')
   async optimizePrompt(
     @Param('brandId') brandId: string,
@@ -102,7 +98,6 @@ export class ContentOptimizationController {
    * Returns actionable recommendations.
    */
   @TenantReadPolicy('mutating')
-  @OrganizationModule('analytics', 'write')
   @Get('recommendations')
   async getRecommendations(
     @Param('brandId') brandId: string,
@@ -121,7 +116,6 @@ export class ContentOptimizationController {
    * Returns memory-driven optimization suggestions.
    */
   @TenantReadPolicy('mutating')
-  @OrganizationModule('analytics', 'write')
   @Get('suggestions')
   async getSuggestions(
     @Param('brandId') brandId: string,
@@ -139,7 +133,6 @@ export class ContentOptimizationController {
    * POST v1/brands/:brandId/optimization/suggestions/auto-apply
    * Auto-applies a specific suggestion when confidence threshold passes.
    */
-  @OrganizationModule('publishing')
   @Post('suggestions/auto-apply')
   async autoApplySuggestion(
     @Param('brandId') brandId: string,
@@ -159,7 +152,6 @@ export class ContentOptimizationController {
    * POST v1/brands/:brandId/optimization/ab-tests
    * Turns an advisory A/B suggestion into attributed variation arms.
    */
-  @OrganizationModule('publishing')
   @Post('ab-tests')
   async executeAbTest(
     @Param('brandId') brandId: string,

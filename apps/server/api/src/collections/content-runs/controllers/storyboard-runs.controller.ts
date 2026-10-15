@@ -2,10 +2,7 @@ import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticat
 import {
   ApproveStoryboardPlanDto,
   CreateStoryboardRunDto,
-  DraftStoryboardPlanDto,
-  GenerateStoryboardStillsDto,
   ListStoryboardRunsDto,
-  QuoteStoryboardStillsDto,
   ReplaceStoryboardCharacterDto,
   ResetStoryboardPlanDto,
   UpdateStoryboardPlanDto,
@@ -14,10 +11,9 @@ import {
 import { StoryboardCharacterReplaceService } from '@api/collections/content-runs/services/storyboard-character-replace.service';
 import { StoryboardRunCapabilitiesService } from '@api/collections/content-runs/services/storyboard-run-capabilities.service';
 import { StoryboardRunsService } from '@api/collections/content-runs/services/storyboard-runs.service';
-import { StoryboardStillsService } from '@api/collections/content-runs/services/storyboard-stills.service';
 import type { RequestWithContext as Request } from '@api/common/middleware/request-context.middleware';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import {
@@ -37,16 +33,15 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 
 @Controller('brands/:brandId/storyboard-runs')
-@OrganizationModule('storyboard')
 export class StoryboardRunsController {
   constructor(
     private readonly runs: StoryboardRunsService,
     private readonly capabilities: StoryboardRunCapabilitiesService,
     private readonly characters: StoryboardCharacterReplaceService,
-    private readonly stills: StoryboardStillsService,
   ) {}
 
   @Post()
@@ -100,6 +95,7 @@ export class StoryboardRunsController {
   }
 
   @Post(':runId/shots/:shotId/character-replacement')
+  @UseGuards(SubscriptionGuard)
   async replaceCharacter(
     @Param('brandId') brandId: string,
     @Param('runId') runId: string,
@@ -150,51 +146,6 @@ export class StoryboardRunsController {
     );
   }
 
-  @Post(':runId/stills/quote')
-  quoteStills(
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: QuoteStoryboardStillsDto,
-  ) {
-    return this.stills.quote(user.organizationId, brandId, runId, body);
-  }
-
-  @Post(':runId/stills')
-  async generateStills(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: GenerateStoryboardStillsDto,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.stills.generate(
-        user.organizationId,
-        brandId,
-        runId,
-        user.userId,
-        body,
-      ),
-    );
-  }
-
-  @Post(':runId/stills/reconcile')
-  async reconcileStills(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.stills.reconcile(user.organizationId, brandId, runId),
-    );
-  }
-
   @TenantReadPolicy('selected')
   @Get(':runId/capabilities')
   async getCapabilities(
@@ -239,22 +190,8 @@ export class StoryboardRunsController {
     );
   }
 
-  @Post(':runId/plan/draft')
-  async draftPlan(
-    @Req() request: Request,
-    @Param('brandId') brandId: string,
-    @Param('runId') runId: string,
-    @CurrentUser() user: User,
-    @Body() body: DraftStoryboardPlanDto,
-  ) {
-    return serializeSingle(
-      request,
-      StoryboardRunSerializer,
-      await this.runs.draftPlan(user.organizationId, brandId, runId, body),
-    );
-  }
-
   @Post(':runId/plan/approve')
+  @UseGuards(SubscriptionGuard)
   async approvePlan(
     @Req() request: Request,
     @Param('brandId') brandId: string,

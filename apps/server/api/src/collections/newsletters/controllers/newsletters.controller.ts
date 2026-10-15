@@ -5,7 +5,6 @@ import { GenerateNewsletterTopicsDto } from '@api/collections/newsletters/dto/ge
 import { NewslettersQueryDto } from '@api/collections/newsletters/dto/newsletters-query.dto';
 import { UpdateNewsletterDto } from '@api/collections/newsletters/dto/update-newsletter.dto';
 import { NewslettersService } from '@api/collections/newsletters/services/newsletters.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
@@ -33,7 +32,6 @@ import type { Request } from 'express';
 @AutoSwagger()
 @Controller('newsletters')
 @UseGuards(RolesGuard)
-@OrganizationModule('publishing')
 export class NewslettersController {
   constructor(private readonly newslettersService: NewslettersService) {}
 

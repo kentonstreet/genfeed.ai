@@ -5,7 +5,6 @@ import type {
   TrendSourceKind,
 } from '@api/collections/trends/interfaces/trend.interfaces';
 import { TrendsService } from '@api/collections/trends/services/trends.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -37,7 +36,6 @@ const TREND_SOURCE_INTENDED_USE_VALUES = [
 
 @AutoSwagger()
 @FeatureFlag('discovery')
-@OrganizationModule('discovery')
 @Controller('trends')
 @UseInterceptors(CreditsInterceptor)
 export class TrendsDiscoveryController {
@@ -62,10 +60,7 @@ export class TrendsDiscoveryController {
     @CurrentUser() user: User,
     @Query('platform') platform?: string,
     @Query('refresh') refresh?: string,
-    @Query('relevance') relevance?: 'market' | 'brand',
   ) {
-    if (relevance && relevance !== 'market' && relevance !== 'brand')
-      throw new BadRequestException('Invalid relevance filter.');
     const readScope = resolveTenantReadScope(user);
     const organizationId = readScope.organizationId;
     const brandId = readScope.brandId;
@@ -80,7 +75,6 @@ export class TrendsDiscoveryController {
       organizationId,
       brandId,
       platform,
-      relevance,
     );
 
     return {

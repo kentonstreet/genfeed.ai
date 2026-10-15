@@ -5,7 +5,6 @@ import { PredictViralDto } from '@api/collections/insights/dto/predict-viral.dto
 import { UpdateInsightDto } from '@api/collections/insights/dto/update-insight.dto';
 import { InsightsService } from '@api/collections/insights/services/insights.service';
 import { ModelsService } from '@api/collections/models/services/models.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import {
   Credits,
@@ -15,6 +14,7 @@ import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { finalizeDeferredTextCredits } from '@api/helpers/utils/credits/finalize-deferred-credits.util';
@@ -46,7 +46,6 @@ import type { Request } from 'express';
 @AutoSwagger()
 @ApiTags('Insights')
 @FeatureFlag('analytics')
-@OrganizationModule('analytics')
 @Controller('insights')
 @UseInterceptors(CreditsInterceptor)
 export class InsightsController {
@@ -71,7 +70,7 @@ export class InsightsController {
    */
   @TenantReadPolicy('mutating')
   @Get()
-
+  @UseGuards(SubscriptionGuard)
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async getInsights(
     @Req() req: Request,
@@ -95,7 +94,7 @@ export class InsightsController {
    * Predict viral potential
    */
   @Post('viral')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @Credits({
     description: 'Viral prediction (text model)',
     source: ActivitySource.SCRIPT,
@@ -129,8 +128,7 @@ export class InsightsController {
    * Get content gaps
    */
   @Get('gaps')
-  @OrganizationModule('analytics', 'write')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @Credits({
     description: 'Content gap analysis (text model)',
     source: ActivitySource.SCRIPT,
@@ -159,8 +157,7 @@ export class InsightsController {
    * Get best posting times
    */
   @Get('times')
-  @OrganizationModule('analytics', 'write')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @Credits({
     description: 'Best posting times insight (text model)',
     source: ActivitySource.SCRIPT,

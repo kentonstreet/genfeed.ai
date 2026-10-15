@@ -80,7 +80,7 @@ export class VideosRelationshipsController {
     const isDeleted = QueryDefaultsUtil.getIsDeletedDefault(query.isDeleted);
     const aggregate = {
       where: {
-        ingredientLinks: { some: { ingredientId: videoId } },
+        ingredients: { some: { id: videoId } },
         isDeleted,
         organizationId: user.organizationId,
         userId: user.userId ?? user.id,

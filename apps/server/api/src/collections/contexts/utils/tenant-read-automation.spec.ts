@@ -23,7 +23,6 @@ import { TenantContextInterceptor } from '@api/helpers/interceptors/tenant-conte
 import { TENANT_READ_POLICY } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { runWithTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
-import { brandAccessFixture } from '@api/shared/testing/brand-access.fixture';
 import { KnowledgeMemoryScope } from '@genfeedai/contracts';
 import type { Prisma } from '@genfeedai/prisma';
 import { testId } from '@helpers/testing/test-id.helper';
@@ -205,18 +204,9 @@ describe('automation selected data and immutable actor', () => {
     const count = vi.fn(async (_query: Record<string, unknown>) => 1);
     const prisma = {
       knowledgeSource: { findMany, count },
-      brand: { findFirst: vi.fn().mockResolvedValue({ id: selectedBrand }) },
-      member: {
-        findFirst: vi
-          .fn()
-          .mockResolvedValue({ role: { key: 'admin' }, brands: [] }),
-      },
       $transaction: (queries: Promise<unknown>[]) => Promise.all(queries),
     } as unknown as PrismaService;
-    const records = new KnowledgeRecordsService(
-      prisma,
-      brandAccessFixture(prisma as never),
-    );
+    const records = new KnowledgeRecordsService(prisma);
     const controller = instance(KnowledgeSourcesController, { records });
     expect(
       await selected(() =>
@@ -277,10 +267,10 @@ describe('automation selected data and immutable actor', () => {
     const findAll = vi.fn(async (where: { organizationId: string }) => ({
       docs: [rowFor(where.organizationId)],
     }));
-    const generateContentPlan = vi.fn(async () => ({ entries: [] }));
+    const generatePhoto = vi.fn(async () => 'generated');
     const controller = instance(PersonasContentController, {
       postsService: { findAll },
-      personaContentPlanService: { generateContentPlan },
+      personaContentService: { generatePhoto },
     });
     expect(
       await selected(() =>
@@ -318,10 +308,8 @@ describe('automation selected data and immutable actor', () => {
       response: { detail: 'brandId is required and must be a string' },
     });
     expect(findAll).not.toHaveBeenCalled();
-    await selected(() =>
-      controller.generateContentPlan(testId('persona'), { days: 1 }, user),
-    );
-    expect(generateContentPlan).toHaveBeenCalledWith(
+    await selected(() => controller.generatePhoto(testId('persona'), {}, user));
+    expect(generatePhoto).toHaveBeenCalledWith(
       expect.objectContaining({
         organizationId: originalOrg,
         userId: user.userId,

@@ -1,10 +1,8 @@
 import { EventEmitter } from 'node:events';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import { request as nativeRequest } from 'node:http';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { CloudTenantObserver } from '@api/helpers/cloud-tenant-diagnostics/cloud-tenant-diagnostics';
 import {
   CLOUD_TENANT_OBSERVER,
@@ -16,9 +14,6 @@ import { PerformanceInterceptor } from '@api/helpers/interceptors/performance/pe
 import { TimeoutInterceptor } from '@api/interceptors/timeout.interceptor';
 import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
-import { runWithTenantContext } from '@libs/prisma/tenant-context';
-import { TenantIsolationError } from '@libs/prisma/tenant-guard';
-import { createTenantGuardExtension } from '@libs/prisma/tenant-guard.extension';
 import type {
   CallHandler,
   CanActivate,
@@ -29,53 +24,9 @@ import { BadRequestException, Controller, Get, Module } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { concat, NEVER, of } from 'rxjs';
 
-const TENANT_SWEEP_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../../../../../scripts/ci/cloud-tenant-guard-sweep',
-);
-
 let handlerCalls = 0;
 let guardRelease: (() => void) | undefined;
 let guardMode = '';
-const rejectedQuery = vi.fn(async () => []);
-let guardHandlerCalls = 0;
-async function failActualGuard() {
-  guardHandlerCalls++;
-  await new Promise<void>((done) => setImmediate(done));
-  return runWithTenantContext(
-    { organizationId: 'selected-fixture' },
-    async () => {
-      await createTenantGuardExtension({
-        isCloud: true,
-        tenantModelNames: new Set(['Credential']),
-      }).query.$allModels.$allOperations({
-        model: 'Credential',
-        operation: 'findFirst',
-        args: {
-          where: { organizationId: 'original-fixture', isDeleted: false },
-        },
-        query: rejectedQuery,
-      });
-    },
-  );
-}
-@Controller('guard')
-class GuardController {
-  @Get('caught') async caught() {
-    try {
-      await failActualGuard();
-    } catch (error) {
-      if (!(error instanceof TenantIsolationError)) throw error;
-      return { caught: true };
-    }
-    throw new Error('Guard unexpectedly dispatched');
-  }
-  @Get('rethrown') async rethrown() {
-    return failActualGuard();
-  }
-}
-@Module({ controllers: [GuardController] })
-class GuardModule {}
 function releaseDeferredGuard() {
   const release = guardRelease;
   if (!release) throw new Error('Deferred guard was not initialized');
@@ -146,10 +97,20 @@ describe('real miniature Nest request lifecycle', () => {
   });
   it('off/on preserve real handler counts, server408, guarded boundary, emissions and native aborts', async () => {
     const { createApiObserver } = await import(
-      pathToFileURL(resolve(TENANT_SWEEP_ROOT, 'api-observer-core.mjs')).href
+      pathToFileURL(
+        resolve(
+          process.cwd(),
+          '../../../scripts/ci/cloud-tenant-guard-sweep/api-observer-core.mjs',
+        ),
+      ).href
     );
     const { joinCausalEvidence } = await import(
-      pathToFileURL(resolve(TENANT_SWEEP_ROOT, 'causal-evidence.mjs')).href
+      pathToFileURL(
+        resolve(
+          process.cwd(),
+          '../../../scripts/ci/cloud-tenant-guard-sweep/causal-evidence.mjs',
+        ),
+      ).href
     );
     for (const enabled of [false, true]) {
       guardMode = '';
@@ -195,12 +156,7 @@ describe('real miniature Nest request lifecycle', () => {
             nativeCloses.add(Number(req.headers['x-genfeed-ci-attempt']));
           });
           observeCloudTenant(observer, (value) => value.ingress(req, res));
-          const bound = observeCloudTenant(observer, (value) =>
-            value.bindRequest(req, next),
-          );
-          if (observer && typeof bound !== 'function')
-            observeCloudTenant(observer, (value) => value.unavailable());
-          (typeof bound === 'function' ? bound : next)();
+          next();
         },
       );
       app.useGlobalGuards(new DeferredGuard());
@@ -362,179 +318,6 @@ describe('real miniature Nest request lifecycle', () => {
         server.closeAllConnections();
         await app.close();
         instance.stop();
-      }
-    }
-  }, 15000);
-  it('actual guard throws survive catches and concurrent request scopes through the real collector', async () => {
-    const source = (name: string) =>
-      pathToFileURL(resolve(TENANT_SWEEP_ROOT, `${name}.mjs`)).href;
-    const { createApiObserver } = await import(source('api-observer-core'));
-    const { collectCausalEvidence } = await import(source('causal-evidence'));
-    for (const enabled of [false, true]) {
-      guardHandlerCalls = 0;
-      rejectedQuery.mockClear();
-      const events: Record<string, unknown>[] = [];
-      const instance = createApiObserver({
-        write: (line: string) => events.push(JSON.parse(line)),
-        pool: Object.assign(new EventEmitter(), {
-          end: () => Promise.resolve(),
-        }),
-        setIntervalImpl: () => ({ unref() {} }),
-        clearIntervalImpl: () => {},
-        cpuUsage: () => ({ user: 0, system: 0 }),
-        hrtime: () => 0n,
-      });
-      Reflect.set(globalThis, CLOUD_TENANT_OBSERVER, instance.observer);
-      for (const [key, value] of Object.entries({
-        CLOUD_SWEEP_DIAGNOSTICS: enabled ? '1' : '0',
-        CI: 'true',
-        GITHUB_ACTIONS: 'true',
-        GENFEED_CLOUD: 'true',
-        NODE_ENV: 'test',
-      }))
-        vi.stubEnv(key, value);
-      vi.stubEnv('CLOUD_SWEEP_LOCAL', undefined);
-      const app = await NestFactory.create(GuardModule, { logger: false });
-      const observer = getCloudTenantObserver();
-      app.use(
-        (
-          req: IncomingMessage,
-          res: Parameters<CloudTenantObserver['ingress']>[1],
-          next: () => void,
-        ) => {
-          observeCloudTenant(observer, (value) => value.ingress(req, res));
-          const bound = observeCloudTenant(observer, (value) =>
-            value.bindRequest(req, next),
-          );
-          if (observer && typeof bound !== 'function')
-            observeCloudTenant(observer, (value) => value.unavailable());
-          (typeof bound === 'function' ? bound : next)();
-        },
-      );
-      const logger = {
-        debug: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      } as unknown as LoggerService;
-      const config = {
-        get: (key: string) => (key === 'NODE_ENV' ? 'test' : undefined),
-      } as unknown as ConfigService;
-      app.useGlobalInterceptors(new PerformanceInterceptor(logger, config));
-      await app.listen(0, '127.0.0.1');
-      const server = app.getHttpServer();
-      const port = server.address().port as number;
-      const clients: Record<string, unknown>[] = [];
-      const send = (path: string, sequence?: number) =>
-        new Promise<number>((done, reject) => {
-          const sent = Date.now();
-          const request = nativeRequest(
-            {
-              host: '127.0.0.1',
-              port,
-              path,
-              headers:
-                sequence === undefined
-                  ? {}
-                  : { 'x-genfeed-ci-attempt': String(sequence) },
-            },
-            (response) => {
-              response.resume();
-              response.once('end', () => {
-                if (sequence !== undefined)
-                  clients.push({
-                    sequence,
-                    sentAtEpochMs: sent,
-                    endedAtEpochMs: Date.now(),
-                    headerAtEpochMs: null,
-                    actor: 'M:A',
-                    sweepPhase: 'memberAGets',
-                    method: 'GET',
-                    route: '/v1/guard/{kind}',
-                  });
-                done(response.statusCode ?? 0);
-              });
-            },
-          );
-          request.once('error', reject);
-          request.end();
-        });
-      try {
-        expect(
-          await Promise.all([
-            send('/guard/caught', 1),
-            send('/guard/rethrown', 2),
-          ]),
-        ).toEqual([200, 500]);
-        expect(await send('/guard/caught')).toBe(200);
-        expect(guardHandlerCalls).toBe(3);
-        expect(rejectedQuery).not.toHaveBeenCalled();
-        await new Promise<void>((done) => setImmediate(done));
-      } finally {
-        server.closeAllConnections();
-        await app.close();
-        instance.stop();
-      }
-      const directory = mkdtempSync(join(tmpdir(), 'guard-collector-'));
-      chmodSync(directory, 0o700);
-      try {
-        writeFileSync(
-          join(directory, 'api-observations.ndjson'),
-          `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
-          { mode: 0o600 },
-        );
-        writeFileSync(join(directory, 'api-stopped'), 'stopped\n', {
-          mode: 0o600,
-        });
-        const evidence = collectCausalEvidence(
-          {
-            requests: enabled ? clients : [],
-            inventoryTemplates: ['/v1/guard/{kind}'],
-            apiLogHits: Array.from({ length: 6 }, () => ({
-              message: 'synthetic repeated log',
-            })),
-          },
-          directory,
-          { final: true, actors: ['M:A'], phases: ['memberAGets'] },
-        ).evidence;
-        expect(evidence.quality).toBe('complete');
-        expect(evidence.tenantFailures).toEqual({
-          version: 1,
-          available: true,
-          total: enabled ? 3 : 0,
-          attributed: enabled ? 2 : 0,
-          unattributed: enabled ? 1 : 0,
-          groups: enabled
-            ? [
-                {
-                  actor: 'M:A',
-                  phase: 'memberAGets',
-                  method: 'GET',
-                  route: '/v1/guard/{kind}',
-                  model: 'Credential',
-                  operation: 'findFirst',
-                  reason: 'organization-id-mismatch',
-                  count: 2,
-                },
-                {
-                  actor: 'unknown',
-                  phase: 'unknown',
-                  method: 'other',
-                  route: 'unknown',
-                  model: 'Credential',
-                  operation: 'findFirst',
-                  reason: 'organization-id-mismatch',
-                  count: 1,
-                },
-              ]
-            : [],
-        });
-        expect(
-          events
-            .filter((event) => event.kind === 'tenantFailure')
-            .map((event) => event.sequence),
-        ).toEqual(enabled ? [1, 2, null] : []);
-      } finally {
-        rmSync(directory, { recursive: true, force: true });
       }
     }
   }, 15000);
