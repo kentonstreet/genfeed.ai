@@ -14,9 +14,8 @@ import type {
 import { useTopbarBalances } from '@genfeedai/hooks/data/billing/use-topbar-balances/use-topbar-balances';
 import { useSubscription } from '@genfeedai/hooks/data/subscription/use-subscription/use-subscription';
 import { useOrgUrl } from '@genfeedai/hooks/navigation/use-org-url';
-import { useDesktopRuntimeContext } from '@genfeedai/hooks/ui/use-desktop-runtime-context/use-desktop-runtime-context';
+import { useIsDesktopClient } from '@genfeedai/hooks/ui/use-is-desktop-client/use-is-desktop-client';
 import { useSocketManager } from '@genfeedai/hooks/utils/use-socket-manager/use-socket-manager';
-import { getDesktopCreditsVisibility } from '@genfeedai/services/core/desktop-runtime.service';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import CreditsBarTrigger from './CreditsBarTrigger';
 
@@ -25,23 +24,15 @@ function coerceFiniteBalance(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-interface CreditsBarPlanProps {
-  creditsBreakdown: ReturnType<typeof useSubscription>['creditsBreakdown'];
-  refreshCreditsBreakdown: ReturnType<
-    typeof useSubscription
-  >['refreshCreditsBreakdown'];
-}
-
-function TopbarCreditsBarContent({
-  creditsBreakdown,
-  refreshCreditsBreakdown,
-}: CreditsBarPlanProps) {
+function TopbarCreditsBarContent() {
   const { organizationId } = useBrand();
   const { orgHref } = useOrgUrl();
-  const runtime = useDesktopRuntimeContext();
-  const showCredits = shouldShowCreditsNav(
-    getDesktopCreditsVisibility(runtime),
-  );
+  const isDesktop = useIsDesktopClient();
+  const showCredits = shouldShowCreditsNav({
+    clientSurface: isDesktop ? 'desktop' : 'web',
+  });
+
+  const { creditsBreakdown, refreshCreditsBreakdown } = useSubscription();
 
   // Shared with LowCreditsBanner, which mounts alongside this chip on every
   // protected page. One query key means one request per navigation, and the
@@ -183,25 +174,6 @@ function TopbarCreditsBarContent({
   );
 }
 
-function WebTopbarCreditsBar() {
-  const { creditsBreakdown, refreshCreditsBreakdown } = useSubscription();
-  return (
-    <TopbarCreditsBarContent
-      creditsBreakdown={creditsBreakdown}
-      refreshCreditsBreakdown={refreshCreditsBreakdown}
-    />
-  );
-}
-
-const noDesktopPlanRefresh = async () => {};
-
 export default function TopbarCreditsBar() {
-  const runtime = useDesktopRuntimeContext();
-  if (runtime.status === 'web') return <WebTopbarCreditsBar />;
-  return (
-    <TopbarCreditsBarContent
-      creditsBreakdown={null}
-      refreshCreditsBreakdown={noDesktopPlanRefresh}
-    />
-  );
+  return <TopbarCreditsBarContent />;
 }
