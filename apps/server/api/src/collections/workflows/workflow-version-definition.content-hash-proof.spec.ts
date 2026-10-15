@@ -238,6 +238,8 @@ const EXPECTED_SYSTEM_WORKFLOW_IDS: readonly string[] = [
   'ai-influencer.daily-post',
   'ai-influencer.daily-posts',
   'ai-influencer.generate-post',
+  'ai-influencer.generate-video',
+  'ai-influencer.generate-voice',
   'ai-influencer.publish-platform',
   'analytics-sync',
   'analytics.facebook.collect-item',
