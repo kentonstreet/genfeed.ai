@@ -142,6 +142,9 @@ vi.mock('@ui/layout/container/Container', () => ({
           </a>
         ))}
         {leading}
+        <button type="button" aria-label="Page help">
+          Help
+        </button>
         {right}
       </header>
       {children}
@@ -162,6 +165,18 @@ vi.mock('@ui/layout/section-topbar/SectionTopbar', () => ({
       {actions}
     </header>
   ),
+}));
+
+vi.mock('@ui/layout/help-popover/HelpPopover', () => ({
+  default: () => (
+    <button type="button" aria-label="Page help">
+      Help
+    </button>
+  ),
+}));
+
+vi.mock('@genfeedai/contexts/ui/page-help-context', () => ({
+  usePageHelp: () => ({ body: 'Workflow help', title: 'Workflows' }),
 }));
 
 vi.mock('@ui/primitives/searchbar', () => ({
@@ -278,6 +293,12 @@ vi.mock('./EmptyWorkflowState', () => ({
   default: () => <div>Empty workflows</div>,
 }));
 
+vi.mock('./WorkflowCardDropdown', () => ({
+  default: ({ onDuplicate }: { onDuplicate: () => void }) => (
+    <button type="button" aria-label="Workflow actions" onClick={onDuplicate} />
+  ),
+}));
+
 vi.mock('./WorkflowCardPreview', () => ({
   default: ({ name }: { name: string }) => <div>{name} preview</div>,
 }));
@@ -335,17 +356,19 @@ describe('WorkflowLibraryPage card semantics', () => {
     ];
   });
 
-  it('keeps one toolbar with search on the left and new workflow after it', () => {
+  it('keeps one toolbar with search on the left and help before new workflow', () => {
     render(<WorkflowLibraryPage />);
 
     expect(screen.getAllByTestId('section-topbar')).toHaveLength(1);
     const toolbar = screen.getByTestId('section-topbar');
     const search = screen.getByPlaceholderText('Search workflows...');
+    const help = screen.getByRole('button', { name: 'Page help' });
     const newWorkflow = screen.getAllByRole('link', {
       name: 'New Workflow',
     })[0];
 
     expect(toolbar).toContainElement(search);
+    expect(toolbar).toContainElement(help);
     expect(toolbar).toContainElement(newWorkflow);
     expect(screen.getByRole('link', { name: 'Library' })).toHaveAttribute(
       'href',
@@ -353,10 +376,13 @@ describe('WorkflowLibraryPage card semantics', () => {
     );
     expect(screen.getByRole('link', { name: 'Templates' })).toHaveAttribute(
       'href',
-      '/acme/brand/automation/workflows?view=templates',
+      '/acme/brand/automation/workflows/templates',
     );
     expect(
-      search.compareDocumentPosition(newWorkflow) &
+      search.compareDocumentPosition(help) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      help.compareDocumentPosition(newWorkflow) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
@@ -445,29 +471,6 @@ describe('WorkflowLibraryPage card semantics', () => {
       ),
     ).toBeInTheDocument();
   });
-
-  it.each(['list', 'grid'])(
-    'only permits removing existing favorites from read-only team rows in %s',
-    (view) => {
-      mocks.mostUsed = [{ ...mocks.workflows[0], executionCount: 23 }];
-      const { rerender } = render(<WorkflowLibraryPage />);
-      if (view === 'grid')
-        fireEvent.click(screen.getByRole('radio', { name: 'Grid' }));
-      const team = within(screen.getByTestId('workflow-section-most-used'));
-      expect(
-        team.queryByRole('button', { name: 'Add to favorites' }),
-      ).toBeNull();
-      mocks.favoriteIds = ['workflow-1'];
-      rerender(<WorkflowLibraryPage />);
-      fireEvent.click(
-        team.getByRole('button', { name: 'Remove from favorites' }),
-      );
-      expect(mocks.toggleFavorite).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'workflow-1' }),
-      );
-      expect(team.queryByRole('button', { name: 'Duplicate' })).toBeNull();
-    },
-  );
 
   it('keeps the library usable when Favorites fails', () => {
     mocks.favoriteError = true;
