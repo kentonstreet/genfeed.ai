@@ -496,18 +496,12 @@ export class VideoGenerationPreparationService {
   ) {
     const generationHarness = await this.enhancementService.enhance({
       actorUserId: user.userId ?? user.id,
-      isApiKey: user.isApiKey,
-      apiKeyId: user.apiKeyId,
-      scopes: user.scopes,
       organizationId: user.organizationId,
       brandId,
       prompt: promptText,
       contentType: 'video',
       model,
       harness: createVideoDto.harness,
-      ...(createVideoDto.brandMode
-        ? { brandMode: createVideoDto.brandMode }
-        : {}),
       ...(createVideoDto.knowledge
         ? { knowledgeSelection: createVideoDto.knowledge }
         : {}),
@@ -700,7 +694,10 @@ export class VideoGenerationPreparationService {
         videoReferenceIds: params.createVideoDto.videoReferences,
         width: params.width,
       });
-      if (params.generationHarness.status === 'skipped') {
+      if (
+        params.generationHarness.status === 'skipped' ||
+        params.generationHarness.status === 'failed'
+      ) {
         compiled.evidence = {
           ...rawPromptBriefEvidence(compiled.evidence),
           actionVerb: compiled.evidence.actionVerb,
@@ -955,7 +952,6 @@ export class VideoGenerationPreparationService {
         organizationId,
         prioritize: createVideoDto.prioritize || 'balanced',
         prompt: createVideoDto.text || '',
-        requiresEndFrame: Boolean(createVideoDto.endFrame),
         speech: createVideoDto.speech,
       });
       this.loggerService.log(

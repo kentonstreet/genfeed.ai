@@ -261,7 +261,6 @@ export class AgentGenerationGatewayService implements IAgentGenerationGateway {
               {
                 aspectRatio: dto.aspectRatio,
                 audioUrl: dto.audioUrl,
-                autoSelectModel: dto.autoSelectModel,
                 avatarId: dto.avatarId,
                 avatarRef: dto.avatarRef,
                 voiceRef: dto.voiceRef,
@@ -270,9 +269,7 @@ export class AgentGenerationGatewayService implements IAgentGenerationGateway {
                 clonedVoiceId: dto.clonedVoiceId,
                 elevenlabsVoiceId: dto.elevenlabsVoiceId,
                 heygenVoiceId: dto.heygenVoiceId,
-                model: dto.model,
                 photoUrl: dto.photoUrl,
-                prioritize: dto.prioritize,
                 text: dto.text ?? '',
                 useIdentity: dto.useIdentity,
                 voiceProvider: dto.voiceProvider,

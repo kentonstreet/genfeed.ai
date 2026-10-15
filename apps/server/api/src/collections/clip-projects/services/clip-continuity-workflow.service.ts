@@ -68,35 +68,6 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     this.runner.registerWorkflow(
       buildClipContinuityFailureWorkflowDefinition(),
     );
-    this.runner.terminalFailures.register(
-      CLIP_CONTINUITY_WORKFLOW_ID,
-      ({ inputValues, organizationId }) =>
-        this.settleTerminalFailure(inputValues, organizationId),
-    );
-  }
-
-  /**
-   * Last resort when the continuity run and its failure graph both failed
-   * (#6655). Only the generation run that queued this QA may be marked
-   * failed, and a finished QA is never overwritten.
-   */
-  private async settleTerminalFailure(
-    inputValues: Record<string, unknown>,
-    organizationId: string,
-  ): Promise<void> {
-    const projectId = this.requiredString(inputValues.projectId, 'projectId');
-    const generationWorkflowExecutionId = this.requiredString(
-      inputValues.generationWorkflowExecutionId,
-      'generationWorkflowExecutionId',
-    );
-    await this.prisma.clipProject.updateMany({
-      data: { continuityQaStatus: 'failed' },
-      where: scopedWhere(organizationId, {
-        continuityQaStatus: { in: ['queued', 'running'] },
-        id: projectId,
-        workflowExecutionId: generationWorkflowExecutionId,
-      }),
-    });
   }
 
   async queueIfReady(project: ClipProjectDocument): Promise<boolean> {
@@ -384,12 +355,12 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
     organizationId: string,
     report: VideoContinuityQaReport,
   ): Promise<void> {
-    const [tasks, turboRunItems] = await Promise.all([
+    const [tasks, batchItems] = await Promise.all([
       this.prisma.task.findMany({
         select: { decomposition: true, id: true },
         where: scopedWhere(organizationId, { projectId }),
       }),
-      this.prisma.turboRunItem.findMany({
+      this.prisma.batchItem.findMany({
         select: { data: true, id: true },
         where: scopedWhere(organizationId, {
           OR: [
@@ -416,8 +387,8 @@ export class ClipContinuityWorkflowService implements OnModuleInit {
           where: scopedWhere(organizationId, { id: task.id }),
         }),
       ),
-      ...turboRunItems.map((item) =>
-        this.prisma.turboRunItem.updateMany({
+      ...batchItems.map((item) =>
+        this.prisma.batchItem.updateMany({
           data: {
             data: toPrismaJson({
               ...this.readRecord(item.data),

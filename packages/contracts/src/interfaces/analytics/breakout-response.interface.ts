@@ -72,11 +72,6 @@ export interface BreakoutLiveCapacityInput
   extends Omit<BreakoutObservationScope, 'format'> {
   strategyId: string;
   nowMs: number;
-  /**
-   * A response whose own components are already funded: its holds and settled spend count against
-   * the budgets but never against pacing, so a funded plan finishes what it started.
-   */
-  responseId?: string;
 }
 export type BreakoutLiveCapacitySnapshot =
   | {
@@ -246,9 +241,6 @@ export type BreakoutOutputRecoveryReason =
   | 'generation_failed'
   | 'quality_or_brand_blocked'
   | 'media_brand_capability_unavailable'
-  | 'format_unsupported_for_platform'
-  | 'platform_publishing_unavailable'
-  | 'media_generation_incomplete'
   | 'quality_evaluation_pending'
   | 'platform_quality_blocked'
   | 'approved_brand_required'

@@ -39,7 +39,6 @@ import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
-import { finalizeBrandedTextCredits } from '@api/helpers/utils/credits/finalize-branded-text-credits.util';
 import {
   finalizeDeferredTextCredits,
   finalizeOutputCredits,
@@ -62,7 +61,7 @@ import {
   parsePlatform,
   TargetExecutionState,
 } from '@genfeedai/contracts';
-import { TURBO_RUN_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants';
+import { BATCH_CAPTION_BASE_CREDITS } from '@genfeedai/contracts/constants';
 import type {
   JsonApiCollectionResponse,
   JsonApiSingleResponse,
@@ -109,7 +108,7 @@ export class PostsGenerationController {
    */
   @Post('source-variations')
   @Credits({
-    amount: TURBO_RUN_CAPTION_BASE_CREDITS,
+    amount: BATCH_CAPTION_BASE_CREDITS,
     description: 'Source post variation',
     source: ActivitySource.POST_ENHANCEMENT,
   })
@@ -177,7 +176,7 @@ export class PostsGenerationController {
     });
 
     if (dto.mode === PostRepurposeMode.AGENT) {
-      finalizeDeferredTextCredits(request, TURBO_RUN_CAPTION_BASE_CREDITS);
+      finalizeDeferredTextCredits(request, BATCH_CAPTION_BASE_CREDITS);
     }
 
     return serializeSingle(request, this.serializer, {
@@ -199,19 +198,22 @@ export class PostsGenerationController {
     @Body() dto: GeneratePostDraftDto,
     @CurrentUser() user: User,
   ): Promise<PostDraftGenerationResult> {
-    return finalizeBrandedTextCredits(
-      request,
-      (model) => resolveTextModelMinimumCredits(this.modelsService, model),
-      () =>
-        this.postGenerationService.generateDraftText(
-          dto,
-          user,
-          this.textGenerationCreditsService.deferredKeyResolver(
-            request,
-            user.organizationId,
-          ),
-        ),
+    const result = await this.postGenerationService.generateDraftText(
+      dto,
+      user,
+      this.textGenerationCreditsService.deferredKeyResolver(
+        request,
+        user.organizationId,
+      ),
     );
+    // A branded replay answers from the saved receipt without a provider call.
+    if (!result.brandedReceipt?.isReplayed) {
+      finalizeDeferredTextCredits(
+        request,
+        await resolveTextModelMinimumCredits(this.modelsService, result.model),
+      );
+    }
+    return result;
   }
 
   @Post('account-generations')
@@ -388,14 +390,18 @@ export class PostsGenerationController {
     }
 
     try {
-      const resultPost = await this.postGenerationService.enhancePost(
-        post,
-        dto,
-        user,
-        resolveByokApiKeyOverride(request),
-      );
+      const enhancedDescription =
+        await this.postGenerationService.enhanceDescription(
+          post,
+          dto,
+          user,
+          resolveByokApiKeyOverride(request),
+        );
+      const updatedPost = await this.postsService.patch(postId, {
+        description: enhancedDescription,
+      });
 
-      return serializeSingle(request, this.serializer, resultPost);
+      return serializeSingle(request, this.serializer, updatedPost);
     } catch (error: unknown) {
       const errorMessage = generationFailureMessage(error, 'Unknown error');
       const errorStack = error instanceof Error ? error.stack : undefined;

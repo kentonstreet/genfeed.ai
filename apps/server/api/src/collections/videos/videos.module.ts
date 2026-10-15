@@ -68,7 +68,6 @@ import { HiggsFieldModule } from '@api/services/integrations/higgsfield/higgsfie
 import { HiggsFieldService } from '@api/services/integrations/higgsfield/higgsfield.service';
 import { KlingAIModule } from '@api/services/integrations/klingai/klingai.module';
 import { ReplicateModule } from '@api/services/integrations/replicate/replicate.module';
-import { MediaGenerationReceiptsModule } from '@api/services/media-generation-receipts/media-generation-receipts.module';
 import { MediaUrlsModule } from '@api/services/media-urls/media-urls.module';
 import { NotificationsPublisherModule } from '@api/services/notifications/publisher/notifications-publisher.module';
 import { PromptBuilderModule } from '@api/services/prompt-builder/prompt-builder.module';
@@ -110,7 +109,6 @@ import { Module } from '@nestjs/common';
     PlatformSettingsModule,
     CrunCoreModule,
     EvaluationReadModule,
-    MediaGenerationReceiptsModule,
     MediaPromptEnhancementModule,
     VideosCoreModule,
     ActivitiesModule,

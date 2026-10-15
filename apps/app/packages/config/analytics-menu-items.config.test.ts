@@ -102,19 +102,11 @@ describe('ANALYTICS_MENU_ITEMS', () => {
   it('puts what-happened destinations ungrouped under Analytics', () => {
     expect(labelsInGroup('')).toEqual([
       'Overview',
-      'Posts',
       'Accounts',
+      'Posts',
       'Brands',
       'Streaks',
     ]);
-  });
-
-  it('always lists Overview, Posts and Accounts; the rest waits for its release', () => {
-    expect(
-      ANALYTICS_MENU_ITEMS.filter((item) => !item.releaseItemId).map(
-        (item) => item.label,
-      ),
-    ).toEqual(['Overview', 'Posts', 'Accounts']);
   });
 
   it('puts derived analysis destinations under Intelligence', () => {

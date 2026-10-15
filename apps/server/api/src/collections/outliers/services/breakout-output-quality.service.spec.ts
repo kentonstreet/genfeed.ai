@@ -5,7 +5,6 @@ import type { BreakoutGenerationAdmission } from '@api/collections/outliers/serv
 import { readBreakoutLiveCapacity } from '@api/collections/outliers/services/breakout-live-capacity.util';
 import { BreakoutOutputQualityService } from '@api/collections/outliers/services/breakout-output-quality.service';
 import { readBreakoutOutputRecovery } from '@api/collections/outliers/services/breakout-output-recovery.util';
-import type { BreakoutVisualQualityService } from '@api/collections/outliers/services/breakout-visual-quality.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { CreditReservationStatus, Platform } from '@genfeedai/contracts';
 import type { Prisma } from '@genfeedai/prisma';
@@ -204,7 +203,6 @@ function fixture(thread = false) {
     strategies as unknown as AgentStrategiesService,
     optimizers as unknown as OptimizersService,
     credits as unknown as CreditsUtilsService,
-    { evaluate: vi.fn() } as unknown as BreakoutVisualQualityService,
   );
   return {
     service,
@@ -234,31 +232,6 @@ function fixture(thread = false) {
 
 describe('breakout normal strategy quality consumer', () => {
   beforeEach(() => vi.clearAllMocks());
-  it('scores a draft held for brand review so a member can publish it once approved', async () => {
-    const h = fixture();
-    // Every material re-read of this evaluation sees the same held-for-review output.
-    vi.mocked(readBreakoutOutputRecovery).mockResolvedValue({
-      status: 'available',
-      responseId: 'response-a',
-      outputId: 'output-a',
-      state: 'awaiting_review',
-      reason: 'brand_review_required',
-      action: 'none',
-      mayRepeatPaidRequest: false,
-      postId: 'post-a',
-      externalId: null,
-    });
-    try {
-      expect(await h.service.evaluate(h.request)).toEqual({
-        state: 'approved',
-        scoreId: 'score-a',
-      });
-    } finally {
-      vi.mocked(readBreakoutOutputRecovery).mockReset();
-    }
-    expect(h.credits.settleReservation).toHaveBeenCalledOnce();
-    expect(h.state()).toEqual({ heldReason: null, state: 'generating' });
-  });
   it.each([false, true])(
     'scores complete canonical content, settles the actual cost and replays without another paid call (thread=%s)',
     async (thread) => {
@@ -328,14 +301,6 @@ describe('breakout normal strategy quality consumer', () => {
     expect(h.tx.breakoutResponseOutput.updateMany).not.toHaveBeenCalled();
     expect(h.optimizers.analyzeContent).not.toHaveBeenCalled();
     expect(h.credits.reserveCredits).not.toHaveBeenCalled();
-  });
-  it('reads the quality budget as a step of its own funded response, so pacing never refuses it', async () => {
-    const h = fixture();
-    await h.service.evaluate(h.request);
-    expect(readBreakoutLiveCapacity).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ responseId: 'response-a' }),
-    );
   });
   it('propagates key revocation during the budget await before a quality provider call', async () => {
     const h = fixture();

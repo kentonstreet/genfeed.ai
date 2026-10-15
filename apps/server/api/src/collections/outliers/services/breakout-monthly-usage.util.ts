@@ -18,8 +18,6 @@ export type BreakoutMonthlyUsage =
       spentCredits: number;
       heldCredits: number;
       usedCredits: number;
-      /** The part of the spend that belongs to the input's own plan (see `ownGenerationKeys`). */
-      ownCredits: number;
       dimensionUsage: {
         platforms: Partial<Record<string, number>>;
         formats: Partial<Record<LearningFormat, number>>;
@@ -29,8 +27,6 @@ export type BreakoutCreditUsageInput = BreakoutLiveCapacityInput & {
   periodStartMs: number;
   periodEndMs: number;
   storedUsed: number;
-  /** Generation keys of the plan whose components are funded; their spend is its own. */
-  ownGenerationKeys?: readonly string[];
 };
 const LIMIT = 2000;
 function attribution(metadata: unknown): StrategyBudgetAttribution | null {
@@ -43,12 +39,7 @@ function attribution(metadata: unknown): StrategyBudgetAttribution | null {
 /** Ledger spend plus remaining live holds. A stored aggregate never gets added to its own ledger. */
 export async function readBreakoutMonthlyUsage(
   tx: Prisma.TransactionClient,
-  input: Readonly<
-    BreakoutLiveCapacityInput & {
-      storedMonthlyUsed: number;
-      ownGenerationKeys?: readonly string[];
-    }
-  >,
+  input: Readonly<BreakoutLiveCapacityInput & { storedMonthlyUsed: number }>,
 ): Promise<BreakoutMonthlyUsage> {
   const now = new Date(input.nowMs);
   return readBreakoutCreditUsage(tx, {
@@ -100,12 +91,7 @@ export async function readBreakoutCreditUsage(
       metadata: true,
       reservationId: true,
       reservation: {
-        select: {
-          organizationId: true,
-          brandId: true,
-          metadata: true,
-          workloadId: true,
-        },
+        select: { organizationId: true, brandId: true, metadata: true },
       },
     },
     take: LIMIT + 1,
@@ -121,7 +107,6 @@ export async function readBreakoutCreditUsage(
       settledAmount: true,
       status: true,
       metadata: true,
-      workloadId: true,
     },
     take: LIMIT + 1,
   });
@@ -129,12 +114,6 @@ export async function readBreakoutCreditUsage(
   if (transactions.length > LIMIT || reservations.length > LIMIT) return held;
   let spent = new Prisma.Decimal(0);
   let reserved = new Prisma.Decimal(0);
-  let own = new Prisma.Decimal(0);
-  const isOwn = (workloadId: string | null) =>
-    workloadId !== null &&
-    (input.ownGenerationKeys ?? []).some((key) =>
-      workloadId.startsWith(`${key}:`),
-    );
   const platformUsage = new Map<string, Prisma.Decimal>();
   const formatUsage = new Map<LearningFormat, Prisma.Decimal>();
   function add(scope: StrategyBudgetAttribution, amount: Prisma.Decimal) {
@@ -195,7 +174,6 @@ export async function readBreakoutCreditUsage(
       .abs()
       .times(row.category === 'deduct' ? 1 : -1);
     spent = spent.plus(amount);
-    if (isOwn(row.reservation?.workloadId ?? null)) own = own.plus(amount);
     add(scope, amount);
   }
   seen.clear();
@@ -222,7 +200,6 @@ export async function readBreakoutCreditUsage(
     if (scope.strategyId !== input.strategyId) continue;
     const amount = new Prisma.Decimal(row.amount);
     reserved = reserved.plus(amount);
-    if (isOwn(row.workloadId)) own = own.plus(amount);
     add(scope, amount);
   }
   // Unmatched refunds (including previous-month charges) need reconciliation, not negative spend credit.
@@ -243,7 +220,6 @@ export async function readBreakoutCreditUsage(
     spentCredits: spent.toNumber(),
     heldCredits: reserved.toNumber(),
     usedCredits: used.toNumber(),
-    ownCredits: Prisma.Decimal.max(own, 0).toNumber(),
     dimensionUsage: counterGap
       ? null
       : {

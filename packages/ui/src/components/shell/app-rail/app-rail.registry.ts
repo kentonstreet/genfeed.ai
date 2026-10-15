@@ -10,25 +10,16 @@ import type {
   AppRailScope,
   AppRailScopedRouteOptions,
 } from '@genfeedai/contracts/interfaces/ui/app-rail.interface';
-import { GalleryHorizontalStart } from '@ui/primitives/animated-icons/custom-lucide';
 import {
-  Bot,
-  BotMessageSquare,
-  CalendarDays,
-  ChartPie,
-  Clapperboard,
-  FileStack,
-  Gauge,
-  House,
-  LibraryBig,
+  Calendar,
+  ChartNoAxesColumn,
+  Home,
+  Images,
   MessageSquare,
-  Radar,
-  Rocket,
-  Scissors,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
-  SquarePlay,
+  Terminal,
+  TrendingUp,
   Workflow,
 } from 'lucide-react';
 
@@ -43,16 +34,16 @@ function createScopedAppRoute({
 }
 
 /**
- * The daily loop is fixed on the rail: workspace, agent, library, publishing,
- * analytics. Every other native app opens directly from the Apps launcher
- * once the member installs it, and can be pinned below the loop (#5502).
- * Studio tools are separate apps; there is no Studio parent.
+ * The daily loop sits on the rail: workspace, agent, library, publishing,
+ * analytics. Studio, automation, messages and discovery stay in More until
+ * the signed-in user pins them. Discovery is research that helps the loop;
+ * it is not part of publishing or analytics.
  */
 export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/workspace', '/overview'],
     description: 'workspace.description',
-    icon: House,
+    icon: Home,
     group: 'daily',
     id: 'workspace',
     label: 'workspace.label',
@@ -61,7 +52,7 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/agent'],
     description: 'agent.description',
-    icon: BotMessageSquare,
+    icon: Terminal,
     group: 'daily',
     id: 'agent',
     label: 'agent.label',
@@ -72,7 +63,7 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/library'],
     description: 'library.description',
-    icon: LibraryBig,
+    icon: Images,
     group: 'daily',
     id: 'library',
     label: 'library.label',
@@ -82,7 +73,7 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/publishing'],
     description: 'publishing.description',
-    icon: CalendarDays,
+    icon: Calendar,
     group: 'daily',
     id: 'publishing',
     organizationModule: 'publishing',
@@ -93,7 +84,7 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/analytics'],
     description: 'analytics.description',
-    icon: ChartPie,
+    icon: ChartNoAxesColumn,
     group: 'daily',
     id: 'analytics',
     organizationModule: 'analytics',
@@ -101,90 +92,28 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
     route: createScopedAppRoute({ brandPath: '/analytics/overview' }),
     visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.analytics,
   },
-  // Studio apps need a brand. Their org routes pick the member's last-used
-  // brand, or hand one-off generation to Agent when there is none.
   {
-    activePathRoots: [APP_ROUTES.STUDIO.PLAYGROUND],
-    description: 'playground.description',
+    activePathRoots: ['/studio'],
+    description: 'studio.description',
     icon: Sparkles,
-    group: 'app',
-    id: 'playground',
-    isBrandAware: true,
-    label: 'playground.label',
+    group: 'more',
+    id: 'studio',
     organizationModule: 'playground',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.PLAYGROUND }),
-    visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
-  },
-  {
-    activePathRoots: [APP_ROUTES.STUDIO.STORYBOARD],
-    description: 'storyboard.description',
-    icon: Clapperboard,
-    group: 'app',
-    id: 'storyboard',
     isBrandAware: true,
-    label: 'storyboard.label',
-    organizationModule: 'storyboard',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.STORYBOARD }),
-    surfaceFlagKey: 'studio_storyboard',
-    visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
-  },
-  {
-    activePathRoots: [APP_ROUTES.STUDIO.TURBO],
-    description: 'turbo.description',
-    icon: Rocket,
-    group: 'app',
-    id: 'turbo',
-    isBrandAware: true,
-    label: 'turbo.label',
-    organizationModule: 'turbo',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.TURBO }),
-    surfaceFlagKey: 'studio_turbo',
-    visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
-  },
-  {
-    activePathRoots: [APP_ROUTES.STUDIO.MOTION],
-    description: 'motion.description',
-    icon: SquarePlay,
-    group: 'app',
-    id: 'motion',
-    isBrandAware: true,
-    label: 'motion.label',
-    organizationModule: 'motion',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.MOTION }),
-    surfaceFlagKey: 'studio_motion',
-    visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
-  },
-  {
-    activePathRoots: [APP_ROUTES.STUDIO.CLIPS],
-    description: 'clips.description',
-    icon: GalleryHorizontalStart,
-    group: 'app',
-    id: 'clips',
-    isBrandAware: true,
-    label: 'clips.label',
-    organizationModule: 'clips',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.CLIPS }),
-    surfaceFlagKey: 'studio_clips',
-    visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
-  },
-  {
-    activePathRoots: [APP_ROUTES.STUDIO.EDITOR],
-    description: 'editor.description',
-    icon: Scissors,
-    group: 'app',
-    id: 'editor',
-    isBrandAware: true,
-    label: 'editor.label',
-    organizationModule: 'editor',
-    route: createScopedAppRoute({ brandPath: APP_ROUTES.STUDIO.EDITOR }),
-    surfaceFlagKey: 'studio_editor',
+    label: 'studio.label',
+    // Studio production tools require a brand. The org route hands one-off
+    // generation to Agent while preserving a stable rail destination.
+    route: createScopedAppRoute({
+      brandPath: '/studio/playground',
+      organizationPath: '/studio',
+    }),
     visibilityFlagKey: APP_RAIL_FEATURE_FLAGS.studio,
   },
   {
     activePathRoots: ['/automation'],
     description: 'automation.description',
     icon: Workflow,
-    group: 'app',
+    group: 'more',
     id: 'automation',
     organizationModule: 'automation',
     label: 'automation.label',
@@ -195,7 +124,7 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
     activePathRoots: ['/messages'],
     description: 'messages.description',
     icon: MessageSquare,
-    group: 'app',
+    group: 'more',
     id: 'messages',
     organizationModule: 'messages',
     label: 'messages.label',
@@ -205,8 +134,8 @@ export const APP_RAIL_REGISTRY: readonly AppRailItemConfig[] = [
   {
     activePathRoots: ['/discovery'],
     description: 'discovery.description',
-    icon: Radar,
-    group: 'app',
+    icon: TrendingUp,
+    group: 'more',
     id: 'discovery',
     organizationModule: 'discovery',
     label: 'discovery.label',
@@ -224,70 +153,6 @@ export const ADMIN_RAIL_APP: AppRailItemConfig = {
   label: 'admin.label',
   route: () => APP_ROUTES.ADMIN.OVERVIEW.DASHBOARD,
 };
-
-/**
- * Admin chrome swaps the app loop for these: one icon per admin category, each
- * opening that category's pages in the sidebar. `activePathRoots` mirror the
- * pages of the matching group in `ADMIN_MENU_ITEMS`; the longest root wins, so
- * Organizations (an `/admin/overview/...` URL) still lands in Administration.
- */
-export const ADMIN_RAIL_CATEGORIES: readonly AppRailItemConfig[] = [
-  {
-    activePathRoots: [APP_ROUTES.ADMIN.ROOT, '/admin/overview'],
-    adminMenuGroup: 'Overview',
-    description: 'adminOverview.description',
-    group: 'admin-category',
-    icon: Gauge,
-    id: 'admin-overview',
-    label: 'adminOverview.label',
-    route: () => APP_ROUTES.ADMIN.OVERVIEW.DASHBOARD,
-  },
-  {
-    activePathRoots: ['/admin/content'],
-    adminMenuGroup: 'Content',
-    description: 'adminContent.description',
-    group: 'admin-category',
-    icon: FileStack,
-    id: 'admin-content',
-    label: 'adminContent.label',
-    route: () => APP_ROUTES.ADMIN.CONTENT.POSTS,
-  },
-  {
-    activePathRoots: ['/admin/automation', '/admin/library'],
-    adminMenuGroup: 'AI & Automation',
-    description: 'adminAutomation.description',
-    group: 'admin-category',
-    icon: Bot,
-    id: 'admin-automation',
-    label: 'adminAutomation.label',
-    route: () => APP_ROUTES.ADMIN.AUTOMATION.MODELS,
-  },
-  {
-    activePathRoots: ['/admin/configuration'],
-    adminMenuGroup: 'Configuration',
-    description: 'adminConfiguration.description',
-    group: 'admin-category',
-    icon: SlidersHorizontal,
-    id: 'admin-configuration',
-    label: 'adminConfiguration.label',
-    route: () => APP_ROUTES.ADMIN.CONFIGURATION.ELEMENTS_BLACKLISTS,
-  },
-  {
-    activePathRoots: [
-      '/admin/administration',
-      '/admin/flags',
-      '/admin/organization',
-      APP_ROUTES.ADMIN.OVERVIEW.ANALYTICS_ORGANIZATIONS,
-    ],
-    adminMenuGroup: 'Administration',
-    description: 'adminAdministration.description',
-    group: 'admin-category',
-    icon: ShieldCheck,
-    id: 'admin-administration',
-    label: 'adminAdministration.label',
-    route: () => APP_ROUTES.ADMIN.ADMINISTRATION.USERS,
-  },
-];
 
 function withPreservedSearch(path: string, preservedSearch?: string): string {
   if (!preservedSearch) {
@@ -419,23 +284,6 @@ export function getAppRailFlagKeyForPath(
 ): AppRailFeatureFlagKey | undefined {
   const appId = getActiveAppId(APP_RAIL_REGISTRY, currentPath);
   return APP_RAIL_REGISTRY.find((app) => app.id === appId)?.visibilityFlagKey;
-}
-
-/**
- * Whether the platform switches behind an app are on: its module flag and, for
- * a Studio app, its surface flag. An unknown flag is on only while the flag
- * provider is unconfigured.
- */
-export function isAppRailItemEnabled(
-  app: AppRailItemConfig,
-  flags: Readonly<Record<string, unknown>>,
-  isConfigured: boolean,
-): boolean {
-  return [app.visibilityFlagKey, app.surfaceFlagKey].every(
-    (flagKey) =>
-      !flagKey ||
-      (Object.hasOwn(flags, flagKey) ? flags[flagKey] === true : !isConfigured),
-  );
 }
 
 export function getAppRailHref(

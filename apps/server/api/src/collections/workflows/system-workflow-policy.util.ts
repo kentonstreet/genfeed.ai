@@ -1,12 +1,8 @@
-import type {
-  RunSystemWorkflowInput,
-  SystemWorkflowGraphDefinition,
-} from '@api/collections/workflows/system-workflow-definition';
+import type { SystemWorkflowGraphDefinition } from '@api/collections/workflows/system-workflow-definition';
 import {
   PLATFORM_WORKFLOW_SCHEDULE_SOURCE,
   PROACTIVE_AGENT_TURN_SOURCE,
 } from '@api/collections/workflows/system-workflow-definition';
-import { WORKFLOW_EXECUTION_RETENTION_METADATA_KEY } from '@api/collections/workflows/workflow-execution-retention.contract';
 import { buildWorkflowVersionDefinition } from '@api/collections/workflows/workflow-version-definition';
 import { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import {
@@ -33,66 +29,6 @@ export type SystemWorkflowActionRequest = {
   provenance: SystemWorkflowProvenance;
   runtimeContext?: unknown;
 };
-
-/** What a last-resort terminal failure handler receives (#6655). */
-export type SystemWorkflowTerminalFailureRequest = {
-  inputValues: Record<string, unknown>;
-  organizationId: string;
-  workflowError: string;
-};
-
-/**
- * Marks the record a system workflow owns as terminally failed after both the
- * workflow and its failure workflow failed. Runs without a graph or action
- * contracts, so it must read only the minimal identifiers it needs.
- */
-export type SystemWorkflowTerminalFailureHandler = (
-  request: SystemWorkflowTerminalFailureRequest,
-) => Promise<void>;
-
-/**
- * Last-resort handlers per workflow that owns a record: when the workflow and
- * its failure workflow both fail, the record is still marked terminal instead
- * of staying in flight forever (#6655).
- */
-export class SystemWorkflowTerminalFailures {
-  private readonly handlers = new Map<
-    string,
-    SystemWorkflowTerminalFailureHandler
-  >();
-
-  register(
-    canonicalId: string,
-    handler: SystemWorkflowTerminalFailureHandler,
-  ): void {
-    if (this.handlers.has(canonicalId)) {
-      throw new Error(
-        `Duplicate system workflow terminal failure handler: ${canonicalId}`,
-      );
-    }
-    this.handlers.set(canonicalId, handler);
-  }
-
-  /** Returns whether a registered last resort settled the owned record. */
-  async settle(
-    input: Pick<
-      RunSystemWorkflowInput,
-      'canonicalId' | 'inputValues' | 'organizationId'
-    >,
-    workflowError: string,
-  ): Promise<boolean> {
-    const handler = this.handlers.get(input.canonicalId);
-    if (!handler) {
-      return false;
-    }
-    await handler({
-      inputValues: input.inputValues ?? {},
-      organizationId: input.organizationId,
-      workflowError,
-    });
-    return true;
-  }
-}
 
 // Action handlers are either pure state transforms or async I/O. `registerAction`
 // wraps every executor in an async node executor, so both shapes are awaited.
@@ -233,28 +169,4 @@ export async function resolveInheritedDispatch(
     usePlatformQueue:
       source !== undefined && isPlatformOriginatedSource(source),
   };
-}
-
-/**
- * The `executionRetention` contract a parent execution was started with,
- * shaped as child metadata so a `workflow.for-each` fan-out can spread it into
- * every child it creates (#5634). Without it, a parent tagged to self-purge
- * (e.g. the hourly artifact cleanup sweep) leaves one permanent row per child.
- * Returns an empty record when the parent carries no retention contract.
- */
-export async function resolveInheritedRetentionMetadata(
-  prisma: PrismaService,
-  executionId: string,
-  organizationId: string,
-): Promise<Record<string, unknown>> {
-  const execution = await prisma.workflowExecution.findFirst({
-    select: { result: true },
-    where: { id: executionId, isDeleted: false, organizationId },
-  });
-  const retention = readRecord(readRecord(execution?.result).metadata)[
-    WORKFLOW_EXECUTION_RETENTION_METADATA_KEY
-  ];
-  return retention === undefined || retention === null
-    ? {}
-    : { [WORKFLOW_EXECUTION_RETENTION_METADATA_KEY]: retention };
 }

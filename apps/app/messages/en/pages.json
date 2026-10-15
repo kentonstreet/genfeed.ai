@@ -494,36 +494,6 @@
           "policy_unreadable": "The strategy budget or posting policy could not be verified."
         }
       }
-    },
-    "winners": {
-      "allPosts": "All posts",
-      "columns": {
-        "evidence": "Why it won",
-        "post": "Post"
-      },
-      "empty": "No winners in this period. A post wins when a metric beats its account's usual result and there are enough mature posts to compare.",
-      "evidence": "{signal} {ratio}× baseline ({value} vs {baseline}, {sampleSize} posts)",
-      "loadError": "Winners could not be loaded.",
-      "showLabel": "Show posts",
-      "signals": {
-        "comments": "Comments",
-        "engagementRate": "Engagement rate",
-        "likes": "Likes",
-        "views": "Views"
-      },
-      "tableLabel": "Winning posts",
-      "tiers": {
-        "breakout": "Breakout",
-        "outlier": "Outlier"
-      },
-      "untitled": "Untitled post",
-      "winners": "Winners"
-    },
-    "sourceFilter": {
-      "all": "All sources",
-      "audience": "Audience",
-      "aria": "Filter post analytics by source",
-      "extension": "Extension"
     }
   },
   "adsResearch": {
@@ -977,8 +947,7 @@
     "newProject": "New project",
     "noProjectsDescription": "Start from a YouTube link, an uploaded file, or a video in Library.",
     "noProjectsYet": "No clip projects yet",
-    "pipelineFailed": "Clip generation stopped before it finished. Retry what failed below, or start a new project.",
-    "pipelineFailedNoRetry": "Clip generation stopped and this run can’t be retried. Start a new project to try again.",
+    "pipelineFailed": "Pipeline failed. Check logs for details.",
     "processingAvatarClips": "Processing source media and generating avatar clips...",
     "processingAvatarClipsEllipsis": "Processing source media and generating avatar clips…",
     "processingCaptionedRawCuts": "Processing source video and creating captioned raw cuts…",
@@ -994,7 +963,6 @@
     "retryFailedClipsHint": "Completed clips stay ready. Retry dispatches only failed work.",
     "retryLibraryLink": "Retry Library link",
     "retrySourceProcessing": "Retry source processing",
-    "sourceRetryLimitReached": "Source retry limit reached. No further retries are available.",
     "reviewHighlightsFirst": "Review highlights first",
     "reviewHookClip": "Review the hook clip",
     "reviewRequired": "Review required",
@@ -1003,8 +971,6 @@
     "someClipsFailed": "Some clips failed",
     "source": "Source",
     "sourceLimits": "Supports long-form audio and video up to 10 GB and 6 hours.",
-    "sourceFailedDescription": "No clips were made. Retry source processing, or start a new project with another source.",
-    "sourceFailedHeading": "This source couldn’t be processed",
     "sourceProcessingFailed": "Source processing failed",
     "startClipFactory": "Start Clip Factory",
     "starting": "Starting…",
@@ -1039,53 +1005,45 @@
     "processingSource": "Processing this source…",
     "downloadingSource": "Downloading source media…",
     "extractingSourceAudio": "Extracting source audio…",
-    "transcribingAndAnalyzingSource": "Transcribing and analyzing this source…",
-    "onboarding": {
-      "title": "Turn one long video into a batch of short clips",
-      "description": "Add a YouTube link or upload a file. Genfeed finds the strongest moments, cuts them and gets them ready to publish.",
-      "presetsTitle": "Start with a preset",
-      "presetsDescription": "A preset picks the clip style and how many highlights to find. You add the video next, so nothing is processed until you start."
-    },
-    "presets": {
-      "listAria": "Clip presets",
-      "use": "Use this preset",
-      "useAria": "Start a clip project with the {title} preset",
-      "appliedStatus": "{title} preset applied: up to {count} clips scoring {score} or higher. Add a video to start.",
-      "maxClips": "{count, plural, one {Up to # clip} other {Up to # clips}}",
-      "minScore": "Score {score}+",
-      "modes": {
-        "avatar": "Avatar",
-        "raw-cut": "Raw cut"
-      },
-      "shelfTitle": "Start from a preset",
-      "seeAll": "See all presets",
-      "showFewer": "Show fewer",
-      "items": {
-        "podcastHighlights": {
-          "title": "Podcast highlights",
-          "description": "Pull the most quotable moments out of a long conversation."
-        },
-        "webinarSnippets": {
-          "title": "Webinar snippets",
-          "description": "Turn a recording into short answers and key takeaways."
-        },
-        "interviewSoundbites": {
-          "title": "Interview soundbites",
-          "description": "Find the punchy one-liners and strong opinions in an interview."
-        },
-        "tutorialTips": {
-          "title": "Tutorial quick tips",
-          "description": "Cut a how-to into bite-sized tips that stand on their own."
-        },
-        "keynoteMoments": {
-          "title": "Talk and keynote moments",
-          "description": "Keep only the strongest stories and bold claims from a talk."
-        },
-        "avatarRemix": {
-          "title": "Avatar re-voice",
-          "description": "Re-tell each highlight with an AI avatar and voice. Needs avatar and voice defaults."
-        }
-      }
+    "transcribingAndAnalyzingSource": "Transcribing and analyzing this source…"
+  },
+  "studioBatch": {
+    "emptyExecutions": "No recent batch executions yet.",
+    "loadingExecution": "Loading batch execution…",
+    "loadingWorkflows": "Loading workflows and recent executions…",
+    "processedProgress": "{completed} / {total} processed",
+    "recentExecutions": "Recent executions",
+    "recentExecutionsDescription": "Reopen a batch, resume progress, or inspect completed results.",
+    "title": "Batch Workflow Runner",
+    "detail": {
+      "backToSetup": "Back to batch setup",
+      "clearSelection": "Clear selection",
+      "completedCount": "Completed: {count}",
+      "download": "Download",
+      "downloadAll": "Download all",
+      "downloadSelected": "Download selected",
+      "failedCount": "Failed: {count}",
+      "itemsProcessed": "{processed} / {total} items processed",
+      "missingOutputMetadata": "Output metadata is unavailable for this completed item.",
+      "noOutputMetadata": "This batch finished without persisted output metadata. Download and publish actions are available when child executions expose output summaries.",
+      "noPreview": "No persisted output preview",
+      "openInLibrary": "Open in library",
+      "outputAlt": "Output {id}",
+      "outputCategory": "{category} output",
+      "outputs": "Outputs",
+      "outputsReady": "{count, plural, one {# output ready} other {# outputs ready}}",
+      "outputsReadySelected": "{count, plural, one {# output ready} other {# outputs ready}}, {selected} selected",
+      "previewUnavailable": "Preview unavailable for this output type",
+      "publish": "Publish",
+      "publishAll": "Publish all",
+      "publishSelected": "Publish selected",
+      "remainingCount": "Remaining: {count}",
+      "select": "Select",
+      "selectAll": "Select all",
+      "selectOutput": "Select output {id}",
+      "started": "Started:",
+      "title": "Batch Results",
+      "unknownCategory": "unknown"
     }
   },
   "studioStoryboard": {
@@ -1107,9 +1065,11 @@
       "shotStatus": "Shot {ordinal}",
       "shotStillUnavailable": "Shot {ordinal}: Still preview unavailable",
       "stillUnavailable": "Still preview unavailable",
+      "subtitle": "Stills and dialogue preview · no generation credits",
       "title": "Animatic"
     },
     "autoMerge": {
+      "description": "The finished transitions are merged into one video with these settings.",
       "label": "Auto-merge"
     },
     "conflict": {
@@ -1132,6 +1092,7 @@
       "chooseOwnedVideo": "Choose an owned video up to 60 seconds and 100 MiB.",
       "chooseStartingImage": "Choose a starting image",
       "clearVideo": "Clear video",
+      "description": "Save your brief or video, then review a credit quote before generating.",
       "format": "Format",
       "formatAria": "Storyboard format",
       "fromBrief": "From a brief",
@@ -1142,26 +1103,26 @@
       "retrySaving": "Retry saving storyboard",
       "runtimeBudget": "Runtime budget (seconds)",
       "secondsUnit": "s",
+      "runtimeBudgetHelp": "Choose up to 60 seconds.",
       "save": "Save storyboard",
       "saving": "Saving…",
       "sourceAria": "Storyboard source",
       "startingImage": "Starting image",
+      "startingImageHelp": "A starting image can replace the brief. It is saved as a reference and requires generated stills before approval.",
       "title": "Create a storyboard",
       "uploadVideo": "Upload a video",
-      "uploadedVideo": "Uploaded video"
+      "uploadedVideo": "Uploaded video",
+      "videoHelp": "Uploading or selecting a video does not create a run. Its ownership, duration, and size are validated when you continue."
     },
     "draft": {
-      "draftFailed": "Could not draft the storyboard. Try again.",
-      "draftFromBrief": "Draft from the saved brief",
-      "drafting": "Drafting the storyboard…",
-      "emptyDescription": "Write what the video should say below and send it to draft a shot list you can edit before anything is generated. Or add shots yourself.",
-      "emptyTitle": "Start with the story",
+      "brief": "Brief",
+      "briefDescription": "Source changes mark existing stills stale and require a new review.",
       "loading": "Loading storyboard…",
       "regenerateBeforeEditor": "Storyboard changed. Regenerate stale shots before opening Editor.",
       "saveBeforeLeave": "Your edits could not be saved. Retry saving before leaving.",
       "scopeChanged": "Storyboard scope changed.",
       "sourceNotEditable": "This source cannot be edited.",
-      "untitled": "Untitled storyboard"
+      "untitled": "Storyboard"
     },
     "plan": {
       "action": "Action",
@@ -1174,6 +1135,8 @@
       "avatarFor": "Avatar image for {name}",
       "beforeApproving": "Before approving:",
       "capabilitiesUnavailable": "Video model capabilities are unavailable.",
+      "cast": "Cast",
+      "castDescription": "Each speaker keeps one voice across their dialogue.",
       "changeAvatar": "Change avatar image",
       "chooseAvatar": "Choose avatar image",
       "chooseFormat": "Choose format",
@@ -1185,6 +1148,7 @@
       "cut": "Cut",
       "deleteShot": "Delete shot",
       "dialogue": "Dialogue",
+      "duration": "Duration (seconds)",
       "durationUntilResolved": "Duration editing and adding shots become available when the supported model durations are resolved.",
       "format": "Format",
       "interpolate": "Interpolate",
@@ -1199,6 +1163,7 @@
       "noSupportedDuration": "No supported duration fits the remaining runtime.",
       "noVoices": "No usable saved voices. Save a usable voice in Voices Library before assigning it.",
       "notes": "Notes",
+      "notesHelp": "Notes are saved with the plan and excluded from generation.",
       "referenceFallback": "Reference {ordinal}",
       "reloadCapabilities": "Reload model capabilities",
       "removeReference": "Remove {label}",
@@ -1245,6 +1210,7 @@
       "runtimeBudget": "Runtime budget (seconds)",
       "secondsUnit": "s",
       "savedVoice": "Saved voice",
+      "section": "Section",
       "shortenBeforeIncrease": "Shorten another shot before increasing this duration.",
       "shot": "Shot {ordinal}",
       "shotTransition": "Shot {ordinal} transition",
@@ -1253,22 +1219,15 @@
       "speakerForShot": "Speaker for shot {ordinal}",
       "speakerOnScreen": "Speaker on screen",
       "stillAlt": "Still for shot {ordinal}",
-      "generateStill": "Generate still",
-      "regenerateStill": "Regenerate still",
-      "stillFailed": "The still could not be generated. You were not charged. Try again from the shot menu.",
-      "stillGenerating": "Sketching still…",
-      "stillQuoteByok": "{count, plural, one {# black-and-white sketch still} other {# black-and-white sketch stills}} with your Replicate key. No credits are charged.",
-      "stillQuoteChanged": "The storyboard changed after the quote. Generate again to see the current price.",
-      "stillQuoteConfirm": "Generate",
-      "stillQuoteMessage": "{count, plural, one {# black-and-white sketch still} other {# black-and-white sketch stills}} for {credits, plural, one {# credit} other {# credits}}. You are charged only for stills that render.",
-      "stillQuoteTitle": "{count, plural, one {Generate # still?} other {Generate # stills?}}",
       "stillStatus": "Still: {status}",
       "stillUnavailable": "Still preview unavailable",
       "stitch": "Stitch",
       "style": "Style",
       "styleReferences": "Style references",
       "switchModelFailed": "Could not switch video model.",
+      "title": "Plan",
       "titleField": "Title",
+      "transition": "Transition",
       "undo": "Undo",
       "updateFailed": "Could not update storyboard. Your edits are kept.",
       "videoModel": "Video model",
@@ -1276,15 +1235,7 @@
       "voiceFor": "Voice for {name}",
       "voiceUnavailable": "Saved voice unavailable — replace or clear",
       "voiceUnavailableFor": "Saved voice for {name} is unavailable. Replace or clear it.",
-      "voicesLibrary": "Voices Library",
-      "addShotAfter": "Insert shot after shot {ordinal}",
-      "brief": "Brief",
-      "briefHelp": "Read only. The brief this storyboard is drafted from.",
-      "durationUnset": "Not set",
-      "shotActions": "Shot {ordinal} actions",
-      "shotDuration": "Shot {ordinal} length in seconds",
-      "shotNameFor": "Name for shot {ordinal}",
-      "shotNamePlaceholder": "Name this shot"
+      "voicesLibrary": "Voices Library"
     },
     "frameSequence": {
       "clear": "Clear",
@@ -1293,74 +1244,16 @@
       "needsTwoFrames": "Select at least two frames",
       "summary": "{frames, plural, one {# frame} other {# frames}} / {transitions, plural, one {# transition} other {# transitions}}"
     },
-    "onboarding": {
-      "description": "From a one-line idea or an existing video.",
-      "otherWaysTitle": "Or start another way",
-      "presetsTitle": "Start with a preset",
-      "remixAction": "Choose a video",
-      "remixDescription": "Rebuild a post, ad or your own video.",
-      "remixTitle": "Remix a video",
-      "scratchAction": "New storyboard",
-      "scratchDescription": "Write your own brief.",
-      "scratchTitle": "Start from scratch",
-      "title": "Turn an idea into a storyboard"
-    },
-    "presets": {
-      "chipsAria": "Storyboard presets",
-      "create": "Try this",
-      "createAria": "Create a storyboard from {title}",
-      "creating": "Creating…",
-      "items": {
-        "beforeAfter": {
-          "description": "Show the starting point and the finished result side by side.",
-          "title": "Before and after"
-        },
-        "behindTheScenes": {
-          "description": "Show how the work really gets made.",
-          "title": "Behind the scenes"
-        },
-        "customerStory": {
-          "description": "A casual, user-generated style testimonial with candid B-roll.",
-          "title": "Customer story"
-        },
-        "founderStory": {
-          "description": "The problem, the early days, the turning point and the mission.",
-          "title": "Founder story"
-        },
-        "howTo": {
-          "description": "Teach one skill step by step and end on a clear result.",
-          "title": "How-to tutorial"
-        },
-        "productLaunch": {
-          "description": "Tease a product with fast cuts, then reveal it with a bold promise.",
-          "title": "Product launch teaser"
-        },
-        "seasonRecap": {
-          "description": "Relive the biggest moments of an event or season.",
-          "title": "Event or season recap"
-        },
-        "threeStepExplainer": {
-          "description": "A problem, three clear steps and the outcome.",
-          "title": "3-step explainer"
-        }
-      },
-      "listAria": "Storyboard presets",
-      "prefillAria": "Use the {title} preset",
-      "runtime": "{seconds}s",
-      "seeAll": "See all presets",
-      "selectBrand": "Choose a brand to start a storyboard from a preset.",
-      "shelfTitle": "Start from a preset",
-      "shots": "{count, plural, one {# shot} other {# shots}}",
-      "showFewer": "Show fewer"
-    },
     "recipe": {
       "addReferences": "Add references",
       "aspectRatio": "Aspect ratio",
+      "description": "Saved to this run when you generate.",
       "duration": "Duration (seconds)",
       "generate": "Generate",
       "objective": "Objective",
       "outputCount": "{count}x",
       "outputs": "Outputs",
+      "referencesHelp": "Library references guide the look. Brand defaults are added automatically.",
       "referenceLabel": "Reference {ordinal}",
       "referenceUnavailable": "Reference {ordinal} unavailable",
       "regionLabel": "Run recipe",
@@ -1380,6 +1273,7 @@
       "outputAssetLabel": "Output {ordinal} · Asset {asset}",
       "outputAssetUnavailable": "Output {ordinal} · Asset {asset} unavailable",
       "paidDraftSummary": "Campaign {campaignId}, ad set {adSetId}, and ad {adId} are PAUSED for review.",
+      "prefillHelp": "Review the prefilled recipe below, then generate its variations.",
       "preparePaidDraft": "Prepare paused Meta draft",
       "readinessTitle": "{state} run",
       "recipeRevision": "Recipe v{recipeVersion} · revision {revision}",
@@ -1387,8 +1281,8 @@
       "review": {
         "open": "Open Review",
         "openPublishingDrafts": "Open Publishing drafts",
-        "summaryMany": "Review run {turboRunId} · {count} drafts",
-        "summaryOne": "Review run {turboRunId} · {count} draft"
+        "summaryMany": "Review batch {batchId} · {count} drafts",
+        "summaryOne": "Review batch {batchId} · {count} draft"
       },
       "sendToReview": "Send {count} to Review",
       "varyRecipe": "Vary recipe",
@@ -1405,6 +1299,8 @@
     },
     "runs": {
       "all": "All storyboards",
+      "description": "Every storyboard run for this brand. Open one to continue where you left off.",
+      "empty": "No storyboards yet. Remix a video from Discovery or build one from your images.",
       "lastEdited": "Edited {time}",
       "more": "Load more",
       "needsYou": "Needs you",
@@ -1434,7 +1330,7 @@
     },
     "scenes": {
       "title": "Original ad scenes",
-      "limits": "2–6 scenes, English, 3–15 seconds each.",
+      "limits": "2–6 scenes, English, 3–15 planned seconds per scene. Speech determines actual timing. Guided identity likeness is not guaranteed.",
       "provenance": "The imported URL remains source provenance. Analysis uses the selected Library video; source pixels and audio are never generation inputs.",
       "attach": "Attach Library video for analysis",
       "remove": "Remove analysis attachment",
@@ -1476,10 +1372,14 @@
       "ariaLabel": "Storyboard runtime",
       "durationSeconds": "{seconds} seconds",
       "durationUnset": "duration not set",
+      "empty": "No shots yet",
       "overBudget": "Shorten another shot to fit the runtime budget.",
+      "seconds": "{seconds}s",
+      "shot": "Shot {ordinal}",
       "shotAria": "Shot {ordinal}, {duration}",
       "shotCount": "{count, plural, one {# shot} other {# shots}}",
       "timeline": "Shot timeline",
+      "unset": "Unset",
       "usedWithBudget": "{used}s / {budget}s",
       "usedWithoutBudget": "{used}s / Choose runtime"
     },
@@ -1495,7 +1395,10 @@
       "references": "Session references",
       "searchReferences": "Find a reference…",
       "removeReference": "Remove {title}",
+      "noReferences": "Add a starting image or style references from your Library.",
       "noMatchingReferences": "No references match your search.",
+      "emptyTitle": "Tell your story",
+      "emptyDescription": "Describe your video, choose its format and add references. Your saved storyboard will contain editable shots, timing and a preview.",
       "shots": "Shots",
       "styles": "Style references",
       "characters": "Characters",
@@ -1509,8 +1412,10 @@
       "format": "Format",
       "generateScenes": "Generate scenes",
       "generatingScene": "Generating scene {current} of {total}",
+      "intro": "Build multi-frame video: interpolate stills, script scenes from your generated images, or merge finished clips.",
       "merge": "Merge",
       "mergeClips": "Merge clips",
+      "mergeDescription": "Pick two or more finished videos and stitch them into one timeline.",
       "mergeEmpty": "No videos selected yet.",
       "mergeTitle": "Merge videos",
       "modes": {
@@ -1540,31 +1445,6 @@
       "scenesTitle": "Scenes",
       "selectVideosTitle": "Select videos to merge",
       "title": "Storyboard"
-    },
-    "inspector": {
-      "cast": "Cast",
-      "details": "Details",
-      "durationUnset": "Not set",
-      "jumpToShot": "Go to shot {ordinal}: {name}",
-      "noShots": "Shots appear here once the brief is drafted. Click one to jump to it on the board.",
-      "references": "References",
-      "shotList": "Shot list",
-      "states": {
-        "approved": "approved",
-        "brief": "brief",
-        "draft": "draft",
-        "drafting": "drafting"
-      },
-      "generateMissingStills": "{count, plural, one {Generate # missing still} other {Generate # missing stills}}",
-      "stillGenerating": "Still is generating",
-      "stillOutOfDate": "Still is out of date",
-      "subtitle": "Storyboard · {state}",
-      "tabs": "Storyboard details"
-    },
-    "promptBar": {
-      "briefPlaceholder": "Describe the video you want to make",
-      "changesPlaceholder": "Ask for changes, e.g. make shot 3 shorter and end on a question",
-      "retry": "Try again"
     }
   },
   "studioEditorLock": {
@@ -1669,7 +1549,6 @@
     "cancelEnhancingPrompt": "Cancel enhancing prompt",
     "enhancePrompt": "Enhance prompt",
     "estimatedCredits": "Estimated {credits} credits",
-    "estimatedCreditsForSeconds": "Estimated {credits} credits for a ~{seconds} s clip",
     "summary": {
       "setup": "Generation setup summary",
       "modelLoading": "Loading model…",
@@ -1681,9 +1560,6 @@
       "estimateAfterSelection": "Estimate available after model selection",
       "estimateLoading": "Loading estimate…",
       "estimateUnavailable": "Estimate unavailable",
-      "estimatedSeconds": "~{seconds} s",
-      "byokEstimate": "Your API key · 0 credits",
-      "avatarEstimateNeedsInput": "Write a script and choose an avatar and a voice to see a price.",
       "estimateReasons": {
         "ERROR": "The price check failed. Try again.",
         "INSUFFICIENT_INPUT": "Add a prompt or choose a model to see a price.",
@@ -1711,7 +1587,6 @@
       "replaceMessage": "This action prepares a draft from the selected asset. Your current prompt and references will be replaced.",
       "replaceDraft": "Replace draft",
       "cancel": "Cancel",
-      "draftLoading": "Your saved draft is still loading. Try again in a moment.",
       "originalUnavailable": "Original prompt unavailable. Write a new instruction; the effective recipe remains available in the inspector.",
       "originalPrompt": "Original prompt",
       "effectiveRecipe": "Effective recipe",
@@ -1766,7 +1641,7 @@
     },
     "movedToTrash": "Moved to Trash",
     "previewUnavailable": "Preview unavailable",
-    "previewUnavailableDescription": "The asset is saved, but this preview could not be loaded. Open it to retry the preview.",
+    "previewUnavailableDescription": "The asset is saved, but this preview could not be loaded.",
     "prompt": "Prompt",
     "remove": "Remove",
     "removeDialogTitle": "Remove Generation",
@@ -1807,11 +1682,6 @@
     "viewGrid": "Grid",
     "viewList": "List",
     "makeClips": "Make clips",
-    "brandEnhancement": {
-      "failed": "Brand enhancement failed. Nothing was generated and no credits were used.",
-      "generateWithoutBrand": "Generate without brand",
-      "generateWithoutBrandAria": "Generate this {type} without brand, using the prompt exactly as typed"
-    },
     "crun": {
       "outputFormat": "Output format",
       "quoteLoading": "Checking image price…",
@@ -2221,49 +2091,9 @@
       "tweetFieldLabel": "Post",
       "composerLabel": "Post composer",
       "contentLabel": "Content",
-      "choosePlatform": "Choose a platform to preview this post.",
-      "threadFooter": {
-        "ariaLabel": "Thread end",
-        "replyTab": "Reply",
-        "grokTab": "@grok",
-        "grokTabOn": "@grok · On",
-        "replyHint": "Replies post in order after your first post.",
-        "addReply": "Add reply",
-        "grokFeedbackLabel": "End the thread by asking @grok for feedback",
-        "grokQuestionAria": "Question for @grok",
-        "grokHint": "Posted as the last reply of the thread.",
-        "addFirstComment": "Add first comment",
-        "firstComment": "First comment",
-        "firstCommentHint": "Posted right after the post",
-        "remove": "Remove",
-        "firstCommentPlaceholder": "Add context, a link or a question…"
-      }
+      "choosePlatform": "Choose a platform to preview this post."
     },
     "list": {
-      "captured": {
-        "audience": {
-          "private": "Private",
-          "public": "Public",
-          "unavailable": "Audience unavailable",
-          "unlisted": "Unlisted"
-        },
-        "columns": {
-          "audience": "Audience",
-          "content": "Content",
-          "published": "Published",
-          "source": "Source"
-        },
-        "description": "Read-only records of publications observed by the browser extension. They cannot be scheduled, rescheduled or retried.",
-        "empty": {
-          "description": "Publications the browser extension records will appear here.",
-          "label": "No captured publications"
-        },
-        "loadError": "Captured publications could not be loaded. Refresh to try again.",
-        "openAnalytics": "Open analytics for {title}",
-        "sourceBadge": "Extension",
-        "tableLabel": "Captured from the extension",
-        "untitled": "Captured publication"
-      },
       "channelCount": "{count, plural, one {# channel} other {# channels}}",
       "empty": {
         "description": "Create and schedule posts to see them here.",
@@ -2316,10 +2146,7 @@
         "publishing": "Publishing",
         "publishingStateAria": "Publishing state",
         "searchPlaceholder": "Search posts",
-        "sortAria": "Sort",
-        "sourceAll": "All sources",
-        "sourceAria": "Source",
-        "sourceExtension": "Extension"
+        "sortAria": "Sort"
       },
       "unscheduled": "Unscheduled",
       "untitled": "Untitled post",
@@ -2342,7 +2169,6 @@
         }
       },
       "viewToggle": {
-        "approvals": "Approvals",
         "board": "Board",
         "grid": "Grid",
         "list": "List"
@@ -2374,6 +2200,9 @@
       "reconnect": "Reconnect",
       "review": "Review",
       "untitled": "Untitled release"
+    },
+    "library": {
+      "approvalQueue": "Approval queue"
     }
   },
   "publishing": {
@@ -2706,7 +2535,8 @@
       },
       "approvalQueue": {
         "title": "Approval queue",
-        "description": "Drafts from generated batches that are waiting for a human decision."
+        "description": "Drafts from generated batches that are waiting for a human decision. Posts is the complete publishing library.",
+        "openPosts": "Open in Posts"
       }
     }
   },
@@ -2817,24 +2647,20 @@
         "type": "Type"
       },
       "toolbar": {
-        "activeFilterCount": "{count, plural, one {# filter applied} other {# filters applied}}",
         "canvas": "Canvas",
         "character": "Character",
         "characterLimit": "Limit of {count} characters reached",
-        "clearAllFilters": "Clear all filters",
+        "clearCharacterFilter": "Clear character filter",
+        "clearOriginFilter": "Clear origin filter",
+        "clearTagFilter": "Clear tag filter",
+        "clearTypeFilter": "Clear type filter",
         "contactSheet": "Contact sheet",
-        "filters": "Filters",
         "list": "List",
         "matchAll": "Match all",
         "matchAny": "Match any",
         "origin": "Origin",
-        "removeFilter": "Remove {label} filter",
         "searchCharacters": "Search characters",
         "searchTags": "Search tags",
-        "showAll": "All assets",
-        "showAria": "Show",
-        "showRecent": "Recent",
-        "showStarred": "Starred",
         "sortAria": "Sort",
         "statusAll": "All",
         "statusAria": "Status",
@@ -3050,55 +2876,6 @@
       "moreVersions": "+{count} more",
       "viewMoreVersions": "View more versions"
     },
-    "references": {
-      "description": "Reusable characters that generations reference by name.",
-      "title": "References"
-    },
-    "overview": {
-      "actionsTitle": "Jump back in",
-      "cards": {
-        "failed": {
-          "cta": "Open failed",
-          "description": "{count, plural, one {# asset} other {# assets}} failed to generate. Retry or discard them.",
-          "label": "Failed"
-        },
-        "recent": {
-          "cta": "Open recent",
-          "description": "Assets touched most recently, newest first.",
-          "label": "Recent"
-        },
-        "references": {
-          "cta": "Open references",
-          "description": "Reusable characters that generations reference by name.",
-          "label": "References"
-        },
-        "review": {
-          "cta": "Review assets",
-          "empty": "Nothing waiting. New generations land here for review.",
-          "label": "Needs review",
-          "pending": "{count, plural, one {# asset} other {# assets}} waiting for a decision."
-        },
-        "starred": {
-          "count": "{count, plural, one {# starred asset} other {# starred assets}}.",
-          "cta": "Open starred",
-          "empty": "Star the assets you reuse to keep them one click away.",
-          "label": "Starred"
-        }
-      },
-      "description": "Everything this brand has uploaded, imported or generated, and what needs you.",
-      "error": "Library counts could not be loaded.",
-      "kpi": {
-        "failed": "Failed",
-        "failedHelp": "Generations that did not finish",
-        "needsReview": "Needs review",
-        "needsReviewHelp": "Waiting for a decision",
-        "storage": "Storage",
-        "storageHelp": "Across every asset in the library",
-        "total": "Assets",
-        "totalHelp": "Excluding trash and archive"
-      },
-      "title": "Overview"
-    },
     "recovery": {
       "actions": {
         "retry": "Retry",
@@ -3160,37 +2937,7 @@
       "scopeChanged": "The Library scope changed. Review the current failures and try again.",
       "reviewUnavailable": "Saved inputs could not be opened in Studio. Inspect this asset for details."
     },
-    "scrollTable": "Scroll table horizontally",
-    "accountVoices": {
-      "availability": {
-        "restricted": "Restricted",
-        "unavailable": "Unavailable"
-      },
-      "description": "Pick voices and clones from your connected ElevenLabs account. Importing saves a reference in your Library; nothing changes in ElevenLabs.",
-      "disconnected": {
-        "body": "Add your ElevenLabs API key in Integrations to browse your own voices and clones.",
-        "title": "Connect your ElevenLabs account"
-      },
-      "empty": "No voices in this ElevenLabs account match.",
-      "import": "Import",
-      "importError": "This voice could not be imported.",
-      "importSuccess": "{name} added to your Library",
-      "importVoice": "Import {name}",
-      "imported": "Imported",
-      "invalid": {
-        "body": "ElevenLabs rejected the saved API key. Update it in Integrations, then try again.",
-        "title": "Reconnect your ElevenLabs account"
-      },
-      "listLabel": "ElevenLabs account voices",
-      "loadError": "Your ElevenLabs voices could not be loaded.",
-      "loadMore": "Load more voices",
-      "loading": "Loading your ElevenLabs voices…",
-      "open": "Import from ElevenLabs",
-      "openIntegrations": "Open Integrations",
-      "retry": "Retry",
-      "searchLabel": "Search your ElevenLabs voices",
-      "title": "Import from your ElevenLabs account"
-    }
+    "scrollTable": "Scroll table horizontally"
   },
   "onboarding": {
     "brand": {
@@ -3360,10 +3107,6 @@
       "remainingCredits": "{count} journey credits still available",
       "review": "Review",
       "title": "Activation Journey"
-    },
-    "providers": {
-      "keyValidationNotice": "Use real keys only. Organization → API Keys checks each key with the provider before saving, so placeholder values are rejected; keys in your .env file are read when the container starts.",
-      "openRouterDescription": "Required for text generation and the agent. Set OPENROUTER_API_KEY in your .env."
     }
   },
   "credentialPostingTimes": {
@@ -3646,7 +3389,7 @@
       },
       "studio": {
         "label": "Studio",
-        "description": "Storyboard, clips, and Turbo production surfaces."
+        "description": "Storyboard, clips, and batch production surfaces."
       },
       "workflows": {
         "label": "Workflows",
@@ -3959,7 +3702,7 @@
     "deleteConfirmation": "Are you sure you want to delete \"{label}\"? This action cannot be undone.",
     "searchModels": "Search models",
     "moreOptions": "More options for {label}",
-    "editModel": "Edit model",
+    "pricingDetails": "Pricing details",
     "noModelsFound": "No models found",
     "emptySearchHint": "No models match your search. Clear it to see the catalog.",
     "emptyFilterHint": "No models are available for this filter. Change the filters or refresh the list.",
@@ -4319,9 +4062,9 @@
       "title": "Clips",
       "body": "Cut long videos into short clips with captions. Pick moments manually or let the agent find them."
     },
-    "studioTurbo": {
-      "title": "Turbo",
-      "body": "Generate many variants at once from a brief. Review the run, keep the winners, and send them to the approval queue."
+    "studioBatch": {
+      "title": "Batch",
+      "body": "Generate many variants at once from a brief. Review the batch, keep the winners, and send them to the approval queue."
     },
     "studioEditor": {
       "title": "Editor",
@@ -4847,13 +4590,9 @@
       "sourceUrlInvalid": "That website URL could not be read. Check it and try again."
     }
   },
-  "adminOrganizationReleases": {
-    "title": "Releases",
-    "previewLabel": "Release Preview (sees unreleased modules)"
-  },
   "adminFlags": {
     "title": "Flags",
-    "description": "Switch product modules, their surfaces and platform features on or off for every organization. Off hides it from the nav and its pages, and its API answers 404. A nested flag only applies while its parent is on. Superadmins keep access for inspection. Releases decide which cloud organizations see each module or page.",
+    "description": "Switch product modules, their surfaces and platform features on or off for every organization. Off hides it from the nav and its pages, and its API answers 404. A nested flag only applies while its parent is on. Superadmins keep access for inspection.",
     "sections": {
       "modules": {
         "title": "Modules",
@@ -4862,10 +4601,6 @@
       "platform": {
         "title": "Platform",
         "description": "Features across the app shell, independent of any module."
-      },
-      "releases": {
-        "title": "Releases",
-        "description": "On releases the item to every cloud organization. Off keeps it preview-only: only organizations on release preview (Admin → Organization) see it and can start work in it. Self-hosted always sees everything. New items start off."
       }
     },
     "flags": {
@@ -4889,13 +4624,13 @@
         "label": "Clips",
         "description": "Long-form video ingestion, highlight detection and short clip generation."
       },
-      "studio_turbo": {
-        "label": "Turbo",
-        "description": "Turbo projects that produce many review drafts at once."
+      "studio_batch": {
+        "label": "Batch",
+        "description": "Batch projects that produce many review drafts at once."
       },
-      "turbo_ideas": {
-        "label": "Turbo ideas",
-        "description": "Turbo idea projects: turn brand data into a set of content ideas."
+      "batch_ideas": {
+        "label": "Batch ideas",
+        "description": "Idea batches: turn brand data into a batch of content ideas."
       },
       "studio_editor": {
         "label": "Editor",
@@ -4940,74 +4675,6 @@
       "desktop_local_workspace": {
         "label": "Desktop local workspace",
         "description": "Offer the offline local workspace on the desktop app’s sign-in and local pages."
-      },
-      "release_publishing": {
-        "label": "Release Publishing",
-        "description": "Scheduling and publishing posts."
-      },
-      "release_analytics": {
-        "label": "Release Analytics",
-        "description": "Performance and insights for published content."
-      },
-      "release_turbo": {
-        "label": "Release Turbo",
-        "description": "Bulk content production."
-      },
-      "release_motion": {
-        "label": "Release Motion",
-        "description": "Animated visuals authored as code."
-      },
-      "release_clips": {
-        "label": "Release Clips",
-        "description": "Highlights cut from long videos and audio."
-      },
-      "release_editor": {
-        "label": "Release Editor",
-        "description": "Timeline editing for video projects."
-      },
-      "release_automation": {
-        "label": "Release Automation",
-        "description": "Workflows, agents and recurring programs."
-      },
-      "release_messages": {
-        "label": "Release Messages",
-        "description": "One inbox for DMs, replies and comments."
-      },
-      "release_discovery": {
-        "label": "Release Discovery",
-        "description": "Trends, tracked sources and ads research."
-      },
-      "release_campaigns": {
-        "label": "Release Campaigns",
-        "description": "Campaign planning in Publishing."
-      },
-      "release_analytics_brands": {
-        "label": "Release Analytics Brands",
-        "description": "Brand comparison page in Analytics."
-      },
-      "release_analytics_streaks": {
-        "label": "Release Analytics Streaks",
-        "description": "Posting streaks page in Analytics."
-      },
-      "release_analytics_insights": {
-        "label": "Release Analytics Insights",
-        "description": "Insights page in Analytics."
-      },
-      "release_analytics_hooks": {
-        "label": "Release Analytics Hooks",
-        "description": "Hook performance page in Analytics."
-      },
-      "release_analytics_outliers": {
-        "label": "Release Analytics Outliers",
-        "description": "Outlier posts page in Analytics."
-      },
-      "release_analytics_breakouts": {
-        "label": "Release Analytics Breakouts",
-        "description": "Breakout posts page in Analytics."
-      },
-      "release_analytics_performance_lab": {
-        "label": "Release Analytics Performance Lab",
-        "description": "Pattern mining page in Analytics."
       }
     },
     "inactiveUnderParent": "Off while {parent} is off.",
@@ -5044,15 +4711,6 @@
         "heading": "Perception",
         "perceptionLabel": "Media perception",
         "perceptionHelp": "Workers extract frames, on-screen text, transcripts and a scene description from new media. Off stops the sweep from queueing assets.",
-        "brandVisualAnalysisLabel": "Brand visual analysis",
-        "brandVisualAnalysisHelp": "Reads on-screen text and logo or product placement in branded images and video with a paid vision model. Off keeps those brand checks unknown and calls no provider.",
-        "brandVisionOcrModelLabel": "Brand OCR model",
-        "brandVisionOcrModelHelp": "Catalog model that reads on-screen text. Every read is recorded in the cost ledger at the price shown.",
-        "brandVisionDetectModelLabel": "Brand detection model",
-        "brandVisionDetectModelHelp": "Catalog model that finds logo and product regions. Every read is recorded in the cost ledger at the price shown.",
-        "brandVisionModelNone": "None (analysis unavailable)",
-        "brandVisionModelOption": "{label} · {price} per second",
-        "brandVisionModelUnavailable": "{key} (not an active priced catalog model)",
         "frameCountLabel": "Frames per video",
         "lookbackLabel": "Lookback (hours)",
         "visionModelLabel": "Scene model",
@@ -5429,36 +5087,36 @@
     "yourProjects": "Your Projects",
     "yourProjectsCount": "Your Projects ({count})"
   },
-  "turboProjects": {
-    "title": "Turbo",
-    "new": "New project",
-    "untitled": "Untitled project",
+  "batchProjects": {
+    "title": "Batch",
+    "new": "New batch",
+    "untitled": "Untitled batch",
     "open": "Open",
     "delete": "Delete",
     "actions": "Actions for {name}",
     "itemCount": "{count} items",
     "recent": "Recent",
-    "all": "All projects",
-    "empty": "Create a saved project from ideas or a workflow.",
+    "all": "All batches",
+    "empty": "Create a saved batch from ideas or a workflow.",
     "more": "Load more",
-    "name": "Project name",
-    "fromIdeas": "From ideas",
-    "fromWorkflow": "From a workflow",
-    "source": "How do you want to create this project?",
+    "name": "Batch name",
+    "fromIdeas": "Generate ideas",
+    "fromWorkflow": "Saved workflow",
+    "source": "How do you want to create this batch?",
     "ideasDescription": "Describe a topic, generate ideas, then turn them into content.",
     "workflowDescription": "Run a saved workflow for each image or video you add.",
     "workflowDisabled": "Enable Automation in organization settings to use saved workflows. A paid subscription is required to run them.",
     "manageModules": "Organization modules",
-    "ideasDisabled": "Idea projects are not available right now.",
+    "ideasDisabled": "Idea batches are not available right now.",
     "workflow": "Workflow",
     "chooseWorkflow": "Choose a workflow",
     "noWorkflows": "No saved workflows yet. Create a workflow or start from ideas.",
     "createWorkflow": "Create a workflow",
-    "create": "Create project",
-    "loading": "Loading project…",
-    "loadFailed": "Could not load projects.",
+    "create": "Create batch",
+    "loading": "Loading batch…",
+    "loadFailed": "Could not load batches.",
     "manageSubscription": "Manage subscription",
-    "saveFailed": "Could not save the project. Try again.",
+    "saveFailed": "Could not save the batch. Try again.",
     "saving": "Saving…",
     "saved": "Saved",
     "unsaved": "Changes not saved",
@@ -5478,7 +5136,7 @@
     "scheduleFor": "Publish time for {name}",
     "noAccounts": "Connect a publishing account in brand settings.",
     "scheduleApproved": "Schedule approved items",
-    "output": "Project output",
+    "output": "Batch output",
     "scheduled": "Scheduled",
     "caption": "Caption",
     "retryItem": "Retry item",
@@ -5491,7 +5149,7 @@
     "review": "Review",
     "schedule": "Schedule",
     "getQuote": "Review generation cost",
-    "startWorkflow": "Start workflow project",
+    "startWorkflow": "Start workflow batch",
     "quote": "Generation quote",
     "quoteTotal": "{credits} credits for {count} items. Only usable output is charged.",
     "credits": "credits",
@@ -5502,55 +5160,7 @@
     "scheduleResult": "{scheduled} scheduled; {failed} failed.",
     "retryLoad": "Retry loading",
     "workflowSubscriptionRequired": "An active paid subscription is required to use saved workflows. You can still generate ideas with credits.",
-    "workflowUnavailable": "Workflow access could not be verified. Refresh module settings before using a saved workflow.",
-    "onboarding": {
-      "title": "Turn your brand into a week of content",
-      "description": "Turbo drafts content ideas from your brand, generates them in bulk and lines up the keepers to publish. Pick a preset and review every idea before anything is generated.",
-      "presetsTitle": "Start with a preset",
-      "presetsDescription": "One click saves an editable draft. You review a credit quote before anything is generated.",
-      "otherWaysTitle": "Or start another way",
-      "workflowTitle": "Run a saved workflow",
-      "workflowDescription": "Apply one of your workflows to every image or video you add, then review and schedule the results.",
-      "workflowAction": "Start from a workflow"
-    },
-    "presets": {
-      "listAria": "Turbo presets",
-      "create": "Try this",
-      "createAria": "Create a Turbo project from {title}",
-      "creating": "Creating…",
-      "createFailed": "Could not create the project. Try again.",
-      "selectBrand": "Choose a brand to start a project from a preset.",
-      "ideas": "{count, plural, one {# idea} other {# ideas}}",
-      "shelfTitle": "Start from a preset",
-      "seeAll": "See all presets",
-      "showFewer": "Show fewer",
-      "items": {
-        "weeklyMix": {
-          "title": "Weekly content mix",
-          "description": "A balanced week: a product highlight, a tip, a behind-the-scenes moment and a customer story."
-        },
-        "videoShorts": {
-          "title": "Short-form video burst",
-          "description": "Scroll-stopping videos, each built around one strong hook and a single takeaway."
-        },
-        "avatarExplainers": {
-          "title": "Avatar explainers",
-          "description": "A presenter answers the questions customers ask most, in plain language."
-        },
-        "imageBatch": {
-          "title": "Image post batch",
-          "description": "Clean on-brand stills with a bold headline and one clear idea each."
-        },
-        "launchCountdown": {
-          "title": "Launch countdown",
-          "description": "Tease, reveal, social proof and last call, each with its own hook."
-        },
-        "mythBusting": {
-          "title": "Myth busting",
-          "description": "Name a common misconception in your niche and correct it with proof."
-        }
-      }
-    }
+    "workflowUnavailable": "Workflow access could not be verified. Refresh module settings before using a saved workflow."
   },
   "studioMotion": {
     "title": "Motion",
@@ -5618,50 +5228,7 @@
     "loadProps": "Load props for editing",
     "exportOutputs": "Separate export settings",
     "inheritedOutputs": "Prompt, source and props revisions keep these outputs:",
-    "rendererProvenance": "· {model} · Remotion {version}",
-    "onboarding": {
-      "title": "Describe it, preview it, export it",
-      "description": "Motion turns a prompt into an animated video or still frames you can drop into your Library. Pick a preset to fill in the form, then edit it your way.",
-      "presetsTitle": "Start with a preset",
-      "presetsDescription": "A preset only fills in the form. You review a credit quote and confirm it before anything is rendered."
-    },
-    "presets": {
-      "listAria": "Motion presets",
-      "use": "Use this preset",
-      "applied": "Applied",
-      "useAria": "Fill the form with the {title} preset",
-      "appliedStatus": "Preset applied. Review the prompt below, then get a quote.",
-      "seconds": "{seconds}s",
-      "shelfTitle": "Start from a preset",
-      "seeAll": "See all presets",
-      "showFewer": "Show fewer",
-      "items": {
-        "kineticQuote": {
-          "title": "Kinetic quote card",
-          "description": "A punchy quote that lands word by word on a bold background."
-        },
-        "statCounter": {
-          "title": "Animated stat counter",
-          "description": "A headline number that counts up with a label and progress bar."
-        },
-        "lowerThird": {
-          "title": "Lower-third title",
-          "description": "A name and title that slide over a video and back out."
-        },
-        "featureCallouts": {
-          "title": "Feature callout reel",
-          "description": "Three feature cards that take turns, ending on a call to action."
-        },
-        "logoReveal": {
-          "title": "Logo reveal sting",
-          "description": "A short, crisp reveal that settles into a wordmark and tagline."
-        },
-        "barChart": {
-          "title": "Animated bar chart",
-          "description": "Five bars that grow in sequence, with the leader highlighted."
-        }
-      }
-    }
+    "rendererProvenance": "· {model} · Remotion {version}"
   },
   "adminModelPricing": {
     "catalog": "Catalog",
@@ -5737,46 +5304,13 @@
     "showMoreModels": "Show {count} more models"
   },
   "generationReceipts": {
-    "proof": {
-      "palette": "Palette {target} covers {coverage} of the {pixels, number} opaque pixels analyzed (nearest swatch distance {distance}, {frames, plural, one {# frame} other {# frames}} checked).",
-      "ocr": "Read in {matched} of {frames, plural, one {# frame} other {# frames}} by {model}.",
-      "placement": "{count, plural, one {# region} other {# regions}} matched the approved {query}, best similarity {similarity}, found by {model}.",
-      "font": "{layers, plural, one {# text layer} other {# text layers}} drawn only in approved fonts ({fonts}), reported by {renderer}.",
-      "fact": "{claims, plural, one {# factual claim} other {# factual claims}} checked against approved brand evidence: {supported} supported, {unverified} unverified, {contradicted} contradicted.",
-      "factNone": "No factual claims were found in the checked text."
-    },
     "title": "Generation receipts",
     "open": "Generation receipts",
     "description": "Inspect the saved context and checks used for a generation.",
     "empty": "No generation receipts yet.",
-    "emptyCoverage": "Receipts are saved for Studio image and video generations and for text drafts written in approved-brand mode.",
     "loading": "Loading generation receipts…",
     "refresh": "Reload saved details",
     "loadMore": "Load more",
-    "list": {
-      "kind": {
-        "image": "Image",
-        "video": "Video",
-        "text": "Text draft"
-      },
-      "status": {
-        "pending": "Pending",
-        "completed": "Completed",
-        "needsReview": "Needs review",
-        "blocked": "Blocked",
-        "failed": "Failed",
-        "cancelled": "Cancelled"
-      },
-      "model": "Model: {model}",
-      "noModel": "not recorded",
-      "credits": "{count, plural, one {# credit} other {# credits}}",
-      "cost": {
-        "pending": "Cost pending",
-        "unavailable": "Cost unavailable",
-        "none": "No cost recorded"
-      },
-      "openOutput": "Open generated output"
-    },
     "select": "Select a generation to inspect.",
     "loadFailed": "Could not load saved generation details. Try again.",
     "unavailable": "This generation is unavailable or you no longer have access.",
@@ -5865,7 +5399,6 @@
     "avatarDescription": "Used by agents and workflows when no brand override exists.",
     "noAvatars": "No avatar ingredients are available yet. Mark an image as an avatar from its ingredient page first.",
     "voiceLabel": "Default Voice",
-    "reconnectHeygen": "Reconnect HeyGen",
     "reselectVoice": "Reselect this voice to verify its connection.",
     "reselectAvatar": "Reselect this avatar to verify its connection.",
     "summary": "Current avatar: {avatar}. Current voice: {voice}. These values are used only when a brand does not define its own identity defaults.",

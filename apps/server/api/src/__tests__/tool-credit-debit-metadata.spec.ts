@@ -17,13 +17,10 @@ const ALLOWED_FILES = new Set([
   'agent-cadence-execution.service.ts',
   'agent-llm-round-reservation.util.ts',
   'agent-turn-round-runner.service.ts',
-  'turbo-project-credits.service.ts',
+  'batch-project-credits.service.ts',
   // Server-owned breakout response generation: native admission, not an agent tool; specs verify the hold and settlement.
   'breakout-output-quality.service.ts',
   'breakout-text-output-generation.service.ts',
-  'breakout-visual-quality.service.ts',
-  // Acceptance fixture standing in for the media endpoints, which settle their own holds.
-  'breakout-acceptance.media.fixture.ts',
   'credits.utils.service.ts',
   'evaluations.service.ts',
   'expert-first-system.service.ts',
@@ -35,14 +32,8 @@ const ALLOWED_FILES = new Set([
   'onboarding-preview.service.ts',
   'oss-credits-utils.service.ts',
   'posting-cadence-copy.service.ts',
-  // Account and thread generation runs: a quoted publishing route, not an agent tool; its spec verifies the single hold, per-dispatch settlement and release.
-  'post-account-generation-billing.service.ts',
   'referrals.service.ts',
   'reply-generation.service.ts',
-  // Settles a caller-owned hold at the measured clip length. The caller quoted the work; this file is not an agent tool.
-  'reservation-duration-settlement.ts',
-  // Storyboard sketch stills: a quoted Studio route, not an agent tool; its spec verifies settle-on-render and release-on-failure.
-  'storyboard-stills.service.ts',
   'voice-credits.service.ts',
   'workflow-generation-billing.service.ts',
   'workflow-trend-publish-executor-registrar.service.ts',
@@ -56,7 +47,7 @@ const TOOLS_BY_FILE: Record<string, readonly string[]> = {
     'get_x_posts',
     'list_x_account_activity',
   ],
-  'turbo-run-credits.service.ts': ['generate_turbo_content'],
+  'batch-generation-credits.service.ts': ['generate_content_batch'],
   'brand-from-url.service.ts': ['create_brand_from_url'],
   'brand-interview.service.ts': ['start_brand_interview'],
   'brand-remix-run-execution.service.ts': ['start_remix_generation'],

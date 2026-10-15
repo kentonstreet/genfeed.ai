@@ -287,7 +287,7 @@ export class WorkflowGenerationBillingService {
     executionId: string,
     organizationId: string,
     operationId: string,
-    dispatchFingerprint: string | undefined,
+    dispatchFingerprint: string,
     claimId: string,
   ): Promise<void> {
     const plan = await assertWorkflowExecutionAdmission(
@@ -298,9 +298,6 @@ export class WorkflowGenerationBillingService {
     const allocation = plan.manifest.allocations.find(
       (item) => item.operationId === operationId,
     );
-    // An operation outside the frozen manifest (lip-sync, avatar video) funds
-    // its own output hold; only a manifest operation is fenced here.
-    if (!allocation && dispatchFingerprint === undefined) return;
     if (
       !allocation ||
       allocation.dispatch.billableFingerprint !== dispatchFingerprint

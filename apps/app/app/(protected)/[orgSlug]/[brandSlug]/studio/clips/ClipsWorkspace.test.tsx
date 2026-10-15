@@ -1,7 +1,10 @@
+import { PageHelpProvider } from '@genfeedai/contexts/ui/page-help-context';
+import { DEFAULT_LOCALE } from '@genfeedai/contracts/constants';
 import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
+import { loadMessages } from '../../../../../../i18n/messages';
 import ClipsWorkspace from './ClipsWorkspace';
 
 const mocks = vi.hoisted(() => ({
@@ -45,7 +48,7 @@ vi.mock('next-intl', async () => {
 });
 
 // Opaque stand-ins: this suite verifies Container/SectionTopbar chrome
-// stability, not the inner forms.
+// stability against the real PageHelpProvider, not the inner forms.
 vi.mock('./components/ClipsInputForm', () => ({
   default: () => <div data-testid="clips-input-form" />,
 }));
@@ -78,7 +81,21 @@ function baseClipsPageState(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('ClipsWorkspace chrome stability', () => {
+// The route-level help content a real page load would resolve for
+// `/studio/clips` via `resolvePageHelpKey` + `PAGE_HELP_ROUTES` — sourced
+// from the actual English catalog, not a stand-in string, so this test
+// fails if that route's help copy is ever removed.
+const clipsHelp = loadMessages(DEFAULT_LOCALE).pages.help.studioClips;
+
+function renderWithRealPageHelp() {
+  return render(
+    <PageHelpProvider help={clipsHelp}>
+      <ClipsWorkspace />
+    </PageHelpProvider>,
+  );
+}
+
+describe('ClipsWorkspace with the real page-help provider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.useStudioClipsPage.mockReturnValue(baseClipsPageState());
@@ -91,7 +108,7 @@ describe('ClipsWorkspace chrome stability', () => {
       projects: [],
     });
 
-    render(<ClipsWorkspace />);
+    renderWithRealPageHelp();
 
     expect(screen.getByTestId('section-topbar')).toBeInTheDocument();
     expect(screen.getByTestId('container')).toHaveAttribute(
@@ -107,7 +124,7 @@ describe('ClipsWorkspace chrome stability', () => {
       projects: [],
     });
 
-    render(<ClipsWorkspace />);
+    renderWithRealPageHelp();
 
     expect(screen.getByTestId('section-topbar')).toBeInTheDocument();
     expect(screen.getByTestId('container')).toHaveAttribute(
@@ -123,7 +140,7 @@ describe('ClipsWorkspace chrome stability', () => {
       projects: [],
     });
 
-    const { rerender } = render(<ClipsWorkspace />);
+    const { rerender } = renderWithRealPageHelp();
     expect(screen.getByTestId('container')).toHaveAttribute(
       'data-module-chrome',
       'section-topbar',
@@ -134,7 +151,11 @@ describe('ClipsWorkspace chrome stability', () => {
       isLoading: false,
       projects: [],
     });
-    rerender(<ClipsWorkspace />);
+    rerender(
+      <PageHelpProvider help={clipsHelp}>
+        <ClipsWorkspace />
+      </PageHelpProvider>,
+    );
     expect(screen.getByTestId('container')).toHaveAttribute(
       'data-module-chrome',
       'section-topbar',
@@ -156,7 +177,11 @@ describe('ClipsWorkspace chrome stability', () => {
         },
       ],
     });
-    rerender(<ClipsWorkspace />);
+    rerender(
+      <PageHelpProvider help={clipsHelp}>
+        <ClipsWorkspace />
+      </PageHelpProvider>,
+    );
     expect(screen.getByTestId('container')).toHaveAttribute(
       'data-module-chrome',
       'section-topbar',
@@ -174,7 +199,7 @@ describe('ClipsWorkspace chrome stability', () => {
       projects: [],
     });
 
-    render(<ClipsWorkspace />);
+    renderWithRealPageHelp();
 
     expect(screen.getByTestId('clips-empty-state')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'New project' })).toHaveAttribute(
@@ -204,70 +229,17 @@ describe('ClipsWorkspace chrome stability', () => {
         step: 'review',
       }),
     );
-    render(<ClipsWorkspace projectId="source-1" />);
+    render(
+      <PageHelpProvider help={clipsHelp}>
+        <ClipsWorkspace projectId="source-1" />
+      </PageHelpProvider>,
+    );
     expect(screen.getByText('Downloading source media…')).toBeVisible();
     expect(screen.queryByText(/1-2 minutes/)).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Avatar video generation needs/),
     ).not.toBeInTheDocument();
   });
-
-  it.each([0, 3])(
-    'offers source retry from a failed review at attempt %s',
-    (retryCount) => {
-      mocks.useStudioClipProjects.mockReturnValue({
-        error: null,
-        isLoading: false,
-        projects: [],
-      });
-      const handleRetrySource = vi.fn();
-      const resetToInput = vi.fn();
-      mocks.useStudioClipsPage.mockReturnValue(
-        baseClipsPageState({
-          editedHighlights: [],
-          handleRetrySource,
-          isHydrating: false,
-          project: {
-            clips: [],
-            highlights: [],
-            projectId: 'source-1',
-            status: 'failed',
-            source: {
-              failure: {
-                code: 'clip_source_processing_failed',
-                message: 'Audio extraction job 7 failed: Source is unreadable',
-                retryable: true,
-              },
-              flow: 'review',
-              maxRetries: 3,
-              retryCount,
-              status: 'failed',
-            },
-          },
-          resetToInput,
-          step: 'review',
-        }),
-      );
-      render(<ClipsWorkspace projectId="source-1" />);
-
-      expect(
-        screen.getByText('Audio extraction job 7 failed: Source is unreadable'),
-      ).toBeVisible();
-      const retry = screen.getByRole('button', {
-        name: 'Retry source processing',
-      });
-      expect(retry).toHaveProperty('disabled', retryCount === 3);
-      retry.click();
-      expect(handleRetrySource).toHaveBeenCalledTimes(retryCount === 3 ? 0 : 1);
-      expect(
-        screen.queryByText(
-          'Source retry limit reached. No further retries are available.',
-        ),
-      ).toEqual(retryCount === 3 ? expect.anything() : null);
-      screen.getByRole('button', { name: 'Back to projects' }).click();
-      expect(resetToInput).toHaveBeenCalledTimes(1);
-    },
-  );
 
   it('renders the restored setup form for a draft project', () => {
     mocks.useStudioClipProjects.mockReturnValue({
@@ -293,7 +265,11 @@ describe('ClipsWorkspace chrome stability', () => {
       }),
     );
 
-    render(<ClipsWorkspace projectId="draft-1" />);
+    render(
+      <PageHelpProvider help={clipsHelp}>
+        <ClipsWorkspace projectId="draft-1" />
+      </PageHelpProvider>,
+    );
 
     expect(screen.getByTestId('clips-source-preview')).toBeVisible();
     expect(

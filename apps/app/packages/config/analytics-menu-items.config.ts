@@ -1,22 +1,19 @@
 import { APP_ROUTES } from '@genfeedai/contracts/constants';
 import type { MenuItemConfig } from '@genfeedai/contracts/interfaces/ui/menu-config.interface';
-import { PostCard } from '@ui/primitives/animated-icons/custom-lucide';
 import {
-  BriefcaseBusiness,
-  ChartScatter,
+  AtSign,
+  Building2,
+  FileText,
   Flame,
-  Gauge,
-  Quote,
-  SquareActivity,
-  Telescope,
-  UsersRound,
+  FlaskConical,
+  LayoutDashboard,
+  Magnet,
+  ScanSearch,
+  Sparkles,
   Zap,
 } from 'lucide-react';
 
 /**
- * Overview, Posts and Accounts are always listed. The other destinations are
- * release items (`releaseItemId`), listed once released in Admin → Flags.
- *
  * Analytics is the single home for measuring the brand's own content — the
  * Publishing module no longer carries its own analytics page. Market trends
  * (Trends, Trend Turnover) are research, so they live in Discovery.
@@ -39,8 +36,16 @@ export const ANALYTICS_MENU_ITEMS: MenuItemConfig[] = [
     href: APP_ROUTES.ANALYTICS.OVERVIEW,
     label: 'Overview',
     matchPaths: [APP_ROUTES.ANALYTICS.ROOT, APP_ROUTES.ANALYTICS.OVERVIEW],
-    outline: Gauge,
-    solid: Gauge,
+    outline: LayoutDashboard,
+    solid: LayoutDashboard,
+  },
+  {
+    group: '',
+    href: APP_ROUTES.ANALYTICS.ACCOUNTS,
+    label: 'Accounts',
+    matchPaths: [APP_ROUTES.ANALYTICS.ACCOUNTS],
+    outline: AtSign,
+    solid: AtSign,
   },
   {
     group: '',
@@ -48,33 +53,23 @@ export const ANALYTICS_MENU_ITEMS: MenuItemConfig[] = [
     hrefScope: 'brand',
     label: 'Posts',
     matchPaths: [APP_ROUTES.ANALYTICS.POSTS],
-    outline: PostCard,
-    solid: PostCard,
-  },
-  {
-    group: '',
-    href: APP_ROUTES.ANALYTICS.ACCOUNTS,
-    label: 'Accounts',
-    matchPaths: [APP_ROUTES.ANALYTICS.ACCOUNTS],
-    outline: UsersRound,
-    solid: UsersRound,
+    outline: FileText,
+    solid: FileText,
   },
   {
     group: '',
     href: APP_ROUTES.ANALYTICS.BRANDS,
     hrefScope: 'brand',
     label: 'Brands',
-    releaseItemId: 'analytics_brands',
     matchPaths: [APP_ROUTES.ANALYTICS.BRANDS],
-    outline: BriefcaseBusiness,
-    solid: BriefcaseBusiness,
+    outline: Building2,
+    solid: Building2,
   },
   {
     group: '',
     href: APP_ROUTES.ANALYTICS.STREAKS,
     hrefScope: 'brand',
     label: 'Streaks',
-    releaseItemId: 'analytics_streaks',
     matchPaths: [APP_ROUTES.ANALYTICS.STREAKS],
     outline: Flame,
     solid: Flame,
@@ -84,36 +79,32 @@ export const ANALYTICS_MENU_ITEMS: MenuItemConfig[] = [
     href: APP_ROUTES.ANALYTICS.INSIGHTS,
     hrefScope: 'brand',
     label: 'Insights',
-    releaseItemId: 'analytics_insights',
     matchPaths: [APP_ROUTES.ANALYTICS.INSIGHTS],
-    outline: Telescope,
-    solid: Telescope,
+    outline: Sparkles,
+    solid: Sparkles,
   },
   {
     group: 'Intelligence',
     href: APP_ROUTES.ANALYTICS.HOOKS,
     hrefScope: 'brand',
     label: 'Hooks',
-    releaseItemId: 'analytics_hooks',
     matchPaths: [APP_ROUTES.ANALYTICS.HOOKS],
-    outline: Quote,
-    solid: Quote,
+    outline: Magnet,
+    solid: Magnet,
   },
   {
     group: 'Intelligence',
     href: APP_ROUTES.ANALYTICS.OUTLIERS,
     label: 'Outliers',
-    releaseItemId: 'analytics_outliers',
     matchPaths: [APP_ROUTES.ANALYTICS.OUTLIERS],
-    outline: ChartScatter,
-    solid: ChartScatter,
+    outline: ScanSearch,
+    solid: ScanSearch,
   },
   {
     group: 'Intelligence',
     href: APP_ROUTES.ANALYTICS.BREAKOUTS,
     hrefScope: 'brand',
     label: 'Breakouts',
-    releaseItemId: 'analytics_breakouts',
     matchPaths: [APP_ROUTES.ANALYTICS.BREAKOUTS],
     outline: Zap,
     solid: Zap,
@@ -124,10 +115,9 @@ export const ANALYTICS_MENU_ITEMS: MenuItemConfig[] = [
     href: APP_ROUTES.ANALYTICS.PERFORMANCE_LAB,
     hrefScope: 'brand',
     label: 'Performance Lab',
-    releaseItemId: 'analytics_performance_lab',
     matchPaths: [APP_ROUTES.ANALYTICS.PERFORMANCE_LAB],
-    outline: SquareActivity,
-    solid: SquareActivity,
+    outline: FlaskConical,
+    solid: FlaskConical,
   },
 ];
 

@@ -76,6 +76,7 @@ export function createPromptBarVoiceCommands(
       pattern: /(?:change|set|use|switch to) (?:the )?model (?:to )?(.+)/i,
     },
 
+    // Format selection
     {
       action: (matches: RegExpMatchArray) => {
         const formatName = matches[1].trim().toLowerCase();

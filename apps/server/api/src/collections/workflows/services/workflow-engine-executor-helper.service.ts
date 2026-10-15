@@ -3,7 +3,6 @@ import { MetadataEntity } from '@api/collections/metadata/entities/metadata.enti
 import { MetadataService } from '@api/collections/metadata/services/metadata.service';
 import { WorkflowNodeContinuationService } from '@api/collections/workflows/services/workflow-node-continuation.service';
 import { scopedWhere } from '@api/index';
-import { HeyGenSubmissionRejectedError } from '@api/services/integrations/heygen/errors/heygen-submission-rejected.error';
 import { isReplicateSubmissionRejected } from '@api/services/integrations/replicate/errors/replicate-provider.error';
 import { SharedService } from '@api/shared/services/shared/shared.service';
 import {
@@ -229,10 +228,7 @@ export class WorkflowEngineExecutorHelperService {
           ? undefined
           : accepted.completionQuantities;
     } catch (error: unknown) {
-      if (
-        isReplicateSubmissionRejected(error) ||
-        error instanceof HeyGenSubmissionRejectedError
-      ) {
+      if (isReplicateSubmissionRejected(error)) {
         await this.failProviderContinuationSubmission({
           continuationId: continuation.continuationId,
           error: error instanceof Error ? error.message : String(error),

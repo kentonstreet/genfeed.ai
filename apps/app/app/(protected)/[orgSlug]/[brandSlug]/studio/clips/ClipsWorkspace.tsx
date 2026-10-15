@@ -18,8 +18,6 @@ import { useTranslations } from 'next-intl';
 import ClipModeSelector from './components/ClipModeSelector';
 import ClipReferenceFrameSelector from './components/ClipReferenceFrameSelector';
 import ClipsInputForm from './components/ClipsInputForm';
-import ClipsOnboarding from './components/ClipsOnboarding';
-import ClipsPresetShelf from './components/ClipsPresetShelf';
 import ClipsProgressView from './components/ClipsProgressView';
 import ClipsProjectList from './components/ClipsProjectList';
 import ClipsSourcePreview from './components/ClipsSourcePreview';
@@ -87,12 +85,7 @@ export default function ClipsWorkspace({ projectId }: ClipsWorkspaceProps) {
   ) : undefined;
 
   return (
-    <Container
-      label="Clips"
-      moduleChrome
-      right={topbarActions}
-      titleVisibility="sr-only"
-    >
+    <Container label="Clips" titleVisibility="sr-only" right={topbarActions}>
       <div className="flex w-full flex-col gap-4">
         <p className="text-sm text-muted-foreground">{t('description')}</p>
 
@@ -106,17 +99,35 @@ export default function ClipsWorkspace({ projectId }: ClipsWorkspaceProps) {
               </div>
             ) : null}
             {!isListLoading && !hasProjects && !listError ? (
-              <ClipsOnboarding />
+              <div
+                className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-6 py-16 text-center"
+                data-testid="clips-empty-state"
+              >
+                <p className="text-sm font-medium text-foreground">
+                  {t('noProjectsYet')}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {t('noProjectsDescription')}
+                </p>
+                <Button
+                  asChild
+                  size={ButtonSize.SM}
+                  variant={ButtonVariant.DEFAULT}
+                  label={t('newProject')}
+                >
+                  <Link href={newProjectHref}>
+                    <Plus className="size-3.5" />
+                    {t('newProject')}
+                  </Link>
+                </Button>
+              </div>
             ) : (
-              <>
-                {hasProjects ? <ClipsPresetShelf /> : null}
-                <ClipsProjectList
-                  isLoading={isListLoading}
-                  projects={projects}
-                  onRename={renameProject}
-                  onDelete={deleteProject}
-                />
-              </>
+              <ClipsProjectList
+                isLoading={isListLoading}
+                projects={projects}
+                onRename={renameProject}
+                onDelete={deleteProject}
+              />
             )}
           </>
         )}
@@ -268,9 +279,6 @@ function ClipsProjectControls({
     const isAnalyzing =
       project.status !== 'analyzed' && project.status !== 'failed';
     const isManagedProvider = avatarProvider === 'genfeedai';
-    const isSourceRetryExhausted = Boolean(
-      project.source && project.source.retryCount >= project.source.maxRetries,
-    );
     const hasSelectedReference = Boolean(
       project.referenceFrames?.selectedCandidateId,
     );
@@ -305,31 +313,8 @@ function ClipsProjectControls({
             </p>
           </div>
         ) : project.status === 'failed' ? (
-          <div className="space-y-3">
-            <div className="rounded-lg border border-transparent bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {project.source?.failure?.message ??
-                project.error ??
-                t('sourceProcessingFailed')}
-            </div>
-            {project.source?.status === 'failed' &&
-            project.source.failure?.retryable ? (
-              <>
-                <Button
-                  size={ButtonSize.SM}
-                  variant={ButtonVariant.SECONDARY}
-                  withWrapper={false}
-                  isDisabled={isSubmitting || isSourceRetryExhausted}
-                  onClick={handleRetrySource}
-                >
-                  {t('retrySourceProcessing')}
-                </Button>
-                {isSourceRetryExhausted ? (
-                  <p role="status" className="text-xs text-muted-foreground">
-                    {t('sourceRetryLimitReached')}
-                  </p>
-                ) : null}
-              </>
-            ) : null}
+          <div className="rounded-lg border border-transparent bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            {project.source?.failure?.message ?? t('sourceProcessingFailed')}
           </div>
         ) : (
           <>
@@ -503,7 +488,7 @@ function ClipsProjectControls({
               variant={ButtonVariant.LINK}
               className="text-sm text-muted-foreground hover:text-foreground"
               onClick={resetToInput}
-              label={t('backToProjects')}
+              label="Try again"
             />
           </div>
         ) : null}

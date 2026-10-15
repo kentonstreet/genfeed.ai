@@ -45,11 +45,10 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // of original/enhanced/compiled prompts plus result images. Library
     // findAll, delete, and merge stay organization-scoped. The call moved
     // down when the library list filter gained the trash flag (#6391), then
-    // five lines for metadata label ordering, then sixteen for keyset Library
-    // paging and its import. The ledger query/guard are unchanged.
+    // five lines for metadata label ordering. The ledger query/guard are unchanged.
     {
       file: 'apps/server/api/src/collections/ingredients/controllers/ingredients.controller.ts',
-      line: 340,
+      line: 324,
     },
     // #5981: readPublicSources discovers only non-deleted ingredients that are
     // public (isPublic, scope PUBLIC, or on a visibility PUBLIC post) and keeps
@@ -57,18 +56,16 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // issuance only and are never returned over HTTP.
     {
       file: 'apps/server/api/src/services/media-urls/authorized-media-url.service.ts',
-      line: 217,
+      line: 211,
     },
     // Access discovery: findActiveForUserAccess lists the caller's own active
     // memberships by canonical users.id (userId in the where) to resolve which
     // organizations they belong to (org switcher, identity resolution,
     // onboarding). It never reads another user's rows. #5981 made handlers run
     // inside the tenant context, which turned this into a production 500.
-    // #5502 moved this unchanged discovery call four lines for native-app imports.
-    // The member role-authority helpers moved it again, unchanged.
     {
       file: 'apps/server/api/src/collections/members/services/members.service.ts',
-      line: 177,
+      line: 129,
     },
     // #6120: hidden system-workflow mirror upsert. System-principal rows are
     // platform-global and owned by the system principal, not the request
@@ -81,7 +78,7 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // parent workflow.
     {
       file: 'apps/server/api/src/collections/workflows/system-workflow-runner.service.ts',
-      line: 913,
+      line: 901,
     },
     // #6120: one shared system-principal mirror lookup for normal and failure binding proofs; both callers retain exact principal/soft-delete fences.
     {
@@ -195,25 +192,25 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // assertCanRelocate authorizes.
     {
       file: 'apps/server/api/src/collections/brands/controllers/brands.controller.ts',
-      line: 272,
+      line: 271,
     },
     // #6120: brand relocation preview across tenants; assertCanRelocate
     // authorizes.
     {
       file: 'apps/server/api/src/collections/brands/controllers/brands.controller.ts',
-      line: 319,
+      line: 317,
     },
     // #6120: superadmin brand list filtered by another organization or by
     // brand only.
     {
       file: 'apps/server/api/src/collections/brands/controllers/brands.controller.ts',
-      line: 395,
+      line: 392,
     },
     // #6120: list relation reads for rows already authorized, each pinned to
     // the brand's own organization.
     {
       file: 'apps/server/api/src/collections/brands/controllers/brands.controller.ts',
-      line: 421,
+      line: 418,
     },
     // #6120: brand slugs are globally unique across organizations, including
     // soft-deleted rows.
@@ -318,26 +315,13 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // is cross-organization.
     {
       file: 'apps/server/api/src/collections/credits/services/credits.utils.service.ts',
-      line: 672,
-    },
-    // The free-trial expiry sweep discovers never-paid organizations past the
-    // window across tenants; each one is then expired in its own
-    // organization-scoped serializable transaction.
-    {
-      file: 'apps/server/api/src/collections/credits/services/free-trial.service.ts',
-      line: 127,
+      line: 652,
     },
     // #6120: the signup welcome entitlement is user-scoped across the user's
     // owned organizations.
     {
       file: 'apps/server/api/src/collections/credits/services/onboarding-credit-grants.service.ts',
-      line: 79,
-    },
-    // The free-trial entitlement is user-scoped across the user's owned
-    // organizations, exactly like the signup gift above.
-    {
-      file: 'apps/server/api/src/collections/credits/services/onboarding-credit-grants.service.ts',
-      line: 161,
+      line: 69,
     },
     // #6120: superadmin reads another organization's blacklist entry.
     {
@@ -347,7 +331,7 @@ export const CROSS_ORG_UNSAFE_BASELINE: readonly CrossOrgUnsafeBaselineEntry[] =
     // #6120: superadmin edits another organization's blacklist entry.
     {
       file: 'apps/server/api/src/collections/elements/blacklists/controllers/blacklists.controller.ts',
-      line: 221,
+      line: 222,
     },
     // #6120: superadmin names a foreign organization.
     {

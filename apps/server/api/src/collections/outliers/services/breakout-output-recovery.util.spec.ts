@@ -16,7 +16,6 @@ import {
 } from '@api/services/branded-generation-receipts/branded-generation-post-material.util';
 import {
   IngredientCategory,
-  PersistedReviewDecision,
   Platform,
   PostCategory,
   PostFormat,
@@ -360,37 +359,7 @@ describe('retained generation and publication recovery facts', () => {
       });
     },
   );
-  it('holds a needs-review draft for a member and clears it only on an explicit approval of this exact version', async () => {
-    const h = fixture();
-    h.retain({ ...h.projection, state: 'needs_review' });
-    h.findPost.mockResolvedValue(h.post);
-    expect(await readBreakoutOutputRecovery(h.tx, input)).toMatchObject({
-      state: 'awaiting_review',
-      reason: 'brand_review_required',
-      action: 'none',
-      postId: 'post-output-a',
-      mayRepeatPaidRequest: false,
-    });
-    // An approval without a pinned version (cleared when the material changes) is not enough.
-    Object.assign(h.post, {
-      reviewDecision: PersistedReviewDecision.APPROVED,
-      reviewVersionPinId: null,
-    });
-    expect(await readBreakoutOutputRecovery(h.tx, input)).toMatchObject({
-      reason: 'brand_review_required',
-    });
-    Object.assign(h.post, { reviewVersionPinId: 'pin-a' });
-    expect(await readBreakoutOutputRecovery(h.tx, input)).toMatchObject({
-      state: 'draft',
-      reason: 'publication_admission_required',
-    });
-    // A hard-blocked receipt is never cleared by a review decision.
-    h.retain({ ...h.projection, state: 'blocked' });
-    expect(await readBreakoutOutputRecovery(h.tx, input)).toMatchObject({
-      reason: 'quality_or_brand_blocked',
-    });
-  });
-  it.each(['image', 'carousel', 'video'])(
+  it.each(['image', 'carousel', 'video', 'short'])(
     'shows an actual %s capability hold without granting dispatch or retry',
     async (format) => {
       const h = fixture();
@@ -809,7 +778,7 @@ function composedBindingFixture(
 }
 
 describe('complete output artifact lineage and recovery', () => {
-  it.each(['text', 'thread'] as const)(
+  it.each(['text', 'image', 'video', 'short', 'carousel', 'thread'] as const)(
     'binds and recovers a complete %s output through normal review/publication states',
     async (format) => {
       const h = composedBindingFixture(format);
@@ -867,7 +836,7 @@ describe('complete output artifact lineage and recovery', () => {
     },
   );
 
-  it.each(['thread'] as const)(
+  it.each(['image', 'video', 'short', 'carousel', 'thread'] as const)(
     'holds a changed complete %s artifact without another paid request',
     async (format) => {
       const h = composedBindingFixture(format);
@@ -885,20 +854,6 @@ describe('complete output artifact lineage and recovery', () => {
         reason: 'artifact_binding_missing',
         mayRepeatPaidRequest: false,
       });
-    },
-  );
-
-  it.each(['image', 'carousel', 'video', 'short'] as const)(
-    'composes a %s output through its own binder, never a text receipt',
-    async (format) => {
-      const h = composedBindingFixture('text');
-      h.output.format = format;
-      h.output.kind = 'follow_up';
-      expect(await bindBreakoutPostArtifact(h.tx, h.binding)).toEqual({
-        status: 'held',
-        reason: 'unsupported_format',
-      });
-      expect(h.update).not.toHaveBeenCalled();
     },
   );
 

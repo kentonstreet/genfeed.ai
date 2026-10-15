@@ -1,20 +1,12 @@
-import { isBreakoutMediaFormat } from '@api/collections/outliers/services/breakout-media-format.util';
-import { readBreakoutMediaOutputRecovery } from '@api/collections/outliers/services/breakout-media-output-recovery.util';
-import { breakoutPublicationState } from '@api/collections/outliers/services/breakout-output-publication-state.util';
 import { loadBreakoutPublication } from '@api/collections/outliers/services/breakout-publication-source.util';
 import { loadPostExposurePublication } from '@api/collections/outliers/services/post-exposure-observation.util';
 import {
-  type BrandedPostMaterialSource,
+  type BrandedPostMaterialRecord,
   bindBrandedPostMaterialLayout,
   brandedPostMaterialSelect,
   describeBrandedPostMaterialLayout,
-  toBrandedPostMaterialRecord,
 } from '@api/services/branded-generation-receipts/branded-generation-post-material.util';
-import {
-  PersistedReviewDecision,
-  Platform,
-  TargetExecutionState,
-} from '@genfeedai/contracts';
+import { Platform, TargetExecutionState } from '@genfeedai/contracts';
 import { brandedGenerationReceiptV1Schema } from '@genfeedai/contracts/api-types/contracts';
 import type {
   BreakoutOutputRecoveryInput,
@@ -31,7 +23,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 /** Compare complete retained material; this does not acquire or authorize new provider work. */
 function matchesPostArtifact(
   scope: Readonly<BreakoutOutputRecoveryInput>,
-  post: BrandedPostMaterialSource,
+  post: BrandedPostMaterialRecord,
   artifact: BrandGenerationArtifactV1 | null,
   format: string,
 ): boolean {
@@ -118,8 +110,6 @@ async function bindPostArtifact(
   if (!response || !output || response.outputPlanFingerprint === null)
     return { status: 'held', reason: 'missing_output' };
   if (
-    // A visual output is composed from its caption and generated visuals by its own binder.
-    isBreakoutMediaFormat(output.format) ||
     (textOnly && output.format !== 'text') ||
     (output.kind !== 'follow_up' && output.kind !== 'quote') ||
     (output.kind === 'quote' &&
@@ -307,7 +297,7 @@ export async function readBreakoutOutputRecovery(
     output.isDeleted
   )
     return { status: 'unavailable', reason: 'scope_mismatch' };
-  const loadedPost = await tx.post.findFirst({
+  const post = await tx.post.findFirst({
     where: {
       breakoutOutputId: outputId,
       organizationId,
@@ -322,11 +312,8 @@ export async function readBreakoutOutputRecovery(
       externalId: true,
       targetExecutionState: true,
       quoteTweetId: true,
-      reviewDecision: true,
-      reviewVersionPinId: true,
     },
   });
-  const post = loadedPost ? toBrandedPostMaterialRecord(loadedPost) : null;
   const base = {
     status: 'available' as const,
     responseId,
@@ -383,14 +370,6 @@ export async function readBreakoutOutputRecovery(
       reason: 'output_expired',
       action: 'none',
     };
-  if (isBreakoutMediaFormat(output.format))
-    return readBreakoutMediaOutputRecovery(tx, {
-      input,
-      response,
-      output,
-      post,
-      base,
-    });
   const row = await tx.brandedGenerationReceipt.findFirst({
     where: {
       organizationId,
@@ -522,16 +501,7 @@ export async function readBreakoutOutputRecovery(
       reason: 'approved_brand_required',
       action: 'none',
     };
-  // Factual coverage stays unverified unless the fact check backed every claim (#6717), so a human's review clears it:
-  // an explicit approval of this exact post version (the pin is cleared when its material changes).
-  const isReviewCleared =
-    receipt.state === 'needs_review' &&
-    post?.reviewDecision === PersistedReviewDecision.APPROVED &&
-    Boolean(post.reviewVersionPinId);
-  if (
-    (receipt.state !== 'ready' || receipt.compliance !== 'passed') &&
-    !isReviewCleared
-  )
+  if (receipt.state !== 'ready' || receipt.compliance !== 'passed')
     return {
       ...base,
       state: 'awaiting_review',
@@ -557,5 +527,69 @@ export async function readBreakoutOutputRecovery(
       reason: 'artifact_binding_missing',
       action: 'reconcile',
     };
-  return breakoutPublicationState(base, output, post);
+  if (output.heldReason === 'quality_evaluation_pending')
+    return {
+      ...base,
+      state: 'reconciliation_required',
+      reason: 'quality_evaluation_pending',
+      action: 'reconcile',
+    };
+  if (output.heldReason === 'platform_quality_blocked')
+    return {
+      ...base,
+      state: 'awaiting_review',
+      reason: 'platform_quality_blocked',
+      action: 'none',
+    };
+  if (output.state === 'awaiting_review')
+    return {
+      ...base,
+      state: 'awaiting_review',
+      reason: 'brand_review_required',
+      action: 'none',
+    };
+  if (post.targetExecutionState === TargetExecutionState.PAUSED)
+    return {
+      ...base,
+      state: 'paused',
+      reason: 'publication_paused',
+      action: 'none',
+    };
+  if (
+    post.targetExecutionState === TargetExecutionState.CANCELLED ||
+    post.targetExecutionState === TargetExecutionState.SKIPPED
+  )
+    return {
+      ...base,
+      state: 'suppressed',
+      reason: 'publication_cancelled',
+      action: 'none',
+    };
+  if (post.targetExecutionState === TargetExecutionState.PUBLISHING)
+    return {
+      ...base,
+      state: 'publishing',
+      reason: 'publication_in_flight',
+      action: 'wait',
+    };
+  if (post.targetExecutionState === TargetExecutionState.SCHEDULED)
+    return {
+      ...base,
+      state: 'scheduled',
+      reason: 'publication_admission_required',
+      action: 'none',
+    };
+  if (post.targetExecutionState === TargetExecutionState.FAILED)
+    return {
+      ...base,
+      state: 'failed',
+      reason: 'publication_failed',
+      action: 'use_existing_artifact',
+    };
+  return {
+    ...base,
+    state: 'draft',
+    reason: 'publication_admission_required',
+    action: 'requires_admission',
+  };
 }

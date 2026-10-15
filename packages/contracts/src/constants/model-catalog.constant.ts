@@ -4,7 +4,6 @@
  * Combines the curated inputs into one list of registry rows:
  * - media generation keys from MODEL_OUTPUT_CAPABILITIES (image/video/voice/…)
  * - curated media defaults (label/cost/isDefault) from SELF_HOSTED_MODELS
- * - product-text fallbacks that are not agent-chat models
  * - agent chat LLMs from AGENT_CHAT_MODELS (category TEXT)
  * - one legacy row per retired chat key, so a stored binding always resolves to
  *   a registry row instead of falling off the catalogue
@@ -13,26 +12,17 @@
  * start from this list; provider discovery adds drafts on top. These constants
  * are seed *input* only — never a parallel runtime allowlist.
  */
-import {
-  CostTier,
-  ModelCategory,
-  ModelLifecycle,
-  ModelProvider,
-  PricingType,
-  QualityTier,
-  SpeedTier,
-} from '..';
+import type { CostTier, QualityTier, SpeedTier } from '..';
+import { ModelCategory, ModelLifecycle, ModelProvider } from '..';
 import {
   AGENT_CHAT_MODEL_KEYS,
   AGENT_CHAT_MODELS,
   AGENT_FALLBACK_ROUND_CREDITS,
-  calculateAgentRoundCredits,
   DEFAULT_AGENT_CHAT_MODEL_KEY,
   getAgentChatModel,
   HIGHLIGHTED_AGENT_CHAT_MODEL_KEY,
   RETIRED_AGENT_CHAT_MODELS,
 } from './agent-chat-models.constant';
-import { BRAND_VISION_MODELS } from './brand-vision-models.constant';
 import {
   LOWEST_COST_AGENT_CHAT_MODEL_KEY,
   LOWEST_COST_IMAGE_MODEL_KEY,
@@ -62,8 +52,6 @@ export interface ModelCatalogSeedEntry {
   durations?: readonly number[];
   /** Exact provider endpoint when the collision-safe public key is prefixed. */
   endpoint?: string;
-  /** Pinned provider identifier, e.g. a Replicate `owner/name:version`. */
-  externalId?: string;
   hasAudioToggle?: boolean;
   hasDurationEditing?: boolean;
   hasEndFrame?: boolean;
@@ -139,9 +127,6 @@ function providerFromMediaKey(key: string): ModelProvider {
   if (key.startsWith('heygen/')) {
     return ModelProvider.HEYGEN;
   }
-  if (key.startsWith('elevenlabs/')) {
-    return ModelProvider.ELEVENLABS;
-  }
   if (key.startsWith('higgsfield-ai/') || key.startsWith('higgsfield/')) {
     return ModelProvider.HIGGSFIELD;
   }
@@ -164,98 +149,6 @@ const LEGACY_FLUX_MEDIA_KEYS: ReadonlySet<string> = new Set([
   MODEL_KEYS.FAL_FLUX_DEV,
   MODEL_KEYS.FAL_FLUX_PRO,
 ]);
-
-/**
- * Older versions of a family whose newer same-category model is in the
- * catalog. They stay selectable and keep their price; the picker labels them
- * Legacy and points at the successor.
- */
-const LEGACY_MEDIA_SUCCESSORS: Readonly<Record<string, string>> = {
-  [MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_4]:
-    MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_5_PRO,
-  [MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_4_5]:
-    MODEL_KEYS.REPLICATE_BYTEDANCE_SEEDREAM_5_PRO,
-  [MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_3]: MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_4,
-  [MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_3_FAST]:
-    MODEL_KEYS.REPLICATE_GOOGLE_IMAGEN_4_FAST,
-  [MODEL_KEYS.REPLICATE_GOOGLE_NANO_BANANA]:
-    MODEL_KEYS.REPLICATE_GOOGLE_NANO_BANANA_2,
-  [MODEL_KEYS.REPLICATE_GOOGLE_VEO_3]: MODEL_KEYS.REPLICATE_GOOGLE_VEO_3_1,
-  [MODEL_KEYS.REPLICATE_GOOGLE_VEO_3_FAST]:
-    MODEL_KEYS.REPLICATE_GOOGLE_VEO_3_1_FAST,
-  [MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V2_1]:
-    MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_VIDEO,
-  [MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V2_1_MASTER]:
-    MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_VIDEO,
-  [MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V2_5_TURBO_PRO]:
-    MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_VIDEO,
-  [MODEL_KEYS.REPLICATE_MINIMAX_HAILUO_2_3_FAST]:
-    MODEL_KEYS.REPLICATE_MINIMAX_H3,
-};
-
-/**
- * Models the provider no longer serves: Replicate returns 404, or, for text
- * keys that complete through OpenRouter, OpenRouter lists no endpoint (checked
- * 2026-10-15). A stored key resolves to the successor at dispatch, and a
- * retired row is never offered or priced itself.
- */
-const RETIRED_MEDIA_SUCCESSORS: Readonly<Record<string, string>> = {
-  [MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V1_6_PRO]:
-    MODEL_KEYS.REPLICATE_KWAIVGI_KLING_V3_VIDEO,
-  [MODEL_KEYS.REPLICATE_META_LLAMA_3_1_405B_INSTRUCT]:
-    AGENT_CHAT_MODEL_KEYS.DEEPSEEK_V4_FLASH,
-  [MODEL_KEYS.REPLICATE_DEEPSEEK_AI_DEEPSEEK_R1]:
-    AGENT_CHAT_MODEL_KEYS.DEEPSEEK_V4_FLASH,
-  [MODEL_KEYS.REPLICATE_GOOGLE_GEMINI_3_PRO]:
-    MODEL_KEYS.OPENROUTER_GOOGLE_GEMINI_3_8_FLASH,
-  [MODEL_KEYS.OPENROUTER_XAI_GROK_4_1_FAST]: MODEL_KEYS.OPENROUTER_XAI_GROK_4_3,
-  // Billed on input and output megapixels, which dispatch cannot meter; FLUX.2
-  // Pro covers the same requests at an approved rate.
-  [MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_DEV]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_FLEX]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-};
-
-/**
- * Genfeed fleet deployments retired on Genfeed Cloud, where no fleet price
- * exists. Self-hosted installs keep them for their own ComfyUI. Fleet LoRA
- * models return as new catalog keys with an approved price.
- */
-const HOSTED_RETIRED_MEDIA_SUCCESSORS: Readonly<Record<string, string>> = {
-  [MODEL_KEYS.GENFEED_AI_FLUX_DEV]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX_DEV_PULID]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX2_DEV]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX2_DEV_PULID]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX2_DEV_PULID_LORA]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX2_DEV_PULID_UPSCALE]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_FLUX2_KLEIN]:
-    MODEL_KEYS.REPLICATE_BLACK_FOREST_LABS_FLUX_2_PRO,
-  [MODEL_KEYS.GENFEED_AI_Z_IMAGE_TURBO]:
-    MODEL_KEYS.REPLICATE_GOOGLE_NANO_BANANA_2_LITE,
-  [MODEL_KEYS.GENFEED_AI_Z_IMAGE_TURBO_LORA]:
-    MODEL_KEYS.REPLICATE_GOOGLE_NANO_BANANA_2_LITE,
-};
-
-function mediaLifecycle(
-  key: string,
-  curated: (typeof SELF_HOSTED_MODELS)[number] | undefined,
-): ModelLifecycle {
-  if (RETIRED_MEDIA_SUCCESSORS[key]) return ModelLifecycle.RETIRED;
-  if (LEGACY_FLUX_MEDIA_KEYS.has(key) || LEGACY_MEDIA_SUCCESSORS[key])
-    return ModelLifecycle.LEGACY;
-  if (curated && 'lifecycle' in curated && curated.lifecycle)
-    return curated.lifecycle;
-  return curated?.isDefault || curated?.isHighlighted
-    ? ModelLifecycle.RECOMMENDED
-    : ModelLifecycle.AVAILABLE;
-}
 
 /**
  * Every media key we know how to call, so Settings → Models lists the real
@@ -285,7 +178,13 @@ function buildMediaCatalogEntries(): ModelCatalogSeedEntry[] {
         !(curated && 'isActive' in curated && curated.isActive === false),
       isDefault: curated?.isDefault ?? false,
       isHighlighted: curated?.isHighlighted ?? false,
-      lifecycle: mediaLifecycle(key, curated),
+      lifecycle: LEGACY_FLUX_MEDIA_KEYS.has(key)
+        ? ModelLifecycle.LEGACY
+        : curated && 'lifecycle' in curated && curated.lifecycle
+          ? curated.lifecycle
+          : curated?.isDefault || curated?.isHighlighted
+            ? ModelLifecycle.RECOMMENDED
+            : ModelLifecycle.AVAILABLE,
       isPublic: isCurated,
       key,
       label: curated?.label ?? MEDIA_LABEL_OVERRIDES[key] ?? labelFromKey(key),
@@ -321,12 +220,8 @@ function buildMediaCatalogEntries(): ModelCatalogSeedEntry[] {
     if (curated?.providerConfig) {
       entry.config = curated.providerConfig;
     }
-    const succeededBy =
-      (curated && 'succeededBy' in curated ? curated.succeededBy : undefined) ??
-      RETIRED_MEDIA_SUCCESSORS[key] ??
-      LEGACY_MEDIA_SUCCESSORS[key];
-    if (succeededBy) {
-      entry.succeededBy = succeededBy;
+    if (curated && 'succeededBy' in curated && curated.succeededBy) {
+      entry.succeededBy = curated.succeededBy;
     }
     if ('aspectRatios' in capability && capability.aspectRatios) {
       entry.aspectRatios = capability.aspectRatios;
@@ -425,116 +320,6 @@ function buildAgentCatalogEntries(): ModelCatalogSeedEntry[] {
 }
 
 /**
- * Gemini 3.8 Flash list price on OpenRouter (Google paid tier), read
- * 2026-10-14. Prompt $0.75 / completion $3.75 per 1M through 2026-12-31;
- * paid rates double on 2027-01-01. `cost` is one agent-round hold at the
- * 1.7 chat margin (`calculateAgentRoundCredits`), not a per-token bill.
- * The token columns stay USD per million for readers. Post enhancement
- * quotes the flat `cost` — marking this `per-token` would treat those USD
- * figures as credits per million and hold 1 credit.
- */
-const PRODUCT_TEXT_GEMINI_3_8_FLASH_PRICING = {
-  completionPerMillion: 3.75,
-  promptPerMillion: 0.75,
-} as const;
-
-/** Grok 4.3 list price on OpenRouter, read 2026-10-15. */
-const PRODUCT_TEXT_GROK_4_3_PRICING = {
-  completionPerMillion: 2.5,
-  promptPerMillion: 1.25,
-} as const;
-
-/**
- * Product-text fallbacks that `MODEL_OUTPUT_CAPABILITIES` also lists.
- *
- * Applied after the media pass so they replace the inactive cost-0 row, and
- * before agent chat so a real agent row of the same key still wins. They stay
- * out of the agent picker (no `agent-chat` capability), out of public model
- * lists, and off the category default.
- */
-function buildProductTextCatalogEntries(): ModelCatalogSeedEntry[] {
-  const pricing = PRODUCT_TEXT_GEMINI_3_8_FLASH_PRICING;
-
-  return [
-    {
-      category: ModelCategory.TEXT,
-      cost: calculateAgentRoundCredits(pricing),
-      costTier: CostTier.MEDIUM,
-      description:
-        'Gemini 3.8 Flash — seed fallback for drafts and prompt enhancement when no Admin default text model is set. Not offered in the agent chat picker.',
-      inputCostPerMillionTokens: pricing.promptPerMillion,
-      isActive: true,
-      isDefault: false,
-      isHighlighted: false,
-      isPublic: false,
-      key: MODEL_KEYS.OPENROUTER_GOOGLE_GEMINI_3_8_FLASH,
-      label: 'Gemini 3.8 Flash',
-      lifecycle: ModelLifecycle.AVAILABLE,
-      outputCostPerMillionTokens: pricing.completionPerMillion,
-      pricingType: PricingType.FLAT,
-      provider: ModelProvider.OPENROUTER,
-      qualityTier: QualityTier.HIGH,
-      speedTier: SpeedTier.FAST,
-    },
-    {
-      category: ModelCategory.TEXT,
-      cost: calculateAgentRoundCredits(PRODUCT_TEXT_GROK_4_3_PRICING),
-      costTier: CostTier.MEDIUM,
-      description:
-        'Grok 4.3 — the cheap xAI model behind X opportunity drafts. Not offered in the agent chat picker.',
-      inputCostPerMillionTokens: PRODUCT_TEXT_GROK_4_3_PRICING.promptPerMillion,
-      isActive: true,
-      isDefault: false,
-      isHighlighted: false,
-      isPublic: false,
-      key: MODEL_KEYS.OPENROUTER_XAI_GROK_4_3,
-      label: 'Grok 4.3',
-      lifecycle: ModelLifecycle.AVAILABLE,
-      outputCostPerMillionTokens:
-        PRODUCT_TEXT_GROK_4_3_PRICING.completionPerMillion,
-      pricingType: PricingType.FLAT,
-      provider: ModelProvider.OPENROUTER,
-      qualityTier: QualityTier.STANDARD,
-      speedTier: SpeedTier.FAST,
-    },
-  ];
-}
-
-/**
- * Brand visual analysis models (#6727) as TEXT registry rows tagged
- * `brand-ocr` / `brand-detection`. They are platform tooling an operator picks
- * in Admin → Platform settings: never public, never a category default and
- * only AVAILABLE, so the router (which routes RECOMMENDED rows) and the agent
- * picker (which needs the `agent-chat` tag) never offer them as generators.
- */
-function buildBrandVisionCatalogEntries(): ModelCatalogSeedEntry[] {
-  return BRAND_VISION_MODELS.map((model) => ({
-    capabilities: [model.capability],
-    category: ModelCategory.TEXT,
-    config: model.providerConfig,
-    // Credits are display and legacy fallbacks only; the price bills from
-    // `providerCostUsd` per second of runtime, and this is never customer-billed.
-    cost: 1,
-    costPerUnit: 1,
-    costTier: CostTier.LOW,
-    description: model.description,
-    externalId: model.externalId,
-    isActive: true,
-    isDefault: false,
-    isHighlighted: false,
-    isPublic: false,
-    key: model.key,
-    label: model.label,
-    lifecycle: ModelLifecycle.AVAILABLE,
-    minCost: 1,
-    pricingType: model.pricingType,
-    provider: model.provider,
-    providerCostUsd: model.providerCostUsd,
-    speedTier: SpeedTier.FAST,
-  }));
-}
-
-/**
  * Retired chat keys as legacy rows carrying `succeededBy`.
  *
  * Persisted rows (org settings, brand agent config, thread bindings, scheduled
@@ -586,15 +371,9 @@ export const UNIFIED_MODEL_CATALOG: readonly ModelCatalogSeedEntry[] = (() => {
   for (const entry of buildMediaCatalogEntries()) {
     byKey.set(entry.key, entry);
   }
-  for (const entry of buildProductTextCatalogEntries()) {
-    byKey.set(entry.key, entry);
-  }
   for (const entry of buildAgentCatalogEntries()) {
     byKey.set(entry.key, entry);
     liveAgentKeys.add(entry.key);
-  }
-  for (const entry of buildBrandVisionCatalogEntries()) {
-    byKey.set(entry.key, entry);
   }
   for (const entry of buildRetiredAgentCatalogEntries()) {
     if (!liveAgentKeys.has(entry.key)) {
@@ -655,36 +434,13 @@ function applyLowestCostDefaults(
  * Development, staging, and e2e (`isCloudQualityDefaultsEnabled === false`)
  * promote the lowest-cost image / video / chat rows so a generate does not
  * bill Seedance / Nano Banana / a mid-tier chat model.
- *
- * Genfeed Cloud (`isCloud`) also retires the Genfeed fleet deployments, which
- * have no Cloud price.
  */
 export function getModelCatalogForDeployment(
   isCloudQualityDefaultsEnabled: boolean,
-  { isCloud = false }: { isCloud?: boolean } = {},
 ): readonly ModelCatalogSeedEntry[] {
-  const catalog = isCloudQualityDefaultsEnabled
-    ? UNIFIED_MODEL_CATALOG
-    : applyLowestCostDefaults(UNIFIED_MODEL_CATALOG);
+  if (isCloudQualityDefaultsEnabled) {
+    return UNIFIED_MODEL_CATALOG;
+  }
 
-  return isCloud ? retireHostedFleetModels(catalog) : catalog;
-}
-
-function retireHostedFleetModels(
-  catalog: readonly ModelCatalogSeedEntry[],
-): ModelCatalogSeedEntry[] {
-  return catalog.map((entry) => {
-    const succeededBy = HOSTED_RETIRED_MEDIA_SUCCESSORS[entry.key];
-    return succeededBy
-      ? {
-          ...entry,
-          isActive: false,
-          isDefault: false,
-          isHighlighted: false,
-          isPublic: false,
-          lifecycle: ModelLifecycle.RETIRED,
-          succeededBy,
-        }
-      : entry;
-  });
+  return applyLowestCostDefaults(UNIFIED_MODEL_CATALOG);
 }

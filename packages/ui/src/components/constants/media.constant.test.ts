@@ -173,7 +173,7 @@ describe('media.constant', () => {
         '/studio',
         '/studio/storyboard',
         '/studio/clips',
-        '/studio/turbo',
+        '/studio/batch',
       ])('should return VIDEO for %s', (pathname) => {
         expect(getCategoryFromRoute(pathname)).toBe(IngredientCategory.VIDEO);
       });

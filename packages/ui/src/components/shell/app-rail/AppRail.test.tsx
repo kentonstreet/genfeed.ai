@@ -1,10 +1,5 @@
-import {
-  ORGANIZATION_MODULE_IDS,
-  type OrganizationModulePreferenceInput,
-  resolveOrganizationModulePresentationAccess,
-} from '@genfeedai/contracts/constants';
+import { resolveOrganizationModulePreferences } from '@genfeedai/contracts/constants';
 import type { ICommand } from '@genfeedai/contracts/interfaces/ui/command-palette.interface';
-import type { AppRailProps } from '@genfeedai/props/ui/app-rail.props';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,11 +16,6 @@ const featureFlags = vi.hoisted(() => ({
   publishing: true,
   discovery: true,
   studio: true,
-  studio_turbo: true,
-  studio_clips: true,
-  studio_editor: true,
-  studio_motion: true,
-  studio_storyboard: true,
 }));
 
 vi.mock('@genfeedai/hooks/feature-flags/provider', () => ({
@@ -121,11 +111,15 @@ vi.mock('@genfeedai/contracts/constants', async (importOriginal) => {
       library: 'Library',
       messages: 'Messages',
       publishing: 'Publishing',
+      studio: 'Studio',
       workspace: 'Workspace',
     },
     APP_ROUTES: {
-      STUDIO: actual.APP_ROUTES.STUDIO,
-      ADMIN: actual.APP_ROUTES.ADMIN,
+      ADMIN: {
+        OVERVIEW: {
+          DASHBOARD: '/admin/overview/dashboard',
+        },
+      },
     },
     APP_RAIL_FEATURE_FLAGS: {
       agent: 'agent',
@@ -153,61 +147,10 @@ vi.mock('@genfeedai/helpers/formatting/cn/cn.util', () => ({
 }));
 
 // Import after mocks are set up
-const { AppRail: RailUnderTest } = await import('./AppRail');
+const { AppRail } = await import('./AppRail');
 
-function AppRail(props: AppRailProps) {
-  return <RailUnderTest {...props} />;
-}
-
-/** Admin → Flags as the release migration leaves it. */
-const RELEASED_FLAGS = {
-  release_analytics: true,
-  release_discovery: true,
-  release_publishing: true,
-  release_turbo: true,
-};
-
-function moduleAccessFor(settings: OrganizationModulePreferenceInput) {
-  return Object.fromEntries(
-    ORGANIZATION_MODULE_IDS.map((moduleId) => [
-      moduleId,
-      resolveOrganizationModulePresentationAccess(
-        settings,
-        moduleId,
-        RELEASED_FLAGS,
-      ),
-    ]),
-  );
-}
-
-// Launcher apps are reached from the Store, so the rail only renders the ones
-// a member has pinned. Pinning every id exercises each app's visibility rules.
-const LAUNCHER_APP_IDS = [
-  'playground',
-  'storyboard',
-  'turbo',
-  'motion',
-  'clips',
-  'editor',
-  'automation',
-  'messages',
-  'discovery',
-];
-
-const CORE_APP_IDS = [
-  'workspace',
-  'agent',
-  'library',
-  'publishing',
-  'analytics',
-];
-
-// The launcher apps that rendered as rail items, in rail order.
-function renderedLauncherAppIds() {
-  return screen
-    .queryAllByTestId(/^app-rail-item-/)
-    .map((item) => item.dataset.testid?.replace('app-rail-item-', '') ?? '')
-    .filter((appId) => LAUNCHER_APP_IDS.includes(appId));
+function openMoreMenu() {
+  fireEvent.click(screen.getByRole('button', { name: 'More' }));
 }
 
 describe('AppRail', () => {
@@ -241,12 +184,7 @@ describe('AppRail', () => {
       'Go to Library',
       'Go to Publishing',
       'Go to Analytics',
-      'Go to Playground',
-      'Go to Storyboard',
-      'Go to Turbo',
-      'Go to Motion',
-      'Go to Clips',
-      'Go to Editor',
+      'Go to Studio',
       'Go to Automation',
       'Go to Messages',
       'Go to Discovery',
@@ -290,37 +228,6 @@ describe('AppRail', () => {
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  it('lists admin categories instead of the app loop in admin chrome', () => {
-    render(
-      <AppRail
-        currentPath="/admin/content/posts"
-        isAdminChrome
-        orgSlug="acme"
-        showAdmin
-      />,
-    );
-    expect(screen.getByTestId('app-rail-item-workspace')).toBeInTheDocument();
-    for (const id of [
-      'admin-overview',
-      'admin-content',
-      'admin-automation',
-      'admin-configuration',
-      'admin-administration',
-    ]) {
-      expect(screen.getByTestId(`app-rail-item-${id}`)).toBeInTheDocument();
-    }
-    expect(screen.getByTestId('app-rail-item-admin-content')).toHaveAttribute(
-      'aria-current',
-      'page',
-    );
-    expect(screen.getByTestId('app-rail-item-admin-content')).toHaveAttribute(
-      'href',
-      '/admin/content/posts',
-    );
-    expect(screen.queryByTestId('app-rail-item-agent')).toBeNull();
-    expect(screen.queryByTestId('app-rail-item-admin')).toBeNull();
-  });
-
   it('uses web sequences and desktop command keys without numbering Admin', () => {
     const onNavigationEvent = vi.fn();
     const { rerender } = render(
@@ -342,8 +249,8 @@ describe('AppRail', () => {
       via: 'shortcut',
       surface: 'desktop',
     });
-    expect(commands.registerCommands.mock.lastCall?.[0]).toHaveLength(15);
-    expect(commands.registerCommands.mock.lastCall?.[0][14]).toMatchObject({
+    expect(commands.registerCommands.mock.lastCall?.[0]).toHaveLength(10);
+    expect(commands.registerCommands.mock.lastCall?.[0][9]).toMatchObject({
       label: 'Go to Admin',
       shortcut: undefined,
     });
@@ -441,19 +348,14 @@ describe('AppRail', () => {
   });
 
   it('never viewport-prefetches the rail destinations', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        brandSlug="my-brand"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-        showAdmin
-      />,
-    );
+    render(<AppRail orgSlug="acme" brandSlug="my-brand" showAdmin />);
+    openMoreMenu();
     for (const link of screen.getAllByRole('link')) {
       expect(link).toHaveAttribute('data-prefetch', 'false');
     }
   });
-  it('renders only the core loop when nothing is pinned (#5502)', () => {
+
+  it('renders the daily loop, then More, in rail order', () => {
     render(<AppRail orgSlug="acme" />);
 
     expect(
@@ -472,70 +374,50 @@ describe('AppRail', () => {
         .querySelector('svg')
         ?.classList.toString(),
     ).toMatch(/lucide-calendar/);
-    // The Apps entry lives in the topbar, so the rail ends with the core loop.
-    expect(screen.queryByTestId('app-rail-pins-separator')).toBeNull();
-    // Launcher apps live in the Store until they are pinned.
-    expect(renderedLauncherAppIds()).toEqual([]);
-    for (const retired of [
-      'Studio',
-      'Batch',
-      'More',
-      'Admin',
-      'Store',
-      'Apps',
-    ]) {
-      expect(
-        screen.queryByRole('link', { name: retired }),
-      ).not.toBeInTheDocument();
-    }
-  });
-
-  it('keeps pinned apps after the core loop with a divider', () => {
-    render(<AppRail orgSlug="acme" pinnedAppIds={['playground']} />);
-
-    expect(screen.getByTestId('app-rail-item-playground')).toBeInTheDocument();
-    expect(screen.getByTestId('app-rail-pins-separator')).toBeInTheDocument();
-  });
-  it('pins only installed, available apps (#5502)', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        installedAppIds={['playground', 'clips', 'discovery', 'automation']}
-        moduleAccess={{
-          automation: { isAllowed: false, reason: 'unreleased' },
-          clips: { isAllowed: false, reason: 'unreleased' },
-          discovery: { isAllowed: false, reason: 'subscription-required' },
-          playground: { isAllowed: true, reason: null },
-        }}
-        pinnedAppIds={['clips', 'discovery', 'storyboard', 'playground']}
-      />,
-    );
-    // Clips and Automation are unreleased, Discovery needs a plan and
-    // Storyboard is not installed: only Playground can be pinned or launched.
+    const analytics = screen.getByRole('link', { name: 'Analytics' });
+    const more = screen.getByRole('button', { name: 'More' });
+    const separator = screen.getByTestId('app-rail-pins-separator');
     expect(
-      screen
-        .getAllByTestId(/^app-rail-item-/)
-        .map((item) => item.dataset.testid),
-    ).toEqual([
-      'app-rail-item-workspace',
-      'app-rail-item-agent',
-      'app-rail-item-library',
-      'app-rail-item-publishing',
-      'app-rail-item-analytics',
-      'app-rail-item-playground',
+      analytics.compareDocumentPosition(more) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      more.compareDocumentPosition(separator) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    openMoreMenu();
+    const overflow = ['Studio', 'Automation', 'Messages', 'Discovery'];
+    const overflowLinks = overflow.map((label) =>
+      screen.getByRole('link', { name: label }),
+    );
+    for (let index = 0; index < overflowLinks.length - 1; index += 1) {
+      expect(
+        overflowLinks[index].compareDocumentPosition(overflowLinks[index + 1]) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+    const links = screen.getAllByRole('link');
+    expect(links.map((link) => link.getAttribute('aria-label'))).toEqual([
+      ...labels,
+      ...overflow,
     ]);
+    for (const label of labels) {
+      expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
+    }
+    expect(
+      screen.queryByRole('link', { name: 'Research' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Batch' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Repeat' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Admin' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('hides launcher apps while organization access is unresolved', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        moduleAccess={null}
-        pinnedAppIds={LAUNCHER_APP_IDS}
-      />,
-    );
-    expect(renderedLauncherAppIds()).toEqual([]);
-  });
   it('keeps grayscale focus indicators and fills only the active item', () => {
     render(
       <AppRail
@@ -627,14 +509,7 @@ describe('AppRail', () => {
   });
 
   it('locks gated apps behind the first asset but keeps their own route for the teaser', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        brandSlug="my-brand"
-        isAssetGateLocked
-        pinnedAppIds={['playground']}
-      />,
-    );
+    render(<AppRail orgSlug="acme" brandSlug="my-brand" isAssetGateLocked />);
 
     const hrefs = {
       analytics: '/acme/my-brand/analytics/overview',
@@ -652,7 +527,8 @@ describe('AppRail', () => {
       expect(link).toHaveAttribute('href', hrefs[id]);
       expect(link).toHaveClass('opacity-60');
     }
-    expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+    openMoreMenu();
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'href',
       '/acme/my-brand/studio/playground',
     );
@@ -674,53 +550,44 @@ describe('AppRail', () => {
 
   it('reports navigation so a drawer host can close', () => {
     const onNavigate = vi.fn();
-    render(
-      <AppRail
-        orgSlug="acme"
-        onNavigate={onNavigate}
-        pinnedAppIds={['playground']}
-      />,
-    );
+    render(<AppRail orgSlug="acme" onNavigate={onNavigate} />);
 
-    fireEvent.click(screen.getByRole('link', { name: 'Playground' }));
+    openMoreMenu();
+    fireEvent.click(screen.getByRole('link', { name: 'Studio' }));
+
     expect(onNavigate).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(screen.getByRole('link', { name: 'Analytics' }));
-    expect(onNavigate).toHaveBeenCalledTimes(2);
   });
-  it('renders Library with the library icon', () => {
+
+  it('renders Library with the images icon', () => {
     render(<AppRail orgSlug="acme" />);
 
     const libraryLink = screen.getByRole('link', { name: 'Library' });
     const icon = libraryLink.querySelector('svg');
 
     expect(icon).not.toBeNull();
-    expect(icon?.classList.toString()).toMatch(/lucide-library-big/);
+    expect(icon?.classList.toString()).toMatch(/lucide-images/);
     expect(icon?.classList.toString()).not.toMatch(/lucide-briefcase/);
   });
 
-  it('uses cloud module access for pinned apps and the palette', () => {
+  it('uses cloud module defaults in More and palette without hiding subscription-enabled Discovery', () => {
     render(
       <AppRail
         orgSlug="acme"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-        moduleAccess={moduleAccessFor({
+        modulePreferences={resolveOrganizationModulePreferences({
           hasOrganizationBilling: true,
-          hasPaidModuleSubscription: true,
-          isReleasePreviewEnabled: true,
           moduleOverrides: {},
         })}
       />,
     );
-    expect(
-      screen.getByRole('link', { name: 'Playground' }),
-    ).toBeInTheDocument();
+    openMoreMenu();
+    expect(screen.getByRole('link', { name: 'Studio' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Discovery' })).toBeInTheDocument();
-    for (const label of ['Automation', 'Messages', 'Clips', 'Turbo']) {
-      expect(
-        screen.queryByRole('link', { name: label }),
-      ).not.toBeInTheDocument();
-    }
+    expect(
+      screen.queryByRole('link', { name: 'Automation' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Messages' }),
+    ).not.toBeInTheDocument();
     expect(
       commands.registerCommands.mock.lastCall?.[0].map((entry) => entry.label),
     ).toEqual([
@@ -729,22 +596,23 @@ describe('AppRail', () => {
       'Go to Library',
       'Go to Publishing',
       'Go to Analytics',
-      'Go to Playground',
-      'Go to Storyboard',
+      'Go to Studio',
       'Go to Discovery',
     ]);
   });
 
   it('hides disabled saved pins and palette commands, then restores the same pins when enabled', () => {
+    const onTogglePin = vi.fn();
+    const preferences = resolveOrganizationModulePreferences({
+      hasOrganizationBilling: true,
+      moduleOverrides: {},
+    });
     const { rerender } = render(
       <AppRail
         orgSlug="acme"
         pinnedAppIds={['automation']}
-        moduleAccess={moduleAccessFor({
-          hasOrganizationBilling: true,
-          hasPaidModuleSubscription: true,
-          moduleOverrides: {},
-        })}
+        onTogglePin={onTogglePin}
+        modulePreferences={preferences}
       />,
     );
     expect(
@@ -759,10 +627,9 @@ describe('AppRail', () => {
       <AppRail
         orgSlug="acme"
         pinnedAppIds={['automation']}
-        moduleAccess={moduleAccessFor({
+        onTogglePin={onTogglePin}
+        modulePreferences={resolveOrganizationModulePreferences({
           hasOrganizationBilling: true,
-          hasPaidModuleSubscription: true,
-          isReleasePreviewEnabled: true,
           moduleOverrides: { automation: true },
         })}
       />,
@@ -773,68 +640,11 @@ describe('AppRail', () => {
         (entry) => entry.label === 'Go to Automation',
       ),
     ).toBe(true);
+    expect(onTogglePin).not.toHaveBeenCalled();
   });
 
-  it('hides subscription apps until the organization has a paid plan', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-        moduleAccess={moduleAccessFor({
-          hasOrganizationBilling: true,
-          hasPaidModuleSubscription: false,
-          moduleOverrides: {},
-        })}
-      />,
-    );
-    expect(
-      screen.getByRole('link', { name: 'Playground' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('link', { name: 'Discovery' }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('keeps unreleased apps out of a customer rail the organization shows', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-        moduleAccess={moduleAccessFor({
-          hasOrganizationBilling: true,
-          hasPaidModuleSubscription: true,
-          moduleOverrides: {
-            automation: true,
-            clips: true,
-            editor: true,
-            messages: true,
-            motion: true,
-            turbo: true,
-          },
-        })}
-      />,
-    );
-    expect(
-      screen
-        .getAllByTestId(/^app-rail-item-/)
-        .map((item) => item.dataset.testid),
-    ).toEqual([
-      ...CORE_APP_IDS.map((appId) => `app-rail-item-${appId}`),
-      'app-rail-item-playground',
-      'app-rail-item-storyboard',
-      'app-rail-item-turbo',
-      'app-rail-item-discovery',
-    ]);
-  });
   it('keeps fixed and neutral navigation while verified preferences are unavailable', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        moduleAccess={null}
-        modulePreferences={null}
-        pinnedAppIds={LAUNCHER_APP_IDS}
-      />,
-    );
+    render(<AppRail orgSlug="acme" modulePreferences={null} />);
     expect(screen.getByRole('link', { name: 'Workspace' })).toBeInTheDocument();
     expect(
       screen.queryByRole('link', { name: 'Publishing' }),
@@ -842,21 +652,25 @@ describe('AppRail', () => {
     expect(
       screen.queryByRole('link', { name: 'Analytics' }),
     ).not.toBeInTheDocument();
-    expect(renderedLauncherAppIds()).toEqual([]);
+    openMoreMenu();
+    expect(screen.getByRole('link', { name: 'Studio' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: 'Discovery' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('retains operator kill switches when organization access allows a module', () => {
+  it('retains operator kill switches when organization preferences enable a module', () => {
     featureFlags.discovery = false;
     render(
       <AppRail
         orgSlug="acme"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-        moduleAccess={moduleAccessFor({
+        modulePreferences={resolveOrganizationModulePreferences({
           hasOrganizationBilling: false,
           moduleOverrides: {},
         })}
       />,
     );
+    openMoreMenu();
     expect(
       screen.queryByRole('link', { name: 'Discovery' }),
     ).not.toBeInTheDocument();
@@ -867,50 +681,34 @@ describe('AppRail', () => {
     ).toBe(false);
   });
 
-  it('shows no pins divider when no pinned app is available', () => {
+  it('hides More when every overflow app is switched off', () => {
     featureFlags.studio = false;
     featureFlags.automation = false;
     featureFlags.messages = false;
     featureFlags.discovery = false;
 
-    render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+    render(<AppRail orgSlug="acme" />);
 
+    expect(
+      screen.queryByRole('button', { name: 'More' }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByTestId('app-rail-pins-separator'),
     ).not.toBeInTheDocument();
-    expect(renderedLauncherAppIds()).toEqual([]);
     expect(screen.getByRole('link', { name: 'Analytics' })).toBeInTheDocument();
   });
-  it('hides every Studio app when the studio module is switched off', () => {
+
+  it('hides Studio when its app-switcher discovery flag is disabled', () => {
     featureFlags.studio = false;
 
-    render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
-
-    for (const label of [
-      'Playground',
-      'Storyboard',
-      'Turbo',
-      'Motion',
-      'Clips',
-      'Editor',
-    ]) {
-      expect(
-        screen.queryByRole('link', { name: label }),
-      ).not.toBeInTheDocument();
-    }
-    expect(screen.getByRole('link', { name: 'Library' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Messages' })).toBeInTheDocument();
-  });
-
-  it('hides one Studio app when its surface switch is off', () => {
-    featureFlags.studio_clips = false;
-
-    render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+    render(<AppRail orgSlug="acme" />);
+    openMoreMenu();
 
     expect(
-      screen.queryByRole('link', { name: 'Clips' }),
+      screen.queryByRole('link', { name: 'Studio' }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Editor' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Library' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Messages' })).toBeInTheDocument();
   });
 
   it('independently hides every module whose discovery flag is disabled', () => {
@@ -920,7 +718,8 @@ describe('AppRail', () => {
     featureFlags.library = false;
     featureFlags.analytics = false;
 
-    render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+    render(<AppRail orgSlug="acme" />);
+    openMoreMenu();
 
     for (const label of [
       'Messages',
@@ -933,7 +732,7 @@ describe('AppRail', () => {
         screen.queryByRole('link', { name: label }),
       ).not.toBeInTheDocument();
     }
-    for (const label of ['Workspace', 'Agent', 'Playground', 'Publishing']) {
+    for (const label of ['Workspace', 'Agent', 'Studio', 'Publishing']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
     }
   });
@@ -948,6 +747,9 @@ describe('AppRail', () => {
     render(<AppRail orgSlug="acme" />);
 
     expect(screen.getAllByRole('link')).toHaveLength(1);
+    expect(
+      screen.queryByRole('button', { name: 'More' }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Workspace' })).toBeInTheDocument();
   });
 
@@ -1026,45 +828,45 @@ describe('AppRail', () => {
   });
 
   it('routes the studio item to the selected brand when the current route is org-scoped (#4671)', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        brandAwareSlug="moonrise"
-        pinnedAppIds={['playground']}
-      />,
-    );
+    render(<AppRail orgSlug="acme" brandAwareSlug="moonrise" />);
+    openMoreMenu();
 
-    expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'href',
       '/acme/moonrise/studio/playground',
     );
   });
 
   it('keeps the org studio fallback for an operator with no selected brand (#4671)', () => {
-    render(<AppRail orgSlug="acme" pinnedAppIds={['playground']} />);
+    render(<AppRail orgSlug="acme" />);
+    openMoreMenu();
 
-    expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'href',
-      '/acme/~/studio/playground',
+      '/acme/~/studio',
     );
   });
 
   it('marks messages active when the messages shell is current', () => {
-    const props = {
-      orgSlug: 'acme',
-      brandSlug: 'my-brand',
-      currentPath: '/acme/my-brand/messages',
-    };
-    const { container, rerender } = render(<AppRail {...props} />);
-    // Unpinned, Messages has no rail item to mark.
-    expect(container.querySelector('[aria-current="page"]')).toBeNull();
+    render(
+      <AppRail
+        orgSlug="acme"
+        brandSlug="my-brand"
+        currentPath="/acme/my-brand/messages"
+      />,
+    );
+    openMoreMenu();
 
-    rerender(<AppRail {...props} pinnedAppIds={['messages']} />);
+    expect(screen.getByRole('button', { name: 'More' })).toHaveAttribute(
+      'data-active',
+      'true',
+    );
     expect(screen.getByRole('link', { name: 'Messages' })).toHaveAttribute(
       'aria-current',
       'page',
     );
   });
+
   it('renders Workspace counts with accessible labels and hides zeros', () => {
     const { rerender } = render(
       <AppRail
@@ -1179,19 +981,16 @@ describe('AppRail', () => {
     });
   });
 
-  it('badges the Messages item with its unread count when pinned', () => {
-    const props = {
-      badges: { messages: { count: 120, label: '120 unread conversations' } },
-      brandSlug: 'my-brand',
-      orgSlug: 'acme',
-    };
-    const { rerender } = render(<AppRail {...props} />);
-    // Unpinned, Messages is not on the rail, so its count has no surface here.
-    expect(
-      screen.queryByTestId('app-rail-badge-messages'),
-    ).not.toBeInTheDocument();
-
-    rerender(<AppRail {...props} pinnedAppIds={['messages']} />);
+  it('badges the Messages item with its unread count', () => {
+    render(
+      <AppRail
+        orgSlug="acme"
+        brandSlug="my-brand"
+        badges={{ messages: { count: 120, label: '120 unread conversations' } }}
+      />,
+    );
+    expect(screen.getByTestId('app-rail-more-badge')).toHaveTextContent('99+');
+    openMoreMenu();
 
     expect(screen.getByTestId('app-rail-badge-messages')).toHaveTextContent(
       '99+',
@@ -1204,59 +1003,31 @@ describe('AppRail', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps a pinned app badge on its own item and core badges on theirs', () => {
-    featureFlags.discovery = false;
+  it('hides the Messages badge at zero', () => {
     render(
       <AppRail
         orgSlug="acme"
-        pinnedAppIds={['automation']}
-        badges={{
-          automation: { count: 40, label: '40 runs' },
-          messages: { count: 3, label: '3 unread conversations' },
-          workspace: { count: 9, label: '9 unread tasks' },
-        }}
+        brandSlug="my-brand"
+        badges={{ messages: { count: 0, label: '0 unread conversations' } }}
       />,
     );
-
-    expect(screen.getByTestId('app-rail-badge-automation')).toHaveTextContent(
-      '40',
-    );
-    expect(screen.getByTestId('app-rail-badge-workspace')).toHaveTextContent(
-      '9',
-    );
-    expect(
-      screen.queryByTestId('app-rail-badge-messages'),
-    ).not.toBeInTheDocument();
-  });
-  it('hides the Messages badge at zero', () => {
-    const props = {
-      badges: { messages: { count: 0, label: '0 unread conversations' } },
-      brandSlug: 'my-brand',
-      orgSlug: 'acme',
-    };
-    const { rerender } = render(<AppRail {...props} />);
-
-    rerender(<AppRail {...props} pinnedAppIds={['messages']} />);
+    expect(screen.queryByTestId('app-rail-more-badge')).not.toBeInTheDocument();
+    openMoreMenu();
 
     expect(
       screen.queryByTestId('app-rail-badge-messages'),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Messages' })).toBeInTheDocument();
   });
+
   it('does not highlight a product app on settings routes', () => {
-    render(
-      <AppRail
-        orgSlug="acme"
-        currentPath="/acme/~/settings/brands"
-        pinnedAppIds={LAUNCHER_APP_IDS}
-      />,
-    );
+    render(<AppRail orgSlug="acme" currentPath="/acme/~/settings/brands" />);
+    openMoreMenu();
 
     for (const name of [
       'Workspace',
       'Agent',
-      'Playground',
-      'Clips',
+      'Studio',
       'Library',
       'Discovery',
       'Publishing',
@@ -1271,23 +1042,20 @@ describe('AppRail', () => {
     }
   });
 
-  it('marks the Studio app that owns a nested path active (#5502)', () => {
+  it('marks studio active for any studio child path, not only the home href', () => {
     render(
       <AppRail
         orgSlug="acme"
         brandSlug="my-brand"
-        currentPath="/acme/my-brand/studio/clips/project-1"
-        pinnedAppIds={LAUNCHER_APP_IDS}
+        currentPath="/acme/my-brand/studio/clips"
       />,
     );
+    openMoreMenu();
 
-    expect(screen.getByRole('link', { name: 'Clips' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    expect(
-      screen.getByRole('link', { name: 'Playground' }),
-    ).not.toHaveAttribute('aria-current');
   });
 
   it('marks admin active on admin routes', () => {
@@ -1337,17 +1105,17 @@ describe('AppRail', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('highlights Turbo for the Batch surface it runs on', () => {
+  it('highlights nested studio routes under Studio', () => {
     render(
       <AppRail
         orgSlug="acme"
         brandSlug="my-brand"
-        currentPath="/acme/my-brand/studio/turbo"
-        pinnedAppIds={LAUNCHER_APP_IDS}
+        currentPath="/acme/my-brand/studio/batch"
       />,
     );
+    openMoreMenu();
 
-    expect(screen.getByRole('link', { name: 'Turbo' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'aria-current',
       'page',
     );
@@ -1367,18 +1135,18 @@ describe('AppRail', () => {
     ).not.toHaveAttribute('aria-current');
   });
 
-  it('highlights Editor for the timeline surface', () => {
+  it('highlights Studio for the Editor surface', () => {
     // #2309: the editor is no longer a publish-adjacent surface.
     render(
       <AppRail
         orgSlug="acme"
         brandSlug="my-brand"
         currentPath="/acme/my-brand/studio/editor/new"
-        pinnedAppIds={LAUNCHER_APP_IDS}
       />,
     );
+    openMoreMenu();
 
-    expect(screen.getByRole('link', { name: 'Editor' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
       'aria-current',
       'page',
     );
@@ -1389,119 +1157,113 @@ describe('AppRail', () => {
 
   describe('active selection follows pin placement', () => {
     it.each([
-      ['editor', '/studio/editor/project-1'],
-      ['turbo', '/studio/turbo/project-1'],
+      ['studio', '/studio/editor/project-1'],
       ['automation', '/automation/runs/run-1'],
       ['messages', '/messages/thread-1'],
       ['discovery', '/discovery/ads/ad-1'],
     ])(
-      'shows nested %s selection only while the app is pinned to the rail',
+      'moves nested %s selection between More and the pinned rail',
       (appId, path) => {
         const props = {
           orgSlug: 'acme',
           brandSlug: 'my-brand',
           currentPath: `/acme/my-brand${path}`,
+          onTogglePin: vi.fn(),
         };
         const view = render(<AppRail {...props} />);
-        // Unpinned apps have no rail item, so nothing is selected.
+        const more = screen.getByTestId('app-rail-more');
+        expect(more).toHaveAttribute('data-active', 'true');
+        expect(more).toHaveClass('bg-foreground/[0.12]', 'text-foreground');
+        openMoreMenu();
+        const row = screen.getByTestId(`app-rail-more-item-${appId}`);
+        expect(row).toHaveAttribute('aria-current', 'page');
+        expect(row).toHaveClass('bg-foreground/[0.12]', 'text-foreground');
         expect(screen.queryByTestId(`app-rail-item-${appId}`)).toBeNull();
-        expect(
-          view.container.querySelectorAll('[aria-current="page"]'),
-        ).toHaveLength(0);
 
         view.rerender(<AppRail {...props} pinnedAppIds={[appId]} />);
         const pinned = screen.getByTestId(`app-rail-item-${appId}`);
         expect(pinned).toHaveAttribute('aria-current', 'page');
         expect(pinned).toHaveClass('bg-foreground/[0.12]', 'text-foreground');
+        expect(more).toHaveAttribute('data-active', 'false');
+        expect(more).not.toHaveClass('bg-foreground/[0.12]');
+        expect(row).not.toHaveAttribute('aria-current');
+        expect(row).not.toHaveClass('bg-foreground/[0.12]');
         expect(
           view.container.querySelectorAll('[aria-current="page"]'),
         ).toHaveLength(1);
 
         view.rerender(<AppRail {...props} pinnedAppIds={[]} />);
+        expect(more).toHaveAttribute('data-active', 'true');
+        expect(row).toHaveAttribute('aria-current', 'page');
         expect(screen.queryByTestId(`app-rail-item-${appId}`)).toBeNull();
-        expect(
-          view.container.querySelectorAll('[aria-current="page"]'),
-        ).toHaveLength(0);
       },
     );
 
-    it('recognizes nested organization-scope pinned app pages', () => {
+    it('recognizes nested organization-scope overflow pages', () => {
       render(
-        <AppRail
-          orgSlug="acme"
-          currentPath="/acme/~/automation/runs/run-1"
-          pinnedAppIds={['automation']}
-        />,
+        <AppRail orgSlug="acme" currentPath="/acme/~/automation/runs/run-1" />,
       );
-      expect(screen.getByTestId('app-rail-item-automation')).toHaveAttribute(
-        'aria-current',
-        'page',
+      expect(screen.getByTestId('app-rail-more')).toHaveAttribute(
+        'data-active',
+        'true',
       );
+      openMoreMenu();
+      expect(
+        screen.getByTestId('app-rail-more-item-automation'),
+      ).toHaveAttribute('aria-current', 'page');
     });
 
     it.each([
       '/acme/my-brand/publishing/posts/post-1',
       '/acme/~/settings/brands',
-    ])('leaves every pinned app unselected on %s', (currentPath) => {
+    ])('leaves More unselected on %s', (currentPath) => {
       render(
         <AppRail
           orgSlug="acme"
           brandSlug="my-brand"
           currentPath={currentPath}
-          pinnedAppIds={LAUNCHER_APP_IDS}
         />,
       );
-      for (const appId of [
-        'playground',
-        'automation',
-        'messages',
-        'discovery',
-      ]) {
+      expect(screen.getByTestId('app-rail-more')).toHaveAttribute(
+        'data-active',
+        'false',
+      );
+      expect(screen.getByTestId('app-rail-more')).not.toHaveClass(
+        'bg-foreground/[0.12]',
+      );
+      openMoreMenu();
+      for (const appId of ['studio', 'automation', 'messages', 'discovery']) {
         expect(
-          screen.getByTestId(`app-rail-item-${appId}`),
+          screen.getByTestId(`app-rail-more-item-${appId}`),
         ).not.toHaveAttribute('aria-current');
       }
     });
 
-    it('does not select a pinned app that its kill switch hides', () => {
+    it('does not select More for a hidden current module', () => {
       featureFlags.automation = false;
-      const { container } = render(
-        <AppRail
-          orgSlug="acme"
-          currentPath="/acme/~/automation/runs"
-          pinnedAppIds={['automation']}
-        />,
+      render(<AppRail orgSlug="acme" currentPath="/acme/~/automation/runs" />);
+      expect(screen.getByTestId('app-rail-more')).toHaveAttribute(
+        'data-active',
+        'false',
       );
-      expect(screen.queryByTestId('app-rail-item-automation')).toBeNull();
-      expect(container.querySelectorAll('[aria-current="page"]')).toHaveLength(
-        0,
-      );
+      openMoreMenu();
+      expect(screen.queryByTestId('app-rail-more-item-automation')).toBeNull();
     });
   });
 
   describe('route generation', () => {
     it('links to studio URL with brandSlug when provided', () => {
-      render(
-        <AppRail
-          orgSlug="acme"
-          brandSlug="my-brand"
-          pinnedAppIds={LAUNCHER_APP_IDS}
-        />,
-      );
-      expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+      render(<AppRail orgSlug="acme" brandSlug="my-brand" />);
+      openMoreMenu();
+      expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
         'href',
         '/acme/my-brand/studio/playground',
       );
     });
 
     it('links operate apps workspace, agent, messages, and automation', () => {
-      render(
-        <AppRail
-          orgSlug="acme"
-          brandSlug="my-brand"
-          pinnedAppIds={LAUNCHER_APP_IDS}
-        />,
-      );
+      render(<AppRail orgSlug="acme" brandSlug="my-brand" />);
+      openMoreMenu();
 
       expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
         'href',
@@ -1522,7 +1284,8 @@ describe('AppRail', () => {
     });
 
     it('uses org-scoped operate fallbacks when brandSlug is absent', () => {
-      render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+      render(<AppRail orgSlug="acme" />);
+      openMoreMenu();
 
       expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
         'href',
@@ -1535,20 +1298,20 @@ describe('AppRail', () => {
     });
 
     it('links to org-scoped create fallbacks when brandSlug is absent', () => {
-      render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
-      expect(screen.getByRole('link', { name: 'Playground' })).toHaveAttribute(
+      render(<AppRail orgSlug="acme" />);
+      openMoreMenu();
+      expect(screen.getByRole('link', { name: 'Studio' })).toHaveAttribute(
         'href',
-        '/acme/~/studio/playground',
+        '/acme/~/studio',
       );
     });
 
     it('routes brand apps to org views when brandSlug is absent', () => {
-      render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+      render(<AppRail orgSlug="acme" />);
+      openMoreMenu();
 
       for (const [label, href] of [
-        ['Playground', '/acme/~/studio/playground'],
-        ['Turbo', '/acme/~/studio/turbo'],
-        ['Editor', '/acme/~/studio/editor'],
+        ['Studio', '/acme/~/studio'],
         ['Library', '/acme/~/library/assets'],
         ['Discovery', '/acme/~/discovery/overview'],
         ['Publishing', '/acme/~/publishing/overview'],
@@ -1564,7 +1327,8 @@ describe('AppRail', () => {
     });
 
     it('links to correct route for workspace app', () => {
-      render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+      render(<AppRail orgSlug="acme" />);
+      openMoreMenu();
       expect(screen.getByRole('link', { name: 'Discovery' })).toHaveAttribute(
         'href',
         '/acme/~/discovery/overview',
@@ -1572,13 +1336,8 @@ describe('AppRail', () => {
     });
 
     it('links to brand-scoped workspace when a brand is selected', () => {
-      render(
-        <AppRail
-          orgSlug="acme"
-          brandSlug="my-brand"
-          pinnedAppIds={LAUNCHER_APP_IDS}
-        />,
-      );
+      render(<AppRail orgSlug="acme" brandSlug="my-brand" />);
+      openMoreMenu();
       expect(screen.getByRole('link', { name: 'Discovery' })).toHaveAttribute(
         'href',
         '/acme/my-brand/discovery/overview',
@@ -1604,13 +1363,8 @@ describe('AppRail', () => {
     });
 
     it('links brand-scoped module surfaces to their canonical routes', () => {
-      render(
-        <AppRail
-          orgSlug="acme"
-          brandSlug="my-brand"
-          pinnedAppIds={LAUNCHER_APP_IDS}
-        />,
-      );
+      render(<AppRail orgSlug="acme" brandSlug="my-brand" />);
+      openMoreMenu();
 
       expect(screen.getByRole('link', { name: 'Discovery' })).toHaveAttribute(
         'href',
@@ -1627,7 +1381,8 @@ describe('AppRail', () => {
     });
 
     it('falls brand-only module surfaces back to org-level defaults', () => {
-      render(<AppRail orgSlug="acme" pinnedAppIds={LAUNCHER_APP_IDS} />);
+      render(<AppRail orgSlug="acme" />);
+      openMoreMenu();
 
       expect(screen.getByRole('link', { name: 'Discovery' })).toHaveAttribute(
         'href',
@@ -1639,13 +1394,8 @@ describe('AppRail', () => {
     });
 
     it('links to the brand-scoped Publishing module when a brand is selected', () => {
-      render(
-        <AppRail
-          orgSlug="acme"
-          brandSlug="my-brand"
-          pinnedAppIds={LAUNCHER_APP_IDS}
-        />,
-      );
+      render(<AppRail orgSlug="acme" brandSlug="my-brand" />);
+      openMoreMenu();
       expect(screen.getByRole('link', { name: 'Messages' })).toHaveAttribute(
         'href',
         '/acme/my-brand/messages',
@@ -1657,17 +1407,27 @@ describe('AppRail', () => {
       );
     });
 
-    it('places pinned apps after the core loop and its divider in pin order', () => {
+    it('places pinned apps below More and its divider in pin order', () => {
+      const onTogglePin = vi.fn();
       render(
-        <AppRail orgSlug="acme" pinnedAppIds={['playground', 'messages']} />,
+        <AppRail
+          orgSlug="acme"
+          onTogglePin={onTogglePin}
+          pinnedAppIds={['studio', 'messages']}
+        />,
       );
 
       const analytics = screen.getByRole('link', { name: 'Analytics' });
       const separator = screen.getByTestId('app-rail-pins-separator');
-      const studio = screen.getByRole('link', { name: 'Playground' });
+      const studio = screen.getByRole('link', { name: 'Studio' });
+      const more = screen.getByRole('button', { name: 'More' });
       const messages = screen.getByRole('link', { name: 'Messages' });
       expect(
-        analytics.compareDocumentPosition(separator) &
+        analytics.compareDocumentPosition(more) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        more.compareDocumentPosition(separator) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(
@@ -1678,10 +1438,9 @@ describe('AppRail', () => {
         studio.compareDocumentPosition(messages) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      // Pins are managed from Store cards: the rail renders no pin controls.
-      expect(
-        screen.queryByRole('button', { name: /^(Unpin|Pin) / }),
-      ).not.toBeInTheDocument();
+      openMoreMenu();
+      fireEvent.click(screen.getByRole('button', { name: 'Unpin Studio' }));
+      expect(onTogglePin).toHaveBeenCalledWith('studio');
     });
 
     it('preserves task context search params when switching apps', () => {

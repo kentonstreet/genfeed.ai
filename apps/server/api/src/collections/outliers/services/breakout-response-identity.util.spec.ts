@@ -159,7 +159,6 @@ function harness() {
           state: 'reserved',
           heldReason: null,
           workflowExecutionId: null,
-          publicationActor: null,
           isDeleted: false,
           createdAt: NOW,
           updatedAt: NOW,
@@ -385,7 +384,6 @@ describe('durable breakout response and output identity', () => {
         format,
         state: 'reserved',
         workflowExecutionId: null,
-        publicationActor: null,
       });
     },
   );

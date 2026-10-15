@@ -136,13 +136,7 @@ function appHomeRedirects(
     {
       destination: createBrandAppRoute(':orgSlug', ':brandSlug', homePath),
       permanent: true,
-      // `v1` is the API prefix, never an organization: without the guard this
-      // rule also matches `/v1/<segment>/library` and redirects the API call.
-      source: createBrandAppRoute(
-        ':orgSlug((?!v1(?:/|$))[^/]+)',
-        ':brandSlug',
-        appRoot,
-      ),
+      source: createBrandAppRoute(':orgSlug', ':brandSlug', appRoot),
     },
     {
       destination: createOrganizationAppRoute(':orgSlug', homePath),
@@ -185,6 +179,8 @@ const filterRouteRedirects: AppRedirect[] = [
     ['/settings/models/videos', '/settings/models?type=videos'],
     ['/settings/models/text', '/settings/models?type=text'],
     ['/settings/models/trainings', '/settings/models?type=trainings'],
+    ['/library/recent', '/library/assets?place=recent'],
+    ['/library/starred', '/library/assets?place=starred'],
     ['/library/trash', '/library/assets?place=trash'],
     ['/library/shelf/generating', '/library/assets?shelf=generating'],
     ['/library/shelf/unsorted', '/library/assets?shelf=unsorted'],
@@ -347,6 +343,31 @@ const config = createAppNextConfig({
         '/analytics/trend-turnover',
       ),
     },
+    // Agent CTAs historically emitted bare `/review` (and route-rewrite scoped
+    // it to `/:org/:brand/review`) — that page never existed. Send both dead
+    // shapes to Publishing Review so stored thread links stop 404ing.
+    {
+      destination: APP_ROUTES.PUBLISHING.REVIEW,
+      permanent: true,
+      source: '/review',
+    },
+    {
+      destination: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.PUBLISHING.REVIEW,
+      ),
+      permanent: true,
+      source: createBrandAppRoute(':orgSlug', ':brandSlug', '/review'),
+    },
+    {
+      destination: createOrganizationAppRoute(
+        ':orgSlug',
+        APP_ROUTES.PUBLISHING.REVIEW,
+      ),
+      permanent: true,
+      source: createOrganizationAppRoute(':orgSlug', '/review'),
+    },
     // Brand-scoped /admin/* never existed. Send it to the platform dashboard.
     {
       destination: APP_ROUTES.ADMIN.OVERVIEW.DASHBOARD,
@@ -407,12 +428,31 @@ const config = createAppNextConfig({
         `${APP_ROUTES.SETTINGS.ROOT}/${segment}`,
       ),
     })),
-    // Complete-path homes: bare `/[app]` → a named child. Library's home is
-    // the asset browser, not an overview tile grid. Studio has no root: each
-    // Studio tool is its own app (#5502).
+    {
+      destination: APP_ROUTES.STUDIO.PLAYGROUND,
+      permanent: false,
+      source: APP_ROUTES.STUDIO.ROOT,
+    },
+    {
+      // Studio has no root page — Storyboard is the production landing surface.
+      destination: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.STUDIO.PLAYGROUND,
+      ),
+      permanent: false,
+      source: createBrandAppRoute(
+        ':orgSlug',
+        ':brandSlug',
+        APP_ROUTES.STUDIO.ROOT,
+      ),
+    },
+    // Complete-path homes: bare `/[app]` → a named child. Discovery/Studio
+    // already redirect ROOT to one (discovery / storyboard); Library's home is
+    // the asset browser, not an overview tile grid.
     ...appHomeRedirects(APP_ROUTES.WORKSPACE.ROOT),
     ...appHomeRedirects(APP_ROUTES.AUTOMATION.ROOT),
-    ...appHomeRedirects(APP_ROUTES.LIBRARY.ROOT),
+    ...appHomeRedirects(APP_ROUTES.LIBRARY.ROOT, APP_ROUTES.LIBRARY.ASSETS),
     ...appHomeRedirects(APP_ROUTES.ANALYTICS.ROOT),
     ...appHomeRedirects(APP_ROUTES.PUBLISHING.ROOT),
   ],

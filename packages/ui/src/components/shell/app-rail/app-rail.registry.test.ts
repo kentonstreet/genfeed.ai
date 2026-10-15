@@ -1,56 +1,34 @@
-import { findAnimatedIcon } from '@ui/primitives/animated-icons/animated-icon.registry';
 import { describe, expect, it } from 'vitest';
 import {
   ADMIN_RAIL_APP,
-  ADMIN_RAIL_CATEGORIES,
   APP_RAIL_REGISTRY,
   getActiveAppId,
   getAppRailFlagKeyForPath,
   getAppRailHref,
-  isAppRailItemEnabled,
   isAppRailItemLocked,
 } from './app-rail.registry';
 
 describe('app rail registry', () => {
-  it('gives every rail icon an animated twin, so every one reacts to hover', () => {
-    for (const app of [
-      ...APP_RAIL_REGISTRY,
-      ADMIN_RAIL_APP,
-      ...ADMIN_RAIL_CATEGORIES,
-    ]) {
-      expect(
-        findAnimatedIcon(app.icon),
-        `${app.id} uses an icon with no animated twin`,
-      ).toBeDefined();
-    }
-  });
-
-  it('keeps the core loop and the launcher apps in the contracted order (#5502)', () => {
+  it('keeps the daily loop and More apps in the contracted order', () => {
     expect(APP_RAIL_REGISTRY.map((app) => app.id)).toEqual([
       'workspace',
       'agent',
       'library',
       'publishing',
       'analytics',
-      'playground',
-      'storyboard',
-      'turbo',
-      'motion',
-      'clips',
-      'editor',
+      'studio',
       'automation',
       'messages',
       'discovery',
     ]);
     expect(APP_RAIL_REGISTRY.map((app) => app.group)).toEqual([
       ...Array(5).fill('daily'),
-      ...Array(9).fill('app'),
+      ...Array(4).fill('more'),
     ]);
-    expect(APP_RAIL_REGISTRY.map((app) => app.id)).not.toContain('studio');
     expect(ADMIN_RAIL_APP.group).toBe('admin');
   });
 
-  it('uses the selected brand only for Agent and Studio apps on org-scoped routes (#4671)', () => {
+  it('uses the selected brand only for Agent/Studio on org-scoped routes (#4671)', () => {
     const scope = { orgSlug: 'acme', brandAwareSlug: 'selected' };
     const app = (id: string) => {
       const match = APP_RAIL_REGISTRY.find((candidate) => candidate.id === id);
@@ -58,19 +36,14 @@ describe('app rail registry', () => {
       return match;
     };
     expect(
-      ['agent', 'workspace', 'playground', 'turbo', 'editor'].map((id) =>
+      ['agent', 'workspace', 'studio'].map((id) =>
         getAppRailHref(app(id), scope),
       ),
     ).toEqual([
       '/acme/selected/agent',
       '/acme/~/workspace/overview',
       '/acme/selected/studio/playground',
-      '/acme/selected/studio/turbo',
-      '/acme/selected/studio/editor',
     ]);
-    expect(getAppRailHref(app('clips'), { orgSlug: 'acme' })).toBe(
-      '/acme/~/studio/clips',
-    );
     expect(
       getAppRailHref(app('agent'), { ...scope, brandSlug: 'routed' }),
     ).toBe('/acme/routed/agent');
@@ -92,13 +65,7 @@ describe('app rail registry', () => {
 
   it('identifies nested product routes without inventing a source app for settings', () => {
     expect(getActiveAppId(APP_RAIL_REGISTRY, '/acme/brand/studio/clips')).toBe(
-      'clips',
-    );
-    expect(
-      getActiveAppId(APP_RAIL_REGISTRY, '/acme/brand/studio/turbo/new'),
-    ).toBe('turbo');
-    expect(getActiveAppId(APP_RAIL_REGISTRY, '/acme/brand/studio')).toBe(
-      undefined,
+      'studio',
     );
     expect(
       getActiveAppId(APP_RAIL_REGISTRY, '/acme/~/analytics/overview'),
@@ -123,68 +90,11 @@ describe('app rail registry', () => {
     expect(getAppRailFlagKeyForPath('/admin/users')).toBeUndefined();
   });
 
-  it('gates each Studio tool with its own surface switch under the studio module', () => {
-    expect(
-      Object.fromEntries(
-        APP_RAIL_REGISTRY.filter(
-          (app) => app.visibilityFlagKey === 'studio',
-        ).map((app) => [app.id, app.surfaceFlagKey ?? null]),
-      ),
-    ).toEqual({
-      clips: 'studio_clips',
-      editor: 'studio_editor',
-      motion: 'studio_motion',
-      playground: null,
-      storyboard: 'studio_storyboard',
-      turbo: 'studio_turbo',
-    });
-  });
-
-  it('turns an app off when either platform switch is off', () => {
-    const clips = APP_RAIL_REGISTRY.find((app) => app.id === 'clips');
-    if (!clips) throw new Error('missing clips rail app');
-    expect(
-      isAppRailItemEnabled(clips, { studio: true, studio_clips: true }, true),
-    ).toBe(true);
-    expect(
-      isAppRailItemEnabled(clips, { studio: true, studio_clips: false }, true),
-    ).toBe(false);
-    expect(
-      isAppRailItemEnabled(clips, { studio: false, studio_clips: true }, true),
-    ).toBe(false);
-    expect(isAppRailItemEnabled(clips, {}, true)).toBe(false);
-    expect(isAppRailItemEnabled(clips, {}, false)).toBe(true);
-  });
-
   it('gates every app except Workspace with a module flag', () => {
     expect(
       APP_RAIL_REGISTRY.filter((app) => !app.visibilityFlagKey).map(
         (app) => app.id,
       ),
     ).toEqual(['workspace']);
-  });
-
-  it('maps admin paths to one category icon each', () => {
-    expect(
-      getActiveAppId(ADMIN_RAIL_CATEGORIES, '/admin/overview/dashboard'),
-    ).toBe('admin-overview');
-    expect(getActiveAppId(ADMIN_RAIL_CATEGORIES, '/admin/content/posts')).toBe(
-      'admin-content',
-    );
-    expect(getActiveAppId(ADMIN_RAIL_CATEGORIES, '/admin/library/voices')).toBe(
-      'admin-automation',
-    );
-    expect(
-      getActiveAppId(ADMIN_RAIL_CATEGORIES, '/admin/configuration/tags'),
-    ).toBe('admin-configuration');
-    expect(getActiveAppId(ADMIN_RAIL_CATEGORIES, '/admin/flags')).toBe(
-      'admin-administration',
-    );
-    expect(
-      getActiveAppId(
-        ADMIN_RAIL_CATEGORIES,
-        '/admin/overview/analytics/organizations',
-      ),
-    ).toBe('admin-administration');
   });
 });

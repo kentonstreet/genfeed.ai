@@ -81,6 +81,7 @@ export function useSocketManager(
           return;
         }
 
+        // Use singleton socket manager with token
         if (isMounted) {
           socketManagerRef.current = SocketManager.getInstance({
             ...latestOptionsRef.current,

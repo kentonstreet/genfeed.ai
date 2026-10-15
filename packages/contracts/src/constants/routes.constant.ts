@@ -162,6 +162,7 @@ export const APP_ROUTES = {
      * (`?folder=`); this route is all three unset.
      */
     ASSETS: '/library/assets',
+    CHARACTERS: '/library/elements/characters',
     /**
      * Type-seeded entry points into the same browser. They are shareable deep
      * links (see `LIBRARY_ROUTE_BY_INGREDIENT_CATEGORY`), not navigation — type
@@ -172,15 +173,8 @@ export const APP_ROUTES = {
     GIFS: '/library/assets?categories=GIF',
     IMAGES: '/library/assets?categories=IMAGE&categories=IMAGE_EDIT',
     MUSIC: '/library/assets?categories=MUSIC&categories=AUDIO',
-    /** #5502 Library home: what needs attention, linking into Assets filters. */
-    OVERVIEW: '/library/overview',
     /** Assets touched most recently, newest first. */
     RECENT: '/library/assets?place=recent',
-    /**
-     * #5502 reusable identities (characters today; locations, styles and
-     * products via #6012) that generations reference by name.
-     */
-    REFERENCES: '/library/references',
     ROOT: '/library',
     /**
      * Generation-state axis. Append a `LibraryShelf` value:
@@ -199,8 +193,6 @@ export const APP_ROUTES = {
      */
     OUTREACH: '/messages/outreach',
     OUTREACH_NEW: '/messages/outreach/new',
-    /** #5502 Messages overview: waiting conversations per kind. */
-    OVERVIEW: '/messages/overview',
     /**
      * Author replies on your own posts (reply-bot surface).
      */
@@ -224,6 +216,7 @@ export const APP_ROUTES = {
     FIRST_SYSTEM: '/onboarding/first-system',
     POSITIONING: '/onboarding/positioning',
     POST_SIGNUP: '/onboarding/post-signup',
+    PROACTIVE: '/onboarding/proactive',
     PROVIDERS: '/onboarding/providers',
     ROOT: '/onboarding',
     SUCCESS: '/onboarding/success',
@@ -273,11 +266,7 @@ export const APP_ROUTES = {
      * Publishing nav item.
      */
     REMIX: '/publishing/remix',
-    /**
-     * #5502 approvals are a Posts view, not a Publishing destination. Build
-     * batch or filter deep links with `createPublishingApprovalsRoute`.
-     */
-    REVIEW: '/publishing/posts?view=approvals',
+    REVIEW: '/publishing/review',
     ROOT: '/publishing',
   },
   SETTINGS: {
@@ -300,10 +289,6 @@ export const APP_ROUTES = {
     ABOUT: '/settings/about',
     HELP: '/settings/help',
     MEMBERS: '/settings/members',
-    /** Which tools the organization can use; the Store links turned-off apps here. */
-    MODULES: '/settings/modules',
-    /** Organization-wide preferences (avatar, voice, models, publishing caps). */
-    PREFERENCES: '/settings/preferences',
     /** Personal email and future in-app notification preferences. */
     NOTIFICATIONS: '/settings/notifications',
     /** Creation heatmap, streaks, and setup checklist. */
@@ -349,14 +334,10 @@ export const APP_ROUTES = {
    * generation lives in the Agent (`AGENT.NEW`) — the standalone
    * image/video/avatar/music tabs were retired.
    */
-  /** #5502 native app catalog; installation is per organization membership. */
-  STORE: {
-    ROOT: '/store',
-  },
   STUDIO: {
     MOTION: '/studio/motion',
-    TURBO: '/studio/turbo',
-    TURBO_NEW: '/studio/turbo/new',
+    BATCH: '/studio/batch',
+    BATCH_NEW: '/studio/batch/new',
     CLIPS: '/studio/clips',
     CLIPS_NEW: '/studio/clips/new',
     EDITOR: '/studio/editor',
@@ -612,9 +593,6 @@ export function isUserFacingAppPathname(pathname: string): boolean {
 /** Query param that selects one conversation in the Messages inbox. */
 export const MESSAGES_CONVERSATION_QUERY_PARAM = 'socialConversation';
 
-/** #5502 query param that seeds the Messages inbox type filter (`dm`, `reply`, `comment`). */
-export const MESSAGES_TYPE_QUERY_PARAM = 'type';
-
 /** Brand-relative path that opens one Messages conversation. */
 export function createMessagesConversationRoute(
   conversationId: string,
@@ -650,7 +628,7 @@ const BRAND_ONLY_SETTINGS_PREFIXES = [
   '/settings/agent/context',
   '/settings/brand-kit/content-rules',
   '/settings/brand-kit',
-  '/library/references',
+  '/library/elements/characters',
 ] as const;
 
 function workspaceSurfacePath(pathname: string): string {
