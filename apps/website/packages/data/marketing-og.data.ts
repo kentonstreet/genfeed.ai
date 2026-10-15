@@ -1,143 +1,15 @@
-import { AGENT_CLIENT_CHANNEL_SLUGS } from '@data/agent-client-channels.data';
-import { AGENT_CLIENT_SLUGS, getAgentClient } from '@data/agent-clients.data';
-import { competitors } from '@data/competitors.data';
-import { EDITORIAL_OG_ARTWORKS } from '@data/editorial-og.data';
-import { getIntegrationBySlug } from '@data/integrations.data';
 import { cdnAsset } from '@helpers/media/cdn/cdn.helper';
-import { metadata } from '@helpers/media/metadata/metadata.helper';
 
 export const MARKETING_OG_SIZE = { height: 630, width: 1200 };
 
-/**
- * Social growth cards reuse the landing hero (one source image per platform;
- * the hero ships it as WebP, Satori needs this JPEG twin). The artwork sits on
- * the right behind a fade, so the headline and Genfeed mark own the left.
- */
-function socialGrowthCard(
-  slug: string,
-  headline: readonly string[],
-): MarketingOgDefinition {
-  return {
-    artwork: cdnAsset(`/assets/site/pages/${slug}.jpg`),
-    artworkPlacement: 'right',
-    headline,
-    headlineFontSize:
-      Math.max(...headline.map((line) => line.length)) > 7 ? 88 : 104,
-    headlineTop: 200,
-    headlineWidth: 470,
-  };
-}
-
 // Artwork carries branding only. Copy edits are rendered by the OG routes.
-const SOCIAL_OG_CARDS = {
+export const MARKETING_OG_CARDS = {
   default: {
-    artwork: null,
-    headline: ['Create', 'Publish', 'Grow'],
-    headlineFontSize: 104,
-    headlineTop: 134,
-    headlineWidth: 480,
+    artwork: cdnAsset('/assets/cards/marketing/founder-reach-20260930.jpg'),
+    headline: ['You build.', 'We distribute.'],
   },
-  x: socialGrowthCard('x', ['Grow on', 'X']),
-  linkedin: socialGrowthCard('linkedin', ['Grow on', 'LinkedIn']),
-  instagram: socialGrowthCard('instagram', ['Grow on', 'Instagram']),
-  tiktok: socialGrowthCard('tiktok', ['Grow on', 'TikTok']),
-  youtube: socialGrowthCard('youtube', ['Grow on', 'YouTube']),
-  threads: socialGrowthCard('threads', ['Grow on', 'Threads']),
-  facebook: socialGrowthCard('facebook', ['Grow on', 'Facebook']),
-  pinterest: socialGrowthCard('pinterest', ['Grow on', 'Pinterest']),
-} as const satisfies Record<string, MarketingOgDefinition>;
-
-export interface MarketingOgDefinition {
-  artwork: string | null;
-  /** `full` (default) covers the card; `right` fades in behind the headline. */
-  artworkPlacement?: 'full' | 'right';
-  headline: readonly string[];
-  headlineFontSize: number;
-  headlineTop: number;
-  headlineWidth: number;
-}
-
-function editorialCard(
-  id: string,
-  headline: readonly string[],
-): MarketingOgDefinition {
-  const longest = Math.max(...headline.map((line) => line.length));
-  return {
-    artwork: cdnAsset(`/assets/og/${id}.jpg`),
-    headline,
-    headlineFontSize: longest > 16 ? 74 : longest > 13 ? 84 : 96,
-    headlineTop: 44,
-    headlineWidth: 550,
-  };
-}
-
-export const MARKETING_OG_CARDS: Record<string, MarketingOgDefinition> = {
-  ...SOCIAL_OG_CARDS,
-  'ai-model-selector': {
-    ...SOCIAL_OG_CARDS.default,
-    headline: ['Choose your', 'AI model'],
+  x: {
+    artwork: cdnAsset('/assets/cards/marketing/founder-reach-20260930.jpg'),
+    headline: ['Grow your', 'X audience'],
   },
-  ...Object.fromEntries(
-    Object.entries(EDITORIAL_OG_ARTWORKS).map(([id, card]) => [
-      id,
-      editorialCard(id, card.headline),
-    ]),
-  ),
-};
-
-export const MARKETING_OG_PATHS: Record<string, string> = Object.fromEntries(
-  Object.entries(EDITORIAL_OG_ARTWORKS)
-    .filter(([id]) => id !== 'default')
-    .map(([id, card]) => [card.route, id]),
-);
-
-MARKETING_OG_PATHS['/tools/ai-model-selector'] = 'ai-model-selector';
-
-for (const id of Object.keys(SOCIAL_OG_CARDS).filter(
-  (id) => id !== 'default',
-)) {
-  MARKETING_OG_PATHS[`/${id}`] = id;
-  MARKETING_OG_PATHS[`/integrations/${id === 'x' ? 'x-twitter' : id}`] = id;
-}
-
-for (const slug of AGENT_CLIENT_SLUGS) {
-  const client = getAgentClient(slug);
-  for (const channel of AGENT_CLIENT_CHANNEL_SLUGS) {
-    const integration = getIntegrationBySlug(channel);
-    if (!integration) continue;
-    const id = `${slug}--${channel}`;
-    const headline = [
-      client.name === 'Meta Muse' ? 'Muse' : client.name,
-      `on ${integration.name}`,
-    ];
-    MARKETING_OG_CARDS[id] = {
-      ...editorialCard(slug, headline),
-      headlineFontSize:
-        Math.max(...headline.map((line) => line.length)) > 11 ? 74 : 84,
-    };
-    MARKETING_OG_PATHS[`/${slug}/${channel}`] = id;
-  }
-}
-
-for (const competitor of competitors) {
-  const id = `vs--${competitor.slug}`;
-  MARKETING_OG_CARDS[id] = editorialCard('vs', ['Genfeed vs', competitor.name]);
-  MARKETING_OG_PATHS[`/vs/${competitor.slug}`] = id;
-}
-
-export type MarketingOgCard = keyof typeof MARKETING_OG_CARDS;
-
-export function isMarketingOgCard(value: string): value is MarketingOgCard {
-  return Object.hasOwn(MARKETING_OG_CARDS, value);
-}
-
-export function getMarketingOgImage(path: string, alt: string) {
-  const normalized = path.length > 1 ? path.replace(/\/$/, '') : path;
-  const id = MARKETING_OG_PATHS[normalized] ?? 'default';
-  return {
-    alt,
-    ...MARKETING_OG_SIZE,
-    type: 'image/png',
-    url: id === 'default' ? metadata.cards.default : `${metadata.url}/og/${id}`,
-  };
-}
+} as const;
