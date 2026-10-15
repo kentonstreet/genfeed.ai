@@ -2,7 +2,6 @@ import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticat
 import { CreateLiveSessionDto } from '@api/collections/videos/dto/create-live-session.dto';
 import { LiveSessionCreditsService } from '@api/collections/videos/services/live-session-credits.service';
 import type { RequestWithContext as ExpressRequest } from '@api/common/middleware/request-context.middleware';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import {
   Credits,
   DeferCreditsUntilModelResolution,
@@ -16,6 +15,7 @@ import {
   ValidateModel,
 } from '@api/helpers/guards/models/models.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { serializeSingle } from '@api/helpers/utils/response/response.util';
@@ -49,7 +49,6 @@ export class VideosLiveSessionsController {
   ) {}
 
   @Post('live-sessions')
-  @OrganizationModule('playground')
   @SetMetadata('roles', [
     'superadmin',
     MemberRole.OWNER,
@@ -62,7 +61,7 @@ export class VideosLiveSessionsController {
   })
   @DeferCreditsUntilModelResolution()
   @ValidateModel({ category: ModelCategory.VIDEO })
-  @UseGuards(CreditsGuard, ModelsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard, ModelsGuard)
   @UseInterceptors(CreditsInterceptor)
   @RateLimit({ limit: 30, scope: 'organization', windowMs: 60 * 1000 })
   @LogMethod({ logEnd: false, logError: true, logStart: true })

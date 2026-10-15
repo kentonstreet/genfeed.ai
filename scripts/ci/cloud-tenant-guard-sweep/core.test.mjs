@@ -63,7 +63,7 @@ test('fake env covers every CLOUD-required schema key, including API overrides',
   const keys = requiredEnvKeys(sources);
   // Outside conditionalRequired(): services/microservices/microservices.service.ts,
   // auth/better-auth/{better-auth.config,better-auth.module}.ts in the API,
-  // packages/libs/prisma/prisma.service.ts, services/turbo-run/turbo-run-review-lock.ts,
+  // packages/libs/prisma/prisma.service.ts, services/batch-generation/batch-review-lock.ts,
   // and packages/config/src/schemas/base.schema.ts.
   keys.push(
     'GENFEEDAI_MICROSERVICES_FILES_URL',
@@ -1648,21 +1648,4 @@ test('v19 partitions 609 ordinary completions and four exact machine denials wit
     record.route === '/v1/example-0' ? { ...record, status: 401 } : record,
   );
   assert.ok(coverageErrors(broken, 613, 20, 20, routes).length);
-});
-
-test('provenance failure labels remain fixed and independent of stdout copies', async () => {
-  const { buildDiagnosticSummary } = await import('./core.mjs');
-  const summary = buildDiagnosticSummary({
-    sourceSha: 'a'.repeat(40),
-    failures: [
-      'Tenant guard provenance unavailable',
-      'Tenant guard failures observed',
-    ],
-  });
-  assert.deepEqual(summary.failureEvidence.groups.map((g) => g.label).sort(), [
-    'tenant-guard-failures-observed',
-    'tenant-guard-provenance-unavailable',
-  ]);
-  assert.equal(summary.tenantEvidence.logHits, 0);
-  assert.equal(summary.tenantEvidence.responseHits, 0);
 });

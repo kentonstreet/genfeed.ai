@@ -63,9 +63,6 @@ export class BrandedGenerationReceiptsController {
     return {
       organizationId: this.id(user.organizationId),
       actorId: this.id(user.userId ?? user.id),
-      isApiKey: user.isApiKey,
-      apiKeyId: user.apiKeyId,
-      scopes: user.scopes,
       brandId: this.id(brandId),
     };
   }
@@ -120,7 +117,6 @@ export class BrandedGenerationReceiptsController {
           : 'receipt_snapshot',
     });
   }
-  @TenantReadPolicy('owner')
   @Get(':receiptId')
   @Header('Cache-Control', 'private,no-store')
   @Header('Vary', 'Cookie,Authorization')
@@ -167,7 +163,6 @@ export class BrandedGenerationReceiptsController {
       },
     );
   }
-  @TenantReadPolicy('owner')
   @Get(':receiptId/revisions/:revision')
   @Header('Cache-Control', 'private,no-store')
   @Header('Vary', 'Cookie,Authorization')
@@ -193,7 +188,6 @@ export class BrandedGenerationReceiptsController {
       page.items[0],
     );
   }
-  @TenantReadPolicy('owner')
   @Get(':receiptId/prompts/:stage')
   @Header('Cache-Control', 'private,no-store')
   @Header('Vary', 'Cookie,Authorization')

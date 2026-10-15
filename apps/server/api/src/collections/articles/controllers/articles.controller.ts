@@ -151,6 +151,7 @@ export class ArticlesController extends BaseCRUDController<
 
     const article = results.docs[0];
 
+    // Check organization access
     if (
       article.organizationId !== user.organizationId.toString() &&
       !isSuperAdmin

@@ -72,6 +72,7 @@ export class PresetsController extends ScopedCRUDController<
    */
   public buildFindAllQuery(user: User, query: PresetsQueryDto) {
     const readScope = resolveTenantReadScope(user);
+    // Use PresetFilterUtil to build base match stage
     const matchStage = PresetFilterUtil.buildBaseMatch(
       {
         organizationId: readScope.organizationId,

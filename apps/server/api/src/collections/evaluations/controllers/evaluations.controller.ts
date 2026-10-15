@@ -107,6 +107,8 @@ export class EvaluationsController extends BaseCRUDController<
     };
   }
 
+  // ============ DEDICATED ENDPOINTS ============
+
   /**
    * Evaluate a post/thread
    * POST /evaluations/posts/:id
@@ -206,6 +208,8 @@ export class EvaluationsController extends BaseCRUDController<
 
     return serializeSingle(request, EvaluationSerializer, evaluation);
   }
+
+  // ============ OTHER ENDPOINTS ============
 
   /**
    * Evaluate external content from URL

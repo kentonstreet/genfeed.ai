@@ -26,7 +26,6 @@ import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { TenantContextInterceptor } from '@api/helpers/interceptors/tenant-context/tenant-context.interceptor';
 import { BrandedGenerationReceiptAccessService } from '@api/services/branded-generation-receipts/branded-generation-receipt-access.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
-import { brandAccessFixture } from '@api/shared/testing/brand-access.fixture';
 import { MemberRole } from '@genfeedai/contracts';
 import type { ImportedSourceSnapshotInput } from '@genfeedai/contracts/api-types/contracts/imported-source.contract';
 import type { JsonApiCollectionResponse } from '@genfeedai/contracts/interfaces';
@@ -290,11 +289,7 @@ describe('account selected data and original authorization', () => {
       organizationId: originalOrg,
     } as BrandDocument);
     await selected(BrandsController.prototype.findOne, () =>
-      verifyBrandAccess(
-        { findOne, brandAccessService: brandAccessFixture() },
-        user.brandId,
-        user,
-      ),
+      verifyBrandAccess({ findOne }, user.brandId, user),
     );
     expect(findOne).toHaveBeenCalledWith({
       id: user.brandId,
@@ -575,9 +570,7 @@ describe('ordinary account owner and mutation behavior', () => {
       brand: { findFirst: vi.fn(async () => ({ id: user.brandId })) },
       member: { findFirst: member },
     };
-    const access = new BrandedGenerationReceiptAccessService(
-      brandAccessFixture(),
-    );
+    const access = new BrandedGenerationReceiptAccessService();
     const list = vi.fn(
       async (actor: {
         organizationId: string;

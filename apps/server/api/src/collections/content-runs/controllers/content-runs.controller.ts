@@ -18,13 +18,13 @@ import { BrandRemixSceneService } from '@api/collections/content-runs/services/b
 import { ContentRunRecommendationsService } from '@api/collections/content-runs/services/content-run-recommendations.service';
 import { ContentRunsService } from '@api/collections/content-runs/services/content-runs.service';
 import type { RequestWithContext as Request } from '@api/common/middleware/request-context.middleware';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import {
   Credits,
   DeferCreditsUntilModelResolution,
 } from '@api/helpers/decorators/credits/credits.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
@@ -52,7 +52,6 @@ import {
 import { ApiQuery } from '@nestjs/swagger';
 
 @Controller()
-@OrganizationModule('playground')
 export class ContentRunsController {
   constructor(
     private readonly contentRunsService: ContentRunsService,
@@ -80,6 +79,7 @@ export class ContentRunsController {
     );
   }
   @Post('content-runs/:id/remix/scenes/quote')
+  @UseGuards(SubscriptionGuard)
   async quoteScenes(
     @Req() req: Request,
     @Param('id') id: string,
@@ -93,7 +93,7 @@ export class ContentRunsController {
     );
   }
   @Post('content-runs/:id/remix/scenes/execute')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @DeferCreditsUntilModelResolution()
   async executeScenes(
     @Req() req: Request,
@@ -113,7 +113,6 @@ export class ContentRunsController {
       ),
     );
   }
-  @OrganizationModule('playground', 'cancel')
   @Post('content-runs/:id/remix/scenes/cancel')
   async cancelScenes(
     @Req() req: Request,
@@ -128,7 +127,7 @@ export class ContentRunsController {
     );
   }
   @Post('content-runs/:id/remix/scenes/resume')
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @DeferCreditsUntilModelResolution()
   async resumeScenes(
     @Req() req: Request,
@@ -267,7 +266,7 @@ export class ContentRunsController {
     source: ActivitySource.SCRIPT,
   })
   @DeferCreditsUntilModelResolution()
-  @UseGuards(CreditsGuard)
+  @UseGuards(SubscriptionGuard, CreditsGuard)
   @UseInterceptors(CreditsInterceptor)
   async startBrandRemixRun(
     @Req() req: Request,
@@ -301,7 +300,6 @@ export class ContentRunsController {
     return serializeSingle(req, ContentRunSerializer, data);
   }
 
-  @OrganizationModule('publishing')
   @Post('content-runs/:id/remix/paid-draft')
   async preparePausedMetaCampaignDraft(
     @Req() req: Request,

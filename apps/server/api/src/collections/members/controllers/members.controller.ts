@@ -1,8 +1,8 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { BrandAccessService } from '@api/authorization/brand-access/brand-access.service';
 import { InvitationsQueryDto } from '@api/collections/members/dto/invitations-query.dto';
 import { InvitationService } from '@api/collections/members/services/invitation.service';
 import { MembersService } from '@api/collections/members/services/members.service';
+import { Cache } from '@api/helpers/decorators/cache/cache.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { RolesDecorator } from '@api/helpers/decorators/roles/roles.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -53,7 +53,6 @@ export class MembersController {
     private readonly membersService: MembersService,
     private readonly invitationService: InvitationService,
     readonly _loggerService: LoggerService,
-    private readonly brandAccessService: BrandAccessService,
   ) {}
 
   /**
@@ -63,6 +62,14 @@ export class MembersController {
    * across every org they belong to, with no names).
    */
   @Get()
+  @Cache({
+    keyGenerator: (req) => {
+      const tenant = CollectionFilterUtil.resolveListCacheScope(req);
+      return `members:list:org:${tenant.organizationId || 'global'}:sessionOrg:${req.user?.organizationId ?? 'global'}:brand:${req.user?.brandId ?? 'global'}:user:${req.user?.userId ?? req.user?.id ?? 'anonymous'}:query:${JSON.stringify(req.query)}`;
+    },
+    tags: ['members'],
+    ttl: 120,
+  })
   @LogMethod({ logEnd: false, logError: true, logStart: true })
   async findAll(
     @Query() query: BaseQueryDto,
@@ -90,10 +97,7 @@ export class MembersController {
         include: {
           brands: {
             select: { id: true, label: true, slug: true },
-            where: await this.brandAccessService.predicate({
-              ...user,
-              organizationId,
-            }),
+            where: { isDeleted: false },
           },
           role: true,
           // Colleagues see identity only — never another member's settings,
@@ -116,6 +120,15 @@ export class MembersController {
     );
     return serializeCollection(request, MemberSerializer, data);
   }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Invitation endpoints
+  //
+  // These MUST stay declared above `@Get(':memberId')`. Nest matches routes in
+  // declaration order, so a wildcard param segment declared first swallows every
+  // static sibling path (`/members/invitations` would resolve to findOne with
+  // memberId='invitations').
+  // ────────────────────────────────────────────────────────────────────────────
 
   /**
    * GET /members/invitations
@@ -213,6 +226,10 @@ export class MembersController {
 
     return serializeSingle(request, MemberInvitationSerializer, newInvitation);
   }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Wildcard param routes — keep last so static sibling paths win.
+  // ────────────────────────────────────────────────────────────────────────────
 
   @TenantReadPolicy('selected')
   @Get(':memberId')

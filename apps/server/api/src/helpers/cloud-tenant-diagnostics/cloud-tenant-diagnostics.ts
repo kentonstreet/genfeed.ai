@@ -2,8 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export interface CloudTenantObserver {
   protocol: 1;
-  bindRequest(request: IncomingMessage, next: () => void): () => void;
-  tenantFailure(model: string, operation: string, reason: string): void;
   ingress(request: IncomingMessage, response: ServerResponse): void;
   pipelineEnter(request: IncomingMessage): number | undefined;
   pipelineNext(request: IncomingMessage, entry: number): void;
@@ -16,8 +14,6 @@ export const CLOUD_TENANT_OBSERVER = Symbol.for(
 );
 const methods = [
   'ingress',
-  'bindRequest',
-  'tenantFailure',
   'pipelineEnter',
   'pipelineNext',
   'pipelineError',

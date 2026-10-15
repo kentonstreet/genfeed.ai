@@ -4,10 +4,9 @@ import type { BrandsService } from '@api/collections/brands/services/brands.serv
 import { NotFoundException } from '@api/exceptions/not-found.exception';
 import type { ITenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.types';
 import { scopedWhere } from '@api/tenancy/scoped-where';
-import { isCloudDeployment } from '@genfeedai/config';
 import { BRAND_HANDLE_TAKEN_MESSAGE } from '@genfeedai/contracts/constants';
 import { crossOrgUnsafe } from '@libs/prisma/tenant-context';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ConflictException } from '@nestjs/common';
 
 /**
  * Resolve a brand inside the caller's session organization, or 404.
@@ -19,7 +18,7 @@ import { ConflictException, ForbiddenException } from '@nestjs/common';
  * fails closed instead of issuing an unscoped read.
  */
 export function verifyBrandAccess(
-  brandsService: Pick<BrandsService, 'findOne' | 'brandAccessService'>,
+  brandsService: Pick<BrandsService, 'findOne'>,
   brandId: string,
   user: User,
   readScope?: ITenantReadScope,
@@ -28,14 +27,14 @@ export function verifyBrandAccess(
     user,
     brandId,
     (organizationId) =>
-      findAuthorizedBrand(brandsService, user, organizationId, brandId),
+      brandsService.findOne(scopedWhere(organizationId, { id: brandId })),
     readScope,
   );
 }
 
 /** {@link verifyBrandAccess} by handle, for `GET /brands/slug`. */
 export function verifyBrandSlugAccess(
-  brandsService: Pick<BrandsService, 'findOneBySlug' | 'brandAccessService'>,
+  brandsService: Pick<BrandsService, 'findOneBySlug'>,
   slug: string,
   user: User,
   readScope?: ITenantReadScope,
@@ -44,7 +43,7 @@ export function verifyBrandSlugAccess(
     user,
     slug,
     (organizationId) =>
-      findAuthorizedSlug(brandsService, user, organizationId, slug),
+      brandsService.findOneBySlug(scopedWhere(organizationId, { slug })),
     readScope,
   );
 }
@@ -73,10 +72,7 @@ async function findSessionBrand(
  * organizations, then checks the handle.
  */
 export async function assertBrandHandleAvailable(
-  brandsService: Pick<
-    BrandsService,
-    'findOne' | 'isSlugAvailable' | 'brandAccessService'
-  >,
+  brandsService: Pick<BrandsService, 'findOne' | 'isSlugAvailable'>,
   params: {
     brandId: string;
     isSuperAdmin: boolean;
@@ -123,45 +119,4 @@ export function findBrandToRelocate(
   return crossOrgUnsafe(
     async () => await brandsService.findOne({ id: brandId }),
   );
-}
-
-async function brandPredicate(
-  service: Pick<BrandsService, 'brandAccessService'>,
-  user: User,
-  organizationId: string,
-) {
-  // The tenant-read policy has already authorized cross-tenant platform reads.
-  if (!isCloudDeployment() || organizationId !== user.organizationId)
-    return scopedWhere(organizationId, {});
-  try {
-    return await service.brandAccessService.predicate(user);
-  } catch (error) {
-    if (error instanceof ForbiddenException)
-      return { organizationId, isDeleted: false, id: { in: [] } };
-    throw error;
-  }
-}
-async function findAuthorizedBrand(
-  service: Pick<BrandsService, 'findOne' | 'brandAccessService'>,
-  user: User,
-  organizationId: string,
-  id: string,
-) {
-  if (!isCloudDeployment())
-    return service.findOne(scopedWhere(organizationId, { id }));
-  return service.findOne({
-    AND: [await brandPredicate(service, user, organizationId), { id }],
-  });
-}
-async function findAuthorizedSlug(
-  service: Pick<BrandsService, 'findOneBySlug' | 'brandAccessService'>,
-  user: User,
-  organizationId: string,
-  slug: string,
-) {
-  if (!isCloudDeployment())
-    return service.findOneBySlug(scopedWhere(organizationId, { slug }));
-  return service.findOneBySlug({
-    AND: [await brandPredicate(service, user, organizationId), { slug }],
-  });
 }

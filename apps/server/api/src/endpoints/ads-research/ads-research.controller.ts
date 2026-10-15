@@ -1,5 +1,4 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { AdsDiscoveryService } from '@api/endpoints/ads-research/ads-discovery.service';
 import { AdsResearchService } from '@api/endpoints/ads-research/ads-research.service';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
@@ -40,7 +39,6 @@ import {
 
 @AutoSwagger()
 @FeatureFlag('discovery')
-@OrganizationModule('discovery')
 @Controller('ads/research')
 @UseGuards(RolesGuard)
 export class AdsResearchController {
@@ -128,7 +126,6 @@ export class AdsResearchController {
     });
   }
 
-  @TenantReadPolicy('owner')
   @Get(':source/:id')
   async getAdDetail(
     @CurrentUser() user: User,
@@ -174,7 +171,6 @@ export class AdsResearchController {
     const brandId = this.resolveAuthorizedBrandId(user, body.brandId);
     return this.adsResearchService.generateAdPack(user.organizationId, {
       ...body,
-      userId: user.userId ?? user.id,
       brandId,
     });
   }

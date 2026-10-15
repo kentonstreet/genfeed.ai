@@ -7,12 +7,7 @@ import {
   verifyBrandAccess,
   verifyBrandSlugAccess,
 } from '@api/collections/brands/controllers/brand-access.helpers';
-import {
-  recordBrandRelocation,
-  toRelocationActor,
-} from '@api/collections/brands/controllers/brand-relocation.helpers';
 import { decorateBrandResponse } from '@api/collections/brands/controllers/brand-response.helpers';
-import { BrandFleetAccess } from '@api/collections/brands/decorators/brand-fleet-access.decorator';
 import { CreateBrandDto } from '@api/collections/brands/dto/create-brand.dto';
 import { UpdateBrandDto } from '@api/collections/brands/dto/update-brand.dto';
 import { type BrandDocument } from '@api/collections/brands/schemas/brand.schema';
@@ -26,25 +21,23 @@ import { MusicsService } from '@api/collections/musics/services/musics.service';
 import { AnalyticsAggregationService } from '@api/collections/posts/services/analytics-aggregation.service';
 import { PostsService } from '@api/collections/posts/services/posts.service';
 import { VideosService } from '@api/collections/videos/services/videos.service';
+import { Cache } from '@api/helpers/decorators/cache/cache.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { BaseQueryDto } from '@api/helpers/dto/base-query.dto';
+import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
 import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import { getIsSuperAdmin } from '@api/helpers/utils/auth/auth.util';
 import { CollectionFilterUtil } from '@api/helpers/utils/collection-filter/collection-filter.util';
-import { customLabels } from '@api/helpers/utils/pagination.util';
-import { QueryDefaultsUtil } from '@api/helpers/utils/query-defaults/query-defaults.util';
-import {
-  serializeCollection,
-  serializeSingle,
-} from '@api/helpers/utils/response/response.util';
+import { serializeSingle } from '@api/helpers/utils/response/response.util';
 import { handleQuerySort } from '@api/helpers/utils/sort/sort.util';
 import { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
 import { BaseCRUDController } from '@api/shared/controllers/base-crud/base-crud.controller';
 import { resolveScopeId } from '@api/shared/controllers/base-crud/base-crud-scope.util';
 import { BaseService } from '@api/shared/services/base/base.service';
+import { ActivityKey, ActivitySource } from '@genfeedai/contracts';
 import type {
   JsonApiCollectionResponse,
   JsonApiSingleResponse,
@@ -65,12 +58,13 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
 
 @AutoSwagger()
 @Controller('brands')
-@BrandFleetAccess()
+@UseGuards(RolesGuard)
 export class BrandsController extends BaseCRUDController<
   BrandDocument,
   CreateBrandDto,
@@ -267,24 +261,24 @@ export class BrandsController extends BaseCRUDController<
       return super.patch(request, user, id, fields as UpdateBrandDto);
     }
 
-    // Spans both tenants; the service's assertCanRelocate authorizes it
-    // (superadmin, or owner/admin of both orgs; an API key needs admin scope).
+    // A relocation spans the source and destination tenants; authorization
+    // (superadmin, or owner/admin of both orgs) is the service's
+    // assertCanRelocate.
     const { brand: moved, summary } = await crossOrgUnsafe(
       async () =>
-        await this.brandsService.relocateToOrganization(
-          id,
-          updateDto,
-          toRelocationActor(user, request),
-        ),
+        await this.brandsService.relocateToOrganization(id, updateDto, {
+          isSuperAdmin: getIsSuperAdmin(user, request),
+          userId: user.userId ?? user.id,
+        }),
     );
 
-    await recordBrandRelocation(this.activityRecorder, this.loggerService, {
+    await this.activityRecorder.record({
       brandId: id,
-      brandOwnerId: existing.userId,
-      destinationOrganizationId: requestedOrgId,
-      sourceOrganizationId: existing.organizationId,
-      summary,
+      key: ActivityKey.BRAND_RELOCATED,
+      organizationId: requestedOrgId,
+      source: ActivitySource.BRAND_RELOCATION,
       userId: user.userId ?? user.id,
+      value: JSON.stringify(summary),
     });
 
     return {
@@ -318,11 +312,10 @@ export class BrandsController extends BaseCRUDController<
     // Counts resources across source and destination tenants; see patch().
     const preview = await crossOrgUnsafe(
       async () =>
-        await this.brandsService.previewRelocation(
-          id,
-          organizationId,
-          toRelocationActor(user, request),
-        ),
+        await this.brandsService.previewRelocation(id, organizationId, {
+          isSuperAdmin: getIsSuperAdmin(user, request),
+          userId: user.userId ?? user.id,
+        }),
     );
 
     return { data: preview };
@@ -384,7 +377,13 @@ export class BrandsController extends BaseCRUDController<
   // No @RolesDecorator('superadmin'): members list brands for their org via
   // `GET /brands?organization=`. Class-level RolesGuard still requires auth +
   // org membership.
-  async findAll(
+  @Cache({
+    keyGenerator: (req) =>
+      `brands:list:user:${req.user?.id ?? 'anonymous'}:query:${JSON.stringify(req.query)}`,
+    tags: ['brands'],
+    ttl: 1_800, // 30 minutes
+  })
+  findAll(
     @Req() request: Request,
     @CurrentUser() user: User,
     @Query() query: BaseQueryDto,
@@ -397,19 +396,7 @@ export class BrandsController extends BaseCRUDController<
       );
     }
 
-    const findQuery = this.buildFindAllQuery(user, query);
-    const where = await this.brandsService.brandAccessService.predicate(user);
-    const data = await this.brandsService.findAll(
-      { ...findQuery, where: { AND: [findQuery.where, where] } },
-      {
-        customLabels,
-        ...QueryDefaultsUtil.getPaginationDefaults(query),
-      },
-    );
-    return serializeCollection(request, BrandSerializer, {
-      ...data,
-      docs: await this.decorateListForResponse(data.docs),
-    });
+    return super.findAll(request, user, query);
   }
 
   /** Logos and connected accounts for list rows, batched per organization. */

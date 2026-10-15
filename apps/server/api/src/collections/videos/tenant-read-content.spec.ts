@@ -359,12 +359,12 @@ describe('content mandatory selected-data regressions', () => {
       expect.objectContaining({ userId: actor.userId }),
     );
     expect(videosService.findOne).toHaveBeenCalledWith(
-      expect.objectContaining({
-        organizationId: selectedOrg,
-        isDeleted: false,
-      }),
+      expect.objectContaining({ organizationId: selectedOrg }),
       expect.arrayContaining([
-        { path: 'metadata' },
+        {
+          path: 'metadata',
+          where: { organizationId: selectedOrg, isDeleted: false },
+        },
         {
           path: 'captions',
           where: { organizationId: selectedOrg, isDeleted: false },

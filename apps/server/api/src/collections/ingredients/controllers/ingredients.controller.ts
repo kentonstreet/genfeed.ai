@@ -23,10 +23,6 @@ import { getIsSuperAdmin } from '@api/helpers/utils/auth/auth.util';
 import { CategoryPrismaUtil } from '@api/helpers/utils/category-prisma/category-prisma.util';
 import { CollectionFilterUtil } from '@api/helpers/utils/collection-filter/collection-filter.util';
 import { IngredientFilterUtil } from '@api/helpers/utils/ingredient-filter/ingredient-filter.util';
-import {
-  decodeKeysetCursor,
-  resolveKeysetSort,
-} from '@api/helpers/utils/keyset-cursor/keyset-cursor.util';
 import { LibraryShelfUtil } from '@api/helpers/utils/library-shelf/library-shelf.util';
 import { customLabels } from '@api/helpers/utils/pagination.util';
 import { QueryDefaultsUtil } from '@api/helpers/utils/query-defaults/query-defaults.util';
@@ -159,12 +155,7 @@ export class IngredientsController {
 
     const aggregate = {
       include: IngredientFilterUtil.buildLibraryListInclude(),
-      orderBy: Object.entries(handleQuerySort(query.sort)).map(
-        ([field, direction]) =>
-          field === 'label'
-            ? { metadata: { label: direction } }
-            : { [field]: direction },
-      ),
+      orderBy: handleQuerySort(query.sort),
       where: {
         // `isDeleted` stays at the top level: BaseService.withSoftDeleteFilter
         // only honours an explicit value it can see there, and would otherwise
@@ -192,19 +183,7 @@ export class IngredientsController {
       },
     };
 
-    // Keyset paging (`paging=cursor`) skips the per-page count and keeps deep
-    // pages as cheap as the first; orders it cannot express use offsets.
-    const keysetSort =
-      query.paging === 'cursor'
-        ? resolveKeysetSort(handleQuerySort(query.sort))
-        : null;
-    const data = keysetSort
-      ? await this.ingredientsService.findAllByKeyset(aggregate, {
-          cursor: decodeKeysetCursor(query.cursor, keysetSort),
-          limit: options.limit,
-          sort: keysetSort,
-        })
-      : await this.ingredientsService.findAll(aggregate, options);
+    const data = await this.ingredientsService.findAll(aggregate, options);
     return serializeCollection(
       request,
       IngredientSerializer,

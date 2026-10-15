@@ -52,11 +52,7 @@ describe('PrismaService error rendering without adapter dispatch', () => {
 
   for (const [index, input] of cases.entries()) {
     it(`preserves validation diagnostic ${index + 1} without reading the large caller`, async () => {
-      // Node loads modules under their resolved filename, so canonicalize a
-      // symlinked tmpdir once: assertions and cache cleanup use that path.
-      const directory = realpathSync(
-        mkdtempSync(join(tmpdir(), 'prisma-renderer-')),
-      );
+      const directory = mkdtempSync(join(tmpdir(), 'prisma-renderer-'));
       const callerPath = join(directory, 'caller.cjs');
       const requireCaller = createRequire(import.meta.url);
       writeFileSync(
@@ -68,6 +64,7 @@ describe('PrismaService error rendering without adapter dispatch', () => {
         client: PrismaClient,
         args: unknown,
       ) => Promise<unknown>;
+      const canonicalCaller = realpathSync(callerPath);
       const originalRead = fs.readFileSync;
       const readSpy = vi
         .spyOn(fs, 'readFileSync')
@@ -91,7 +88,7 @@ describe('PrismaService error rendering without adapter dispatch', () => {
       const originalArgs = structuredClone(input.args);
       const callerReads = () =>
         readSpy.mock.calls.filter(
-          ([path]) => typeof path === 'string' && path === callerPath,
+          ([path]) => typeof path === 'string' && path === canonicalCaller,
         ).length;
       const validationError = async (client: PrismaClient) => {
         try {

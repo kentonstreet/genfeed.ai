@@ -5,7 +5,6 @@ import {
 } from '@api/collections/clip-projects/dto/generate-clips.dto';
 import { ClipGenerationDispatchService } from '@api/collections/clip-projects/services/clip-generation-dispatch.service';
 import { HookClipApprovalService } from '@api/collections/clip-projects/services/hook-clip-approval.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -35,7 +34,6 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 @ApiTags('clip-projects')
 @ApiBearerAuth()
 @FeatureFlag('studio_clips')
-@OrganizationModule('clips')
 @Controller('clip-projects')
 @UseGuards(RolesGuard)
 export class ClipProjectGenerationController {
@@ -49,7 +47,7 @@ export class ClipProjectGenerationController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     description:
-      'Generate avatar or deterministic raw-cut video clips for selected highlights. Each HeyGen avatar clip holds the per-second avatar rate at its estimated length and settles to the rendered length; raw-cut clips are free.',
+      'Generate avatar or deterministic raw-cut video clips for selected highlights. Expensive step (N credits, one per clip).',
     operationId: 'ClipProjectsController.generateClips',
     summary: 'Generate clips from selected highlights',
   })

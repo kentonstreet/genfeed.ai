@@ -14,7 +14,6 @@ export class AuthBootstrapController {
     return await this.authBootstrapService.getBootstrap(req);
   }
 
-  @TenantReadPolicy('owner')
   @Get('bootstrap/overview')
   async overviewBootstrap(
     @Req() req: Parameters<AuthBootstrapService['getOverviewBootstrap']>[0],

@@ -16,7 +16,6 @@ import {
   type MediaPromptEnhancementInput,
   MediaPromptEnhancementService,
 } from '@api/services/harness/media-prompt-enhancement.service';
-import { MediaGenerationReceiptsService } from '@api/services/media-generation-receipts/media-generation-receipts.service';
 import { AuthorizedMediaUrlService } from '@api/services/media-urls/authorized-media-url.service';
 import { personasServiceStub } from '@api/shared/testing/personas-service.stub';
 import { VideoGenerationSerializer } from '@genfeedai/serializers';
@@ -25,8 +24,6 @@ vi.mock('@api/collections/templates/services/templates.service', () => ({
   TemplatesService: class {},
 }));
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
 import { AssetsService } from '@api/collections/assets/services/assets.service';
 import { BookmarksService } from '@api/collections/bookmarks/services/bookmarks.service';
@@ -87,7 +84,6 @@ import {
   TagMatchMode,
 } from '@genfeedai/contracts';
 import { MODEL_KEYS } from '@genfeedai/contracts/constants';
-import type { PopulateOption } from '@genfeedai/contracts/interfaces';
 import { testId } from '@helpers/testing/test-id.helper';
 import { ConfigService } from '@libs/config/config.service';
 import { LoggerService } from '@libs/logger/logger.service';
@@ -530,14 +526,6 @@ describe('VideosController', () => {
         VideoGenerationCompletionService,
         VideoGenerationCreditsService,
         VideoGenerationExecutionService,
-        {
-          provide: MediaGenerationReceiptsService,
-          useValue: {
-            open: vi.fn().mockResolvedValue(undefined),
-            recordAccepted: vi.fn().mockResolvedValue(undefined),
-            syncTerminal: vi.fn().mockResolvedValue(undefined),
-          },
-        },
         VideoGenerationPreparationService,
         VideoGenerationProviderDispatchService,
         VideoGenerationService,
@@ -876,8 +864,8 @@ describe('VideosController', () => {
         where?: {
           AND?: Array<{
             OR?: Array<{
-              metadata?: {
-                label?: { contains?: unknown };
+              'metadata.label'?: {
+                contains?: unknown;
               };
             }>;
           }>;
@@ -885,20 +873,20 @@ describe('VideosController', () => {
       };
       const searchStage = aggregate.where?.AND?.find((condition) =>
         condition.OR?.some(
-          (orCondition) => orCondition.metadata?.label?.contains,
+          (orCondition) => orCondition['metadata.label']?.contains,
         ),
       ) as
         | {
             OR?: Array<{
-              metadata?: {
-                label?: { contains?: unknown };
+              'metadata.label'?: {
+                contains?: unknown;
               };
             }>;
           }
         | undefined;
 
       expect(searchStage).toBeDefined();
-      expect(searchStage?.OR?.[0]?.metadata?.label?.contains).toBe('sunset');
+      expect(searchStage?.OR?.[0]?.['metadata.label']?.contains).toBe('sunset');
     });
 
     it('should filter by status', async () => {
@@ -1076,55 +1064,6 @@ describe('VideosController', () => {
       );
       expect(result).toBeDefined();
       expect(result.data).toMatchObject({ type: 'video' });
-    });
-
-    it('filters populated relations only by fields their Prisma model has', async () => {
-      const schema = readFileSync(
-        resolve(
-          __dirname,
-          '../../../../../../../packages/prisma/prisma/schema.prisma',
-        ),
-        'utf8',
-      );
-      const modelFields = (name: string): Map<string, string> => {
-        const match = schema.match(
-          new RegExp(`\\nmodel ${name} \\{\\n([\\s\\S]*?)\\n\\}`),
-        );
-        expect(match, `model ${name}`).not.toBeNull();
-        return new Map(
-          (match?.[1] ?? '')
-            .split('\n')
-            .map((line) => line.trim().split(/\s+/))
-            .filter(
-              ([field, type]) =>
-                type && !field.startsWith('@') && !field.startsWith('//'),
-            )
-            .map(([field, type]) => [field, type.replace(/[?[\]]/g, '')]),
-        );
-      };
-      const ingredientFields = modelFields('Ingredient');
-
-      await controller.findOne(mockRequest, mockVideoId.toString(), mockUser);
-
-      const populate = videosService.findOne.mock.lastCall?.[1] as
-        | PopulateOption[]
-        | undefined;
-      const metadataOption = populate?.find(
-        (option) => option.path === 'metadata',
-      );
-      expect(metadataOption).toBeDefined();
-      expect(metadataOption).not.toHaveProperty('where');
-      for (const option of populate ?? []) {
-        const target = ingredientFields.get(option.path);
-        expect(target, `Ingredient.${option.path}`).toBeDefined();
-        const targetFields = modelFields(target ?? '');
-        for (const key of Object.keys(option.where ?? {})) {
-          expect(
-            targetFields.has(key),
-            `${target}.${key} filtered by ${option.path}`,
-          ).toBe(true);
-        }
-      }
     });
 
     it('should include vote status', async () => {

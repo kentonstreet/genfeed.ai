@@ -72,7 +72,6 @@ jobs:
       api: ${{ steps.plan.outputs.api }}
       app_tests: ${{ steps.plan.outputs.app_tests }}
       api_tests: ${{ steps.plan.outputs.api_tests }}
-      mcp_auth_runtime: ${{ steps.plan.outputs.mcp_auth_runtime }}
       app_matrix: ${{ steps.plan.outputs.app_matrix }}
       api_matrix: ${{ steps.plan.outputs.api_matrix }}
       force_full: ${{ steps.plan.outputs.force_full }}
@@ -195,7 +194,7 @@ jobs:
         run: node scripts/ci/pr-test-plan.mjs --event "${{ github.event_name }}" --base "$CI_BASE_SHA" --run-heavy "${{ steps.tier.outputs.heavy }}"
       - name: Upload pull-request test plan
         if: github.event_name == 'pull_request' && steps.plan.outcome == 'success'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pr-test-plan-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
           path: ${{ steps.plan.outputs.manifest }}
@@ -379,7 +378,7 @@ jobs:
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Setup ${result.mode}: **${result.seconds}s**, Bun ${result.bunVersion}, exact cache hit ${result.exactCacheHit}.\n`);
           NODE
       - name: Upload setup measurement
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: setup-measurement-${{ matrix.mode }}
           path: setup-measurement.json
@@ -488,13 +487,9 @@ jobs:
         if: ${{ !cancelled() && env.TURBO_TOKEN != '' }}
         continue-on-error: true
         run: node scripts/ci/check-turbo-remote-cache.mjs "${RUNNER_TEMP}/turbo-type-check.log"
-      # Real workspace imports resolve the contracts package dist exports even
-      # when metadata-only changes select no affected typecheck build tasks.
-      - name: Build contracts for executable imports
-        run: bun run --cwd packages/contracts build
       - name: Run executable contracts
         run: bun run test:executable-contracts
-      - name: Check scoring provenance and optional calibration
+      - name: Check judge calibration link
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -792,7 +787,7 @@ jobs:
         run: node scripts/ci/api-test-timings-reporter.mjs "$API_TEST_TIMINGS_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload API test timings
         if: always() && steps.api-tests.outcome != 'skipped' && steps.api-tests.outcome != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: api-test-timings-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/api-test-timings/shard-${{ matrix.shard }}.json
@@ -925,7 +920,7 @@ jobs:
           fi
       - name: Upload sanitized CLOUD tenant diagnostic summary
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cloud-tenant-guard-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.CLOUD_SWEEP_RUN_DIR }}/diagnostic-summary.json
@@ -967,7 +962,7 @@ jobs:
           cmp /tmp/openapi-emit-1.json /tmp/openapi-emit-2.json
       - name: Upload generated OpenAPI spec
         if: needs.plan.outputs.api == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openapi-spec-${{ github.run_id }}-${{ github.run_attempt }}
           path: /tmp/openapi-emit-1.json
@@ -989,37 +984,6 @@ jobs:
   # Full Suite called from a push, and the master failure tracker below keys off
   # it. The Full Suite paths (workflow_dispatch, release) are gated by the Master
   # SHA Verdict job in full-suite.yml.
-  mcp-auth-runtime:
-    name: MCP Auth Runtime
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: plan
-    if: needs.plan.outputs.mcp_auth_runtime == 'true'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Bun environment
-        uses: ./.github/actions/setup-bun-env
-      - name: Build real API and MCP packages
-        run: bunx turbo run build --filter=@genfeedai/api --filter=@genfeedai/mcp --concurrency=2
-      - name: Select owned report path
-        shell: bash
-        run: echo "MCP_AUTH_STATE=$RUNNER_TEMP/mcp-auth-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
-      - name: Execute isolated real auth and brand policy journey
-        shell: bash
-        run: |
-          tested_sha="$(git rev-parse HEAD)"
-          node scripts/ci/mcp-auth-runtime.mjs --case-family brand-access --candidate-sha "$tested_sha" --tested-sha "$tested_sha" --state "$MCP_AUTH_STATE"
-      - name: Upload sanitized runtime receipt
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mcp-auth-runtime-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.MCP_AUTH_STATE }}/report.json
-          if-no-files-found: error
-          retention-days: 7
-
   tests-gate:
     name: Tests Gate
     runs-on: ubuntu-latest
@@ -1032,7 +996,6 @@ jobs:
       - test-app
       - test-api
       - cloud-tenant-guard
-      - mcp-auth-runtime
       - build
     if: >-
       ${{ always()
@@ -1083,8 +1046,6 @@ jobs:
           TEST_APP_RESULT: ${{ needs.test-app.result }}
           TEST_API_RESULT: ${{ needs.test-api.result }}
           CLOUD_TENANT_GUARD_RESULT: ${{ needs.cloud-tenant-guard.result }}
-          PLAN_MCP_AUTH_RUNTIME: ${{ needs.plan.outputs.mcp_auth_runtime }}
-          MCP_AUTH_RUNTIME_RESULT: ${{ needs.mcp-auth-runtime.result }}
           BUILD_RESULT: ${{ needs.build.result }}
         shell: bash
         run: node scripts/ci/tests-gate.mjs | tee -a "$GITHUB_STEP_SUMMARY"

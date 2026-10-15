@@ -6,7 +6,6 @@ import type { CreatorAnalysisDocument } from '@api/collections/content-intellige
 import { ContentIntelligenceService } from '@api/collections/content-intelligence/services/content-intelligence.service';
 import { PatternAnalyzerService } from '@api/collections/content-intelligence/services/pattern-analyzer.service';
 import { PatternStoreService } from '@api/collections/content-intelligence/services/pattern-store.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
 import { CurrentUser } from '@api/helpers/decorators/user/current-user.decorator';
 import { TenantReadPolicy } from '@api/helpers/interceptors/tenant-context/tenant-read-policy.decorator';
@@ -39,7 +38,6 @@ import type { Request } from 'express';
 
 @AutoSwagger()
 @Controller('content-intelligence/creators')
-@OrganizationModule('discovery')
 export class CreatorsController {
   constructor(
     private readonly contentIntelligenceService: ContentIntelligenceService,
@@ -222,6 +220,7 @@ export class CreatorsController {
     // Trigger analysis (async)
     await this.patternAnalyzerService.analyzeCreator(id, user.organizationId);
 
+    // Return updated creator
     const updated = await this.contentIntelligenceService.findOne({
       id: id,
       organizationId: user.organizationId,

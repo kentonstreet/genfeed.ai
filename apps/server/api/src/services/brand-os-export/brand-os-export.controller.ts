@@ -82,7 +82,6 @@ export class BrandOsExportController {
       await this.service.state(id, user),
     );
   }
-  @TenantReadPolicy('owner')
   @Get('design.md')
   async download(
     @Param('id') id: string,
