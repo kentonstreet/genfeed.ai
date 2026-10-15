@@ -11,15 +11,6 @@ import {
   validateInput,
   validateResult,
 } from './protocol.mjs';
-import {
-  assertBrandFontObservations,
-  assertEvidenceObservations,
-  brandFontInput,
-  EVIDENCE_FONT_PATH,
-  EVIDENCE_PNG,
-  evidenceInput,
-} from './render-evidence.fixture.mjs';
-import { sha256Prefixed } from './render-evidence.mjs';
 
 const exec = promisify(execFile);
 assert.equal(
@@ -114,9 +105,6 @@ async function isolated(id, args, input, deadline = 120_000) {
           assert.ok(!inspected.Mounts.some((mount) => mount.Type === 'bind'));
           assert.ok(!config.Binds || config.Binds.length === 0);
           assert.equal(config.Memory, 2 * 1024 * 1024 * 1024);
-          assert.equal(config.MemorySwap, 2 * 1024 * 1024 * 1024);
-          assert.equal(config.ShmSize, 256 * 1024 * 1024);
-          assert.equal(inspected.Config.User, '65532:65532');
           assert.equal(config.NanoCpus, 2 * 1e9);
           assert.equal(config.PidsLimit, 256);
           assert.ok(config.CapDrop.includes('ALL'));
@@ -130,8 +118,6 @@ async function isolated(id, args, input, deadline = 120_000) {
             privileged: config.Privileged,
             mounts: inspected.Mounts,
             memory: config.Memory,
-            memorySwap: config.MemorySwap,
-            shmSize: config.ShmSize,
             nanoCpus: config.NanoCpus,
             pidsLimit: config.PidsLimit,
             capDrop: config.CapDrop,
@@ -238,85 +224,6 @@ for (const [index, media] of result.media.entries())
     resolve(artifacts, `hybrid-${index}.${media.format}`),
     Buffer.from(media.bytes, 'base64'),
   );
-// Every export carries observations read from the real Chromium in the image.
-for (const media of result.media) {
-  assert.ok(media.evidence, `${media.format} export has render evidence`);
-  assert.deepEqual(media.evidence.diagnostics, []);
-  assert.deepEqual(
-    media.evidence.captures.map((capture) => capture.frame),
-    media.format === 'mp4' ? [0, 14, 29] : [media.frame],
-  );
-  const title = media.evidence.captures[0].textLayers.find(
-    (layer) => layer.text === 'Visual code acceptance',
-  );
-  assert.ok(title, `${media.format} export records its text layer`);
-  assert.ok(
-    title.platformFonts.some((font) => font.familyName === 'DejaVu Sans'),
-    'installed DejaVu Sans is what rendered the requested family',
-  );
-}
-await writeFile(
-  resolve(artifacts, 'render-evidence-hybrid.json'),
-  JSON.stringify(
-    result.media.map(({ format, frame, evidence }) => ({
-      format,
-      frame,
-      evidence,
-    })),
-    null,
-    2,
-  ),
-);
-// Fonts: an owned web font is reported as loaded from its asset, and a family the
-// image does not have is reported as a fallback, never as the requested font.
-const evidenceCase = validateInput(
-  await evidenceInput([{ format: 'png', frame: 2 }], 'acceptance-evidence'),
-);
-const evidenceRun = await isolated(
-  evidenceCase.id,
-  dockerArguments(evidenceCase.id),
-  encodeFrame(evidenceCase),
-);
-const evidenceDecoded = decodeFrame(evidenceRun.bytes);
-assert.equal(evidenceRun.code, 0, JSON.stringify(evidenceDecoded.diagnostics));
-const evidenceResult = validateResult(evidenceDecoded, evidenceCase);
-assert.deepEqual(evidenceResult.diagnostics, []);
-assertEvidenceObservations(assert, evidenceResult.media[0].evidence, {
-  frame: 2,
-  fontHash: sha256Prefixed(await readFile(EVIDENCE_FONT_PATH)),
-  pngHash: sha256Prefixed(EVIDENCE_PNG),
-});
-await writeFile(
-  resolve(artifacts, 'render-evidence-fonts.json'),
-  JSON.stringify(evidenceResult.media[0].evidence, null, 2),
-);
-// A staged brand font: the renderer declares the face, the composition only names
-// the family, and the engine reports the staged asset as the source of the glyphs.
-const brandFontCase = validateInput(
-  await brandFontInput([{ format: 'png', frame: 2 }], 'acceptance-brand-font'),
-);
-const brandFontRun = await isolated(
-  brandFontCase.id,
-  dockerArguments(brandFontCase.id),
-  encodeFrame(brandFontCase),
-);
-const brandFontDecoded = decodeFrame(brandFontRun.bytes);
-assert.equal(
-  brandFontRun.code,
-  0,
-  JSON.stringify(brandFontDecoded.diagnostics),
-);
-const brandFontResult = validateResult(brandFontDecoded, brandFontCase);
-assert.deepEqual(brandFontResult.diagnostics, []);
-assertBrandFontObservations(assert, brandFontResult.media[0].evidence, {
-  frame: 2,
-  fontHash: sha256Prefixed(await readFile(EVIDENCE_FONT_PATH)),
-  platformFamily: 'Zodiak',
-});
-await writeFile(
-  resolve(artifacts, 'render-evidence-brand-font.json'),
-  JSON.stringify(brandFontResult.media[0].evidence, null, 2),
-);
 const attackId = 'acceptance-isolation';
 const attack = `const fs=require('node:fs');const cp=require('node:child_process');const assert=require('node:assert/strict');(async()=>{assert.equal(process.env.VISUAL_CODE_RENDERER_TOKEN,undefined);assert.equal(process.env.VISUAL_CODE_TEST_SECRET,undefined);assert.throws(()=>fs.readFileSync('/tmp/visual-code-host-sentinel'));assert.throws(()=>fs.writeFileSync('/runtime/installed-by-attacker','bad'));let denied=false;try{await fetch('https://example.com',{signal:AbortSignal.timeout(3000)})}catch{denied=true}assert.ok(denied);const installation=cp.spawnSync('npm',['install','--offline','--prefix','/runtime','never-installed-package'],{timeout:5000});assert.notEqual(installation.status,0);process.stdout.write('isolation-denied')} )().catch(()=>process.exit(1));`;
 await writeFile('/tmp/visual-code-host-sentinel', 'host-only', { flag: 'wx' });
@@ -352,14 +259,6 @@ await writeFile(
       rendererVersion: '4.0.530',
       runtime: 'runsc',
       hybridFormats: ['mp4', 'png', 'jpeg'],
-      renderEvidence: {
-        hybridObservedFrames: result.media.map(
-          (media) => media.evidence.captures.length,
-        ),
-        webFontReportedFromAsset: true,
-        brandFontReportedFromAsset: true,
-        forcedFallbackReported: true,
-      },
       networkDenied: true,
       hostFilesDenied: true,
       credentialsAbsent: true,

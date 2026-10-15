@@ -1,6 +1,6 @@
 # Visual-code renderer
 
-Operator setup and recovery: [deployment guide](../../apps/docs/content/self-host/visual-code-renderer.mdx).
+Operator setup and recovery: [deployment guide](../../apps/docs/content/deployment/visual-code-renderer.mdx).
 Creator/API behavior: [Motion guide](../../apps/docs/content/guides/visual-code.mdx).
 
 The coordinator is a trusted Linux-only service. Submitted source executes only inside its fixed, isolated runsc image. Required configuration is `VISUAL_CODE_STATE_DIR` (persistent private0700 directory) and `VISUAL_CODE_RENDERER_TOKEN` (32+ characters). Start with `node scripts/visual-code/coordinator.mjs`. One process holds the state lock; maximum concurrency is two jobs. State admission stops at16GiB; no automatic receipt deletion. Keep provider/application credentials off this host.
@@ -61,18 +61,3 @@ inspection. Linux isolation separately records image/runtime/container facts and
 network, host-file, credential, install and deadline denials. Inspect saved MP4/stills
 and record their paths/hashes and honest results alongside exact-head CI. Synthetic
 provider evidence cannot close all Studio/agent/auth entrypoint acceptance.
-
-## Render evidence
-
-Every export carries `evidence` per output: what Chromium really rendered, read through the DevTools protocol (the font engine and layout tree), never through page JavaScript. At the screenshot of an inspected frame the runner records each visible text layer (text, bounds, computed style, and `CSS.getPlatformFontsForNode`, which names the fonts that drew the glyphs, including fallbacks), `@font-face` loads (`CSS.fontsUpdated`, tied to the staged asset by id and sha256), and placed images and videos. A staged asset is reported only when Chromium actually fetched it from the page's own origin (`Network` responses), never from a URL's shape; an `OffthreadVideo` frame is a `blob:` URL the DOM cannot tie to a file, so it is placed but unresolved. The page is frozen (page scripts disabled, CSS animations stopped) from the observation through the screenshot, so a composition cannot show the observer one DOM and the exported pixels another; if it cannot be frozen, nothing is observed. A still inspects its frame; a video inspects its first, middle and last frames. Previews carry none.
-
-Brand fonts are staged beside the media. The API reads the font files the approved Brand OS revision owns (a typography rule with `availability: owned_asset`), checks each against the approved hash, size and format, and sends them as `font/woff2|woff|ttf|otf` assets with the `faces` (family, weight, style) to declare. The renderer writes the `@font-face` rules itself (`brand-fonts.mjs`) and holds the frame until Chromium has loaded every face, so a composition just names the family. The face points at the staged file on the page's own origin, which is what lets the evidence credit it to the asset id and hash. At most 8 fonts and 12 media assets are staged.
-
-The API binds these observations to the sha256 of the exact exported bytes and stores the manifest with the output (`BrandRenderEvidenceManifestV1`). A renderer failure to observe yields no evidence, never a guess. `render-evidence.browser.test.mjs` runs the real renderer against a host Chromium:
-
-```sh
-cd scripts/visual-code && bun install --frozen-lockfile
-VISUAL_CODE_EVIDENCE_BROWSER=/path/to/chrome node --test render-evidence.browser.test.mjs
-```
-
-`isolation-acceptance.mjs` asserts the same cases inside the runsc image, where the installed DejaVu fonts are the fallback.
