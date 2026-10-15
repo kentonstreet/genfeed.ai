@@ -7,18 +7,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@genfeedai/pricing', () => ({
   AVATAR_CREDIT_COSTS: {},
-  CREDIT_VALUE_DOLLARS: 0.01,
+  BYOK_CREDIT_VALUE_DOLLARS: 0.01,
+  BYOK_FEE_PERCENTAGE: 0,
+  BYOK_FEE_PER_CREDIT: 0,
+  BYOK_FREE_THRESHOLD_CREDITS: 0,
   INTERNAL_CREDIT_COSTS: {},
   PAYG_CREDIT_PACKS: [],
   PLAN_COPY: {},
   PLAN_LABELS: {},
   TIER_INCLUDED_MONTHLY_CREDITS: {},
+  TRAINING_PACKAGES: [],
   VIDEO_CREDIT_COSTS: {},
   WEBSITE_CREDIT_PACKS: [],
   applyMargin: (value: number) => value,
+  contentServiceOffering: {},
   creditPackPrice: () => 0,
   creditPackTotalCredits: () => 0,
   creditsToOutputEstimate: () => '',
+  dedicatedServerPlan: {},
   formatOutputs: () => '',
   formatPlanIncludedCredits: () => '',
   formatPlanMonthlyPrice: () => '',
@@ -162,7 +168,6 @@ describe('PostsService', () => {
       brandId: 'brand-selected',
       platform: Platform.TWITTER,
       prompt: 'Launch',
-      requestKey: '5b0f6c1e-7d3a-4c1e-9b0a-2f6d8a1c3e4f',
     };
     mockInstance.post.mockResolvedValueOnce({
       data: { description: 'A tweet' },
@@ -491,7 +496,7 @@ describe('PostsService', () => {
             creditCost: 1,
             groupId: 'group-1',
             requestedCount: 3,
-            reviewTurboRunId: 'batch-1',
+            reviewBatchId: 'batch-1',
             sourceKind: 'owned-post',
             voiceMode: 'brand-voice',
             voiceModeLabel: 'Brand voice',
@@ -513,25 +518,8 @@ describe('PostsService', () => {
       expect(result.posts).toHaveLength(1);
       expect(result.meta).toMatchObject({
         actualCount: 1,
-        reviewTurboRunId: 'batch-1',
+        reviewBatchId: 'batch-1',
       });
-    });
-  });
-
-  describe('retryAccountGeneration', () => {
-    it('retries the failed placeholder under the supplied request key', async () => {
-      mockInstance.post.mockResolvedValue({ data: mockPostData });
-
-      const result = await service.retryAccountGeneration(
-        'post-123',
-        '7b1f6a3e-2c54-4d0e-9a8b-3f1c2d4e5a60',
-      );
-
-      expect(mockInstance.post).toHaveBeenCalledWith(
-        '/post-123/generation-retries',
-        { requestKey: '7b1f6a3e-2c54-4d0e-9a8b-3f1c2d4e5a60' },
-      );
-      expect(result).toBeInstanceOf(Post);
     });
   });
 

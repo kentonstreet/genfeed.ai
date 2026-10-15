@@ -7,7 +7,6 @@ import {
   IsIn,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -31,11 +30,4 @@ export class GeneratePostDraftDto implements PostDraftGenerationInput {
   @IsIn([PostFormat.STANDARD, PostFormat.LONG_FORM])
   @ApiProperty({ enum: PostFormat, enumName: 'PostFormat', required: false })
   readonly format?: PostFormat;
-
-  @IsUUID('4')
-  @ApiProperty({
-    description:
-      'Idempotency key (UUID v4). A repeat returns the original draft; regenerating uses a new key.',
-  })
-  readonly requestKey!: string;
 }

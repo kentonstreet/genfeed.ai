@@ -25,6 +25,10 @@ import {
   timezoneSchema,
 } from '../helpers/common-schemas';
 
+// ============================================================================
+// Type Aliases from OpenAPI
+// ============================================================================
+
 /**
  * Request payload for creating a new post
  * Derived from OpenAPI CreatePostDto schema
@@ -49,6 +53,10 @@ export type UpdatePostRequest = Omit<
 > & {
   format?: PostFormat;
 };
+
+// ============================================================================
+// Zod Schemas for Runtime Validation
+// ============================================================================
 
 /**
  * Zod schema matching CreatePostDto
@@ -132,6 +140,10 @@ export const updatePostSchema = z.object({
   timezone: timezoneSchema.optional(),
   visibility: z.nativeEnum(PostVisibility).optional(),
 }) satisfies z.ZodType<UpdatePostRequest>;
+
+// ============================================================================
+// Inferred Types from Zod Schemas
+// ============================================================================
 
 /**
  * Inferred type from createPostSchema

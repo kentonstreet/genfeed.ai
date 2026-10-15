@@ -1,4 +1,6 @@
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
+import { ActivityEntity } from '@api/collections/activities/entities/activity.entity';
+import { ActivitiesService } from '@api/collections/activities/services/activities.service';
 import { CredentialsService } from '@api/collections/credentials/services/credentials.service';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { CreatePostDto } from '@api/collections/posts/dto/create-post.dto';
@@ -8,8 +10,6 @@ import { assertPostBrandAccess } from '@api/collections/posts/services/post-draf
 import { PostGenerationService } from '@api/collections/posts/services/post-generation.service';
 import { resolveThreadReplyTarget } from '@api/collections/posts/services/post-thread-target.util';
 import { PostsService } from '@api/collections/posts/services/posts.service';
-import { OrganizationModule } from '@api/common/organization-modules/organization-module.decorator';
-import { FeatureFlag } from '@api/feature-flag/feature-flag.decorator';
 import { LogMethod } from '@api/helpers/decorators/log/log-method.decorator';
 import { RequiredScopes } from '@api/helpers/decorators/scopes/required-scopes.decorator';
 import { AutoSwagger } from '@api/helpers/decorators/swagger/auto-swagger.decorator';
@@ -25,7 +25,6 @@ import {
   serializeCollection,
   serializeSingle,
 } from '@api/helpers/utils/response/response.util';
-import { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
 import { QuotaService } from '@api/services/quota/quota.service';
 import { PopulatePatterns } from '@api/shared/utils/populate/populate.util';
 import {
@@ -33,6 +32,7 @@ import {
   ActivityKey,
   ActivitySource,
   ApiKeyScope,
+  CredentialPlatform,
   IngredientCategory,
   PostCategory,
   TargetExecutionState,
@@ -55,14 +55,12 @@ import {
 import type { Request } from 'express';
 
 @AutoSwagger()
-@FeatureFlag('publishing')
-@OrganizationModule('publishing')
 @Controller('posts')
 @UseGuards(RolesGuard)
 export class PostsOperationsController {
   private readonly serializer = PostSerializer;
   constructor(
-    private readonly activityRecorder: ActivityRecorderService,
+    private readonly activitiesService: ActivitiesService,
     private readonly credentialsService: CredentialsService,
     private readonly ingredientsService: IngredientsService,
     private readonly logger: LoggerService,
@@ -101,6 +99,43 @@ export class PostsOperationsController {
         return PostCategory.VIDEO;
       default:
         return PostCategory.TEXT;
+    }
+  }
+
+  private validateScheduledThreadReply(
+    dto: CreatePostDto,
+    platform: CredentialPlatform,
+    platformLabel: string,
+    executionState: TargetExecutionState,
+  ): void {
+    if (executionState !== TargetExecutionState.SCHEDULED) {
+      return;
+    }
+
+    const supportsTextOnly = new Set([
+      CredentialPlatform.THREADS,
+      CredentialPlatform.TWITTER,
+    ]).has(platform);
+    if (dto.category === PostCategory.TEXT && !supportsTextOnly) {
+      throw new HttpException(
+        {
+          detail: `${platformLabel} requires media when scheduling. Please add at least one image or video.`,
+          title: 'Text-only posts not supported',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    if (
+      !supportsTextOnly &&
+      (!dto.ingredients || dto.ingredients.length === 0)
+    ) {
+      throw new HttpException(
+        {
+          detail: `${platformLabel} requires at least one image or video when scheduling.`,
+          title: 'Media required when scheduling',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
     }
   }
 
@@ -181,79 +216,50 @@ export class PostsOperationsController {
           : [];
       const ingredientSet = new Set(ingredients.map((i) => i.id.toString()));
 
-      // An `ingredientId` the caller's organization doesn't own must not
-      // silently become "no media" and still get scheduled (#5193) — that
-      // turns a caller's mistake (typo'd id, an id from another org) into a
-      // media-less post on whatever platform they targeted. Drop the whole
-      // item instead of just the id.
-      const unresolvedIngredientPostIds = dto.items
-        .filter(
-          (item) => item.ingredientId && !ingredientSet.has(item.ingredientId),
-        )
-        .map((item) => String(item.postId));
-      const unresolvedIngredientPostIdSet = new Set(
-        unresolvedIngredientPostIds,
-      );
-      const schedulableItems = dto.items.filter(
-        (item) => !unresolvedIngredientPostIdSet.has(String(item.postId)),
-      );
-
       // One scoped read + one transaction for the whole batch, replacing the
       // per-item `patch` loop (2–4 sequential round-trips each).
-      const {
-        invalidTargetPostIds,
-        missingPostIds,
-        posts: updatedPosts,
-      } = await this.postsService.batchSchedule(
-        schedulableItems.map((item) => ({
-          ingredientIds:
-            item.ingredientId && ingredientSet.has(item.ingredientId)
-              ? [item.ingredientId]
-              : [],
-          postId: String(item.postId),
-          scheduledDate: String(item.scheduledDate),
-          text: item.text,
-          timezone: item.timezone,
-        })),
-        user.organizationId.toString(),
-        {
-          credentialId: dto.credentialId,
-          platform: String(credential.platform),
-        },
-        user.id,
-      );
+      const { missingPostIds, posts: updatedPosts } =
+        await this.postsService.batchSchedule(
+          dto.items.map((item) => ({
+            ingredientIds:
+              item.ingredientId && ingredientSet.has(item.ingredientId)
+                ? [item.ingredientId]
+                : [],
+            postId: String(item.postId),
+            scheduledDate: String(item.scheduledDate),
+            text: item.text,
+            timezone: item.timezone,
+          })),
+          user.organizationId.toString(),
+          {
+            credentialId: dto.credentialId,
+            platform: String(credential.platform),
+          },
+          user.id,
+        );
 
-      if (unresolvedIngredientPostIds.length > 0) {
-        this.logger.warn('Skipped posts with an unresolved ingredient id', {
-          count: unresolvedIngredientPostIds.length,
-          postIds: unresolvedIngredientPostIds,
-        });
-      }
       if (missingPostIds.length > 0) {
         this.logger.warn('Skipped posts not found in organization', {
           count: missingPostIds.length,
           postIds: missingPostIds,
         });
       }
-      if (invalidTargetPostIds.length > 0) {
-        this.logger.warn('Skipped posts that failed channel validation', {
-          count: invalidTargetPostIds.length,
-          postIds: invalidTargetPostIds,
-        });
-      }
 
-      // One transaction for every scheduled post's activity.
-      await this.activityRecorder.recordMany(
-        updatedPosts.map((updatedPost) => ({
-          brandId: user.brandId,
-          entityId: updatedPost.id,
-          entityModel: ActivityEntityModel.POST,
-          key: ActivityKey.VIDEO_SCHEDULED,
-          organizationId: user.organizationId,
-          source: ActivitySource.SCRIPT,
-          userId: user.userId ?? user.id,
-          value: (updatedPost.id as string).toString(),
-        })),
+      // One insert for every activity instead of one per scheduled post.
+      await this.activitiesService.createMany(
+        updatedPosts.map(
+          (updatedPost) =>
+            new ActivityEntity({
+              brandId: user.brandId,
+              entityId: updatedPost.id,
+              entityModel: ActivityEntityModel.POST,
+              key: ActivityKey.VIDEO_SCHEDULED,
+              organizationId: user.organizationId,
+              source: ActivitySource.SCRIPT,
+              userId: user.userId ?? user.id,
+              value: (updatedPost.id as string).toString(),
+            }),
+        ),
       );
 
       return serializeCollection(request, PostListSerializer, {
@@ -333,11 +339,12 @@ export class PostsOperationsController {
           credentialsService: this.credentialsService,
           requestedExecutionState,
         });
-      // Text-only-platform and media-kind checks used to be hardcoded here
-      // (THREADS/TWITTER only, drifted from `post-create.handler.ts`'s own
-      // set). `postsService.addThreadReply()` routes through `create()`,
-      // which now runs the channel contract every scheduling path shares
-      // (#5193).
+      this.validateScheduledThreadReply(
+        createPostDto,
+        credentialPlatform,
+        credential?.platform ?? credentialPlatform,
+        requestedExecutionState,
+      );
       const { firstIngredient, ingredientIds } =
         await this.resolveThreadReplyIngredients(
           createPostDto.ingredients,
@@ -442,16 +449,18 @@ export class PostsOperationsController {
       );
 
       // Create activity log
-      await this.activityRecorder.record({
-        brandId: user.brandId,
-        entityId: remixPost.id,
-        entityModel: ActivityEntityModel.POST,
-        key: ActivityKey.POST_CREATED,
-        organizationId: user.organizationId,
-        source: ActivitySource.WEB,
-        userId: user.userId ?? user.id,
-        value: (remixPost.id as string).toString(),
-      });
+      await this.activitiesService.create(
+        new ActivityEntity({
+          brandId: user.brandId,
+          entityId: remixPost.id,
+          entityModel: ActivityEntityModel.POST,
+          key: ActivityKey.POST_CREATED,
+          organizationId: user.organizationId,
+          source: ActivitySource.WEB,
+          userId: user.userId ?? user.id,
+          value: (remixPost.id as string).toString(),
+        }),
+      );
 
       return serializeSingle(request, this.serializer, remixPost);
     } catch (error: unknown) {

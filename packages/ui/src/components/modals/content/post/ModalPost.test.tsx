@@ -1,13 +1,5 @@
-import '@testing-library/jest-dom/vitest';
 import type { PostModalSchema } from '@genfeedai/client/schemas';
-import { ModalEnum } from '@genfeedai/contracts';
-import type { ICredential, IPost } from '@genfeedai/contracts/interfaces';
-import {
-  closeModal,
-  isModalOpen,
-  openModal,
-} from '@genfeedai/helpers/ui/modal/modal.helper';
-import { calculateTweetLength } from '@helpers/formatting/tweet-length/tweet-length.helper';
+import type { IPost } from '@genfeedai/contracts/interfaces';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ModalPost from '@ui/modals/content/post/ModalPost';
@@ -15,13 +7,9 @@ import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  createThread: vi.fn(),
   post: vi.fn(),
   patch: vi.fn(),
   generateDraftText: vi.fn(),
-}));
-vi.mock('@genfeedai/hooks/navigation/use-org-url', () => ({
-  useOrgUrl: () => ({ href: (path: string) => `/acme/main${path}` }),
 }));
 vi.mock('@genfeedai/contexts/user/brand-context/brand-context', () => ({
   useBrand: () => ({ brandId: 'brand-workspace' }),
@@ -32,6 +20,9 @@ vi.mock('next-intl', async () => {
 });
 vi.mock('@ui/modals/modal/Modal', () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock('@genfeedai/hooks/ui/use-modal-auto-open/use-modal-auto-open', () => ({
+  useModalAutoOpen: vi.fn(),
 }));
 vi.mock('@genfeedai/hooks/auth/use-authed-service/use-authed-service', () => ({
   useAuthedService: () => async () => mocks,
@@ -94,52 +85,10 @@ describe('ModalPost', () => {
     vi.clearAllMocks();
     mocks.post.mockResolvedValue({ id: 'new-post' });
     mocks.patch.mockResolvedValue({ id: 'existing-post' });
-    mocks.createThread.mockResolvedValue([{ id: 'thread-root' }]);
-  });
-  it('keeps a manually opened composer open when it mounts', () => {
-    openModal(ModalEnum.POST_COMPOSE);
-    render(
-      <ModalPost
-        credentials={[]}
-        modalId={ModalEnum.POST_COMPOSE}
-        onConfirm={vi.fn()}
-      />,
-    );
-    expect(isModalOpen(ModalEnum.POST_COMPOSE)).toBe(true);
-    closeModal(ModalEnum.POST_COMPOSE);
-  });
-  it('submits a generated draft by updating its saved post instead of creating another', async () => {
-    mocks.generateDraftText.mockResolvedValue({
-      brandedReceipt: {
-        compliance: 'unverified',
-        id: 'receipt-1',
-        isReplayed: false,
-        revision: 4,
-        state: 'needs_review',
-      },
-      description: 'Generated post',
-      postId: 'generated-post',
-    });
-    const user = userEvent.setup();
-    render(<ModalPost credentials={[]} modalId={ModalEnum.POST_COMPOSE} />);
-    await user.type(
-      screen.getByRole('textbox', { name: 'What do you want to post about?' }),
-      'Launch',
-    );
-    await user.click(screen.getByRole('button', { name: 'Generate draft' }));
-    await screen.findByRole('link', { name: 'View receipt' });
-    await user.click(screen.getByRole('button', { name: 'Create Post' }));
-    await waitFor(() =>
-      expect(mocks.patch).toHaveBeenCalledWith(
-        'generated-post',
-        expect.objectContaining({ description: 'Generated post' }),
-      ),
-    );
-    expect(mocks.post).not.toHaveBeenCalled();
   });
   it('saves a manually written X draft without an account', async () => {
     const user = userEvent.setup();
-    render(<ModalPost credentials={[]} modalId={ModalEnum.POST_COMPOSE} />);
+    render(<ModalPost credentials={[]} />);
     await user.type(
       screen.getByRole('textbox', { name: 'Post content' }),
       'A manual tweet',
@@ -162,7 +111,6 @@ describe('ModalPost', () => {
     render(
       <ModalPost
         credentials={[]}
-        modalId={ModalEnum.POST_COMPOSE}
         post={
           {
             id: 'existing-post',
@@ -184,243 +132,5 @@ describe('ModalPost', () => {
       ),
     );
     expect(mocks.post).not.toHaveBeenCalled();
-  });
-  it('keeps rich-text formatting when editing a non-Twitter draft', async () => {
-    const user = userEvent.setup();
-    render(
-      <ModalPost
-        credentials={[]}
-        modalId={ModalEnum.POST_COMPOSE}
-        post={
-          {
-            id: 'existing-post',
-            description: '<p>Original</p>',
-            platform: 'instagram',
-          } as IPost
-        }
-      />,
-    );
-    await user.type(
-      screen.getByRole('textbox', { name: 'Post content' }),
-      ' edited',
-    );
-    await user.click(screen.getByRole('button', { name: 'Save', exact: true }));
-    await waitFor(() =>
-      expect(mocks.patch).toHaveBeenCalledWith(
-        'existing-post',
-        expect.objectContaining({ description: '<p>Original</p> edited' }),
-      ),
-    );
-  });
-
-  describe('destination composer', () => {
-    const xAccount = {
-      externalHandle: 'acme_x',
-      id: 'cred-x',
-      label: 'Acme on X',
-      platform: 'twitter',
-    } as unknown as ICredential;
-    const linkedinAccount = {
-      id: 'cred-li',
-      label: 'Acme on LinkedIn',
-      platform: 'linkedin',
-    } as unknown as ICredential;
-
-    function renderComposer() {
-      return render(
-        <ModalPost
-          isComposer
-          credentials={[xAccount, linkedinAccount]}
-          modalId={ModalEnum.POST_COMPOSE}
-        />,
-      );
-    }
-
-    async function writeCaption(
-      user: ReturnType<typeof userEvent.setup>,
-      text: string,
-    ) {
-      await user.click(screen.getByRole('textbox', { name: 'Post content' }));
-      await user.paste(text);
-    }
-
-    it('lists connected accounts and the article and newsletter destinations', () => {
-      renderComposer();
-      expect(screen.getByRole('button', { name: 'Acme on X' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      );
-      expect(
-        screen.getByRole('button', { name: 'Acme on LinkedIn' }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Article' }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Newsletter' }),
-      ).toBeInTheDocument();
-      expect(screen.queryByText('Channel')).not.toBeInTheDocument();
-    });
-
-    it('does not offer Restream as a post target', () => {
-      const restreamAccount = {
-        id: 'cred-rs',
-        label: 'Acme Restream',
-        platform: 'restream',
-      } as unknown as ICredential;
-      render(
-        <ModalPost
-          isComposer
-          credentials={[xAccount, restreamAccount]}
-          modalId={ModalEnum.POST_COMPOSE}
-        />,
-      );
-      expect(
-        screen.getByRole('button', { name: 'Acme on X' }),
-      ).toBeInTheDocument();
-      expect(
-        screen.queryByRole('button', { name: 'Acme Restream' }),
-      ).not.toBeInTheDocument();
-    });
-
-    it('creates one post per selected account', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      await user.click(
-        screen.getByRole('button', { name: 'Acme on LinkedIn' }),
-      );
-      await writeCaption(user, 'Shipping today');
-      await user.click(screen.getByRole('button', { name: 'Create Post' }));
-
-      await waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(2));
-      expect(mocks.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credentialId: 'cred-x',
-          description: 'Shipping today',
-          format: 'standard',
-          platform: 'twitter',
-        }),
-      );
-      expect(mocks.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credentialId: 'cred-li',
-          platform: 'linkedin',
-        }),
-      );
-    });
-
-    it('derives a long post for X from the length of the text', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      await writeCaption(user, 'a'.repeat(400));
-      await user.click(screen.getByRole('button', { name: 'Create Post' }));
-
-      await waitFor(() =>
-        expect(mocks.post).toHaveBeenCalledWith(
-          expect.objectContaining({
-            credentialId: 'cred-x',
-            format: 'long-form',
-          }),
-        ),
-      );
-      expect(mocks.createThread).not.toHaveBeenCalled();
-    });
-
-    it('keeps the 25k limit on X long posts', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      await writeCaption(user, 'a'.repeat(25_001));
-
-      expect(screen.getByText('25001 / 25000')).toBeInTheDocument();
-      expect(
-        screen.getByRole('button', { name: 'Create Post' }),
-      ).toBeDisabled();
-    });
-
-    it('splits the text into a thread through the existing thread path', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      await writeCaption(user, `${'word '.repeat(70).trim()}.`);
-      await user.click(
-        screen.getByRole('switch', { name: 'Split into thread' }),
-      );
-      await user.click(screen.getByRole('button', { name: 'Create Thread' }));
-
-      await waitFor(() => expect(mocks.createThread).toHaveBeenCalledTimes(1));
-      const { posts } = mocks.createThread.mock.calls[0][0] as {
-        posts: { credentialId: string; description: string }[];
-      };
-      expect(posts.length).toBeGreaterThan(1);
-      expect(posts.every((item) => item.credentialId === 'cred-x')).toBe(true);
-      expect(
-        posts.every((item) => calculateTweetLength(item.description) <= 280),
-      ).toBe(true);
-      expect(mocks.post).not.toHaveBeenCalled();
-    });
-
-    it('only offers the thread option when an X account is selected', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      expect(
-        screen.queryByRole('switch', { name: 'Split into thread' }),
-      ).not.toBeInTheDocument();
-      await user.click(
-        screen.getByRole('button', { name: 'Acme on LinkedIn' }),
-      );
-      expect(
-        screen.queryByRole('switch', { name: 'Split into thread' }),
-      ).not.toBeInTheDocument();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      expect(
-        screen.getByRole('switch', { name: 'Split into thread' }),
-      ).toBeInTheDocument();
-    });
-
-    it('hands off to the article editor and drops selected accounts', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      await user.click(screen.getByRole('button', { name: 'Article' }));
-
-      expect(screen.getByRole('button', { name: 'Acme on X' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      );
-      expect(
-        screen.queryByRole('textbox', { name: 'Post content' }),
-      ).not.toBeInTheDocument();
-
-      await user.click(screen.getByRole('button', { name: 'Continue' }));
-      expect(isModalOpen(ModalEnum.ARTICLE)).toBe(true);
-      expect(mocks.post).not.toHaveBeenCalled();
-      closeModal(ModalEnum.ARTICLE);
-    });
-
-    it('hands off to the newsletter editor', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Newsletter' }));
-      await user.click(screen.getByRole('button', { name: 'Continue' }));
-      expect(isModalOpen(ModalEnum.NEWSLETTER)).toBe(true);
-      closeModal(ModalEnum.NEWSLETTER);
-    });
-
-    it('selecting an account clears an article destination', async () => {
-      const user = userEvent.setup();
-      renderComposer();
-      await user.click(screen.getByRole('button', { name: 'Article' }));
-      await user.click(screen.getByRole('button', { name: 'Acme on X' }));
-      expect(screen.getByRole('button', { name: 'Article' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      );
-      expect(
-        screen.getByRole('textbox', { name: 'Post content' }),
-      ).toBeInTheDocument();
-    });
   });
 });

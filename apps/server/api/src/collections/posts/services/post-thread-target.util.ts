@@ -24,6 +24,12 @@ export async function resolveThreadReplyTarget({
       HttpStatus.BAD_REQUEST,
     );
   }
+  if (dto.platform && dto.platform !== parentPost.platform) {
+    throw new HttpException(
+      'Thread replies must use the parent channel',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
   const replyCredentialId = parentPost.credentialId ?? undefined;
   const credential = replyCredentialId
     ? await credentialsService.findOne({
@@ -32,6 +38,7 @@ export async function resolveThreadReplyTarget({
           ? { isConnected: true }
           : {}),
         isDeleted: false,
+        brandId: parentPost.brandId ?? identity.brandId,
         organizationId: identity.organizationId,
       })
     : null;
@@ -65,12 +72,7 @@ export async function resolveThreadReplyTarget({
     );
   }
 
-  const parentPlatform =
-    parsePlatform(parentPost.platform) ?? credentialPlatform;
-  if (
-    (dto.platform && dto.platform !== parentPlatform) ||
-    credentialPlatform !== parentPlatform
-  ) {
+  if (credentialPlatform !== parsePlatform(parentPost.platform)) {
     throw new HttpException(
       'Thread replies must use the parent channel',
       HttpStatus.BAD_REQUEST,

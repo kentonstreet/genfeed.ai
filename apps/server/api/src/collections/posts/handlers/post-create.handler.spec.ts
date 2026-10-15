@@ -10,7 +10,7 @@ describe('createPost draft boundary', () => {
   function setup() {
     const mocks = {
       accountHealthService: { evaluateScheduledPublishGate: vi.fn() },
-      activityRecorder: { record: vi.fn() },
+      activitiesService: { create: vi.fn() },
       credentialsService: { findOne: vi.fn().mockResolvedValue(null) },
       ingredientsService: { findByIds: vi.fn() },
       loggerService: { error: vi.fn() },
@@ -90,11 +90,7 @@ describe('createPost draft boundary', () => {
     const { mocks, dependencies } = setup();
     await expect(
       createPost({
-        createPostDto: {
-          ...draft,
-          credentialId: 'foreign',
-          brandId: 'brand-1',
-        },
+        createPostDto: { ...draft, credentialId: 'foreign' },
         dependencies,
         identity,
       }),
@@ -107,27 +103,6 @@ describe('createPost draft boundary', () => {
       }),
     );
     expect(mocks.postsService.create).not.toHaveBeenCalled();
-  });
-  it('uses the credential owning brand when a legacy caller omits brandId', async () => {
-    const { mocks, dependencies } = setup();
-    mocks.credentialsService.findOne.mockResolvedValue({
-      id: 'credential-2',
-      brandId: 'brand-2',
-      platform: 'TWITTER',
-    });
-    await createPost({
-      createPostDto: { ...draft, credentialId: 'credential-2' },
-      dependencies,
-      identity,
-    });
-    expect(mocks.credentialsService.findOne).toHaveBeenCalledWith({
-      id: 'credential-2',
-      organizationId: 'org-1',
-      isDeleted: false,
-    });
-    expect(mocks.postsService.create).toHaveBeenCalledWith(
-      expect.objectContaining({ brandId: 'brand-2' }),
-    );
   });
   it('does not start an upload for a YouTube draft', async () => {
     const { mocks, dependencies } = setup();

@@ -1,7 +1,3 @@
-import { PostAccountGenerationService } from '@api/collections/posts/services/post-account-generation.service';
-import { PostDraftGenerationService } from '@api/collections/posts/services/post-draft-generation.service';
-import { ORGANIZATION_MODULE_KEY } from '@api/common/organization-modules/organization-module.decorator';
-
 vi.mock('@api/helpers/utils/response/response.util', () => ({
   returnBadRequest: vi.fn((response) => {
     throw new HttpException(response, 400);
@@ -24,13 +20,11 @@ vi.mock('@api/collections/templates/services/templates.service', () => ({
 }));
 
 import type { AuthenticatedUser as User } from '@api/auth/interfaces/authenticated-user.interface';
-import { ApiKeysService } from '@api/collections/api-keys/services/api-keys.service';
-import { BrandsService } from '@api/collections/brands/services/brands.service';
+import { ActivitiesService } from '@api/collections/activities/services/activities.service';
 import { AccountPublishingContextService } from '@api/collections/credentials/services/account-publishing-context.service';
 import { CredentialsService } from '@api/collections/credentials/services/credentials.service';
 import { IngredientsService } from '@api/collections/ingredients/services/ingredients.service';
 import { MembersService } from '@api/collections/members/services/members.service';
-import { ModelsService } from '@api/collections/models/services/models.service';
 import { PostsGenerationController } from '@api/collections/posts/controllers/operations/posts-generation.controller';
 import { PostsOperationsController } from '@api/collections/posts/controllers/operations/posts-operations.controller';
 import { TweetTone } from '@api/collections/posts/dto/generate-tweets.dto';
@@ -43,14 +37,10 @@ import { PostsService } from '@api/collections/posts/services/posts.service';
 import type { SourcePostVariationRequest } from '@api/collections/posts/services/source-post-variation.types';
 import { TemplatesService } from '@api/collections/templates/services/templates.service';
 import { TrendReferenceCorpusService } from '@api/collections/trends/services/trend-reference-corpus.service';
-import { BrandedGenerationBlockedException } from '@api/helpers/exceptions/branded-generation-blocked/branded-generation-blocked.exception';
 import { CreditsGuard } from '@api/helpers/guards/credits/credits.guard';
 import { RolesGuard } from '@api/helpers/guards/roles/roles.guard';
+import { SubscriptionGuard } from '@api/helpers/guards/subscription/subscription.guard';
 import { CreditsInterceptor } from '@api/helpers/interceptors/credits/credits.interceptor';
-import { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
-import { AgentContextAssemblyService } from '@api/services/agent-context-assembly/agent-context-assembly.service';
-import { AgentChatModelRegistryService } from '@api/services/agent-orchestrator/agent-chat-model-registry.service';
-import { TextGenerationCreditsService } from '@api/services/byok/text-generation-credits.service';
 import { ReplicateService } from '@api/services/integrations/replicate/services/replicate.service';
 import { NotificationsPublisherService } from '@api/services/notifications/publisher/notifications-publisher.service';
 import { PromptBuilderService } from '@api/services/prompt-builder/prompt-builder.service';
@@ -82,7 +72,6 @@ import type { Request } from 'express';
 describe('PostsOperationsController', () => {
   let controller: PostsOperationsController;
   let generationController: PostsGenerationController;
-  let draftGeneration: { generateDraftText: ReturnType<typeof vi.fn> };
 
   // Mock IDs
   const userId = testId('user');
@@ -192,34 +181,14 @@ describe('PostsOperationsController', () => {
   } as Request;
 
   // Mock Services
-  const mockAccountGeneration = {
-    start: vi.fn(),
-  };
   const mockActivitiesService = {
-    record: vi.fn().mockResolvedValue(mockActivity),
-    recordMany: vi.fn().mockResolvedValue(1),
-    update: vi.fn().mockResolvedValue(mockActivity),
+    create: vi.fn().mockResolvedValue(mockActivity),
+    createMany: vi.fn().mockResolvedValue(1),
+    patch: vi.fn().mockResolvedValue(mockActivity),
   };
 
   const mockAccountPublishingContextService = {
     resolve: vi.fn().mockResolvedValue(mockPublishingContext),
-  };
-
-  const mockAgentContextAssemblyService = {
-    assembleContext: vi.fn(),
-    buildSystemPrompt: vi.fn(),
-  };
-
-  const mockAgentChatModelRegistry = {
-    resolveModelKey: vi
-      .fn()
-      .mockImplementation(
-        (_key?: string, fallbackKey?: string) => fallbackKey ?? '',
-      ),
-  };
-
-  const mockModelsService = {
-    findOne: vi.fn().mockResolvedValue(null),
   };
 
   const mockConfigService = {
@@ -242,14 +211,6 @@ describe('PostsOperationsController', () => {
   };
 
   const mockMembersService = {
-    findOne: vi.fn(),
-  };
-
-  const mockBrandsService = {
-    findOne: vi.fn().mockResolvedValue(null),
-  };
-
-  const mockApiKeysService = {
     findOne: vi.fn(),
   };
 
@@ -318,16 +279,15 @@ Tweet 3: Tech innovation is changing the world.`,
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    mockActivitiesService.record.mockResolvedValue(mockActivity);
-    mockActivitiesService.update.mockResolvedValue(mockActivity);
+    mockActivitiesService.create.mockResolvedValue(mockActivity);
+    mockActivitiesService.patch.mockResolvedValue(mockActivity);
     mockAccountPublishingContextService.resolve.mockResolvedValue(
       mockPublishingContext,
     );
-    mockAgentContextAssemblyService.assembleContext.mockResolvedValue(null);
     mockCredentialsService.findOne.mockResolvedValue(mockCredential);
     mockIngredientsService.findByIds.mockResolvedValue([]);
     mockIngredientsService.findOne.mockResolvedValue(mockIngredient);
-    mockActivitiesService.recordMany.mockResolvedValue(1);
+    mockActivitiesService.createMany.mockResolvedValue(1);
     mockPostsService.addThreadReply.mockResolvedValue(mockPost);
     mockPostsService.batchSchedule.mockResolvedValue({
       missingPostIds: [],
@@ -365,43 +325,16 @@ Tweet 3: Tech innovation is changing the world.`,
       controllers: [PostsGenerationController, PostsOperationsController],
       providers: [
         {
-          provide: TextGenerationCreditsService,
-          useValue: {
-            deferredKeyResolver: vi.fn(() => async () => undefined),
-            ensureDeferredCredits: vi.fn().mockResolvedValue(undefined),
-            guardResolvedDispatch: vi.fn().mockReturnValue(undefined),
-          },
-        },
-        {
           provide: AccountPublishingContextService,
           useValue: mockAccountPublishingContextService,
         },
-        { provide: ActivityRecorderService, useValue: mockActivitiesService },
-        {
-          provide: AgentContextAssemblyService,
-          useValue: mockAgentContextAssemblyService,
-        },
-        {
-          provide: AgentChatModelRegistryService,
-          useValue: mockAgentChatModelRegistry,
-        },
+        { provide: ActivitiesService, useValue: mockActivitiesService },
         { provide: ConfigService, useValue: mockConfigService },
-        { provide: ModelsService, useValue: mockModelsService },
         { provide: CredentialsService, useValue: mockCredentialsService },
         { provide: IngredientsService, useValue: mockIngredientsService },
-        { provide: ApiKeysService, useValue: mockApiKeysService },
-        { provide: BrandsService, useValue: mockBrandsService },
         { provide: MembersService, useValue: mockMembersService },
         { provide: LoggerService, useValue: mockLoggerService },
         PostGenerationService,
-        {
-          provide: PostDraftGenerationService,
-          useValue: { generateDraftText: vi.fn() },
-        },
-        {
-          provide: PostAccountGenerationService,
-          useValue: mockAccountGeneration,
-        },
         {
           provide: PostRepurposeService,
           useValue: { repurpose: vi.fn() },
@@ -432,6 +365,8 @@ Tweet 3: Tech innovation is changing the world.`,
     })
       .overrideGuard(RolesGuard)
       .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
+      .overrideGuard(SubscriptionGuard)
+      .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
       .overrideGuard(PostVariationSourceGuard)
       .useValue({ canActivate: vi.fn().mockResolvedValue(true) })
       .overrideGuard(CreditsGuard)
@@ -450,7 +385,6 @@ Tweet 3: Tech innovation is changing the world.`,
     generationController = module.get<PostsGenerationController>(
       PostsGenerationController,
     );
-    draftGeneration = module.get(PostDraftGenerationService);
   });
 
   it('should be defined', () => {
@@ -510,6 +444,7 @@ Tweet 3: Tech innovation is changing the world.`,
       const handler = PostsGenerationController.prototype[methodName];
 
       expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([
+        SubscriptionGuard,
         CreditsGuard,
       ]);
       expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler)).toEqual([
@@ -518,15 +453,13 @@ Tweet 3: Tech innovation is changing the world.`,
     },
   );
 
-  it('keeps source authorization ahead of credit guards and declares publishing ownership', () => {
+  it('keeps source authorization ahead of subscription and credit guards', () => {
     const handler =
       PostsGenerationController.prototype.generateSourceVariations;
-    expect(
-      Reflect.getMetadata(ORGANIZATION_MODULE_KEY, PostsGenerationController),
-    ).toEqual({ moduleId: 'publishing', operation: undefined });
 
     expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([
       PostVariationSourceGuard,
+      SubscriptionGuard,
       CreditsGuard,
     ]);
     expect(Reflect.getMetadata(INTERCEPTORS_METADATA, handler)).toEqual([
@@ -541,7 +474,7 @@ Tweet 3: Tech innovation is changing the world.`,
         creditCost: 2,
         groupId: 'group-1',
         requestedCount: 3,
-        reviewTurboRunId: 'batch-1',
+        reviewBatchId: 'batch-1',
         sourceKind: 'owned-post',
         voiceMode: 'brand-voice',
         voiceModeLabel: 'Brand voice',
@@ -583,173 +516,204 @@ Tweet 3: Tech innovation is changing the world.`,
     expect(request.creditsConfig.amount).toBe(2);
   });
 
-  describe('generateDraftText credits', () => {
-    const dto = {
-      brandId,
-      platform: CredentialPlatform.TWITTER,
-      prompt: 'Launch day',
-      requestKey: '5b0f6c1e-7d3a-4c1e-9b0a-2f6d8a1c3e4f',
-    };
-    const deferredRequest = () =>
-      ({
-        ...mockRequest,
-        creditsConfig: { amount: 1, deferred: true, description: 'Draft' },
-      }) as unknown as Request & {
-        creditsConfig: { deferred: boolean; amount: number };
-      };
-
-    it('finalizes the deferred charge for a fresh draft', async () => {
-      draftGeneration.generateDraftText.mockResolvedValue({
-        brandedReceipt: { isReplayed: false },
-        description: 'text',
-        model: 'model-a',
-      });
-      const request = deferredRequest();
-      await generationController.generateDraftText(request, dto, mockUser);
-
-      expect(request.creditsConfig.deferred).toBe(false);
-    });
-
-    it('leaves a replay uncharged', async () => {
-      draftGeneration.generateDraftText.mockResolvedValue({
-        brandedReceipt: { isReplayed: true },
-        description: 'text',
-        model: 'model-a',
-      });
-      const request = deferredRequest();
-      await generationController.generateDraftText(request, dto, mockUser);
-
-      expect(request.creditsConfig.deferred).toBe(true);
-    });
-
-    it('does not finalize when the draft throws', async () => {
-      draftGeneration.generateDraftText.mockRejectedValue(new Error('blocked'));
-      const request = deferredRequest();
-      await expect(
-        generationController.generateDraftText(request, dto, mockUser),
-      ).rejects.toThrow('blocked');
-
-      expect(request.creditsConfig.deferred).toBe(true);
-    });
-
-    it('finalizes the known cost when the request stopped after a recorded provider attempt', async () => {
-      const stopped = new BrandedGenerationBlockedException(
-        422,
-        'channel_limit_exceeded',
-        'receipt-1',
-        { model: 'model-a' },
-      );
-      draftGeneration.generateDraftText.mockRejectedValue(stopped);
-      const request = deferredRequest();
-      await expect(
-        generationController.generateDraftText(request, dto, mockUser),
-      ).rejects.toBe(stopped);
-
-      expect(request.creditsConfig.deferred).toBe(false);
-    });
-
-    it('leaves the charge deferred (released) when the request stopped before any provider attempt', async () => {
-      draftGeneration.generateDraftText.mockRejectedValue(
-        new BrandedGenerationBlockedException(409, 'no_revision', 'receipt-1'),
-      );
-      const request = deferredRequest();
-      await expect(
-        generationController.generateDraftText(request, dto, mockUser),
-      ).rejects.toBeInstanceOf(BrandedGenerationBlockedException);
-
-      expect(request.creditsConfig.deferred).toBe(true);
-    });
-  });
-
   // ==========================================================================
-  // POST /posts/account-generations - generateAccountContent
+  // POST /posts/account-generations - generateAccountContent (post format)
   // ==========================================================================
-  describe('generateAccountContent', () => {
-    const postDto = {
+  describe('generateAccountContent (post format)', () => {
+    const generateTweetsDto = {
       count: 3,
       credentialId,
       format: 'post' as const,
       tone: TweetTone.PROFESSIONAL,
       topic: 'AI technology',
     };
-    const threadDto = { ...postDto, count: 5, format: 'thread' as const };
 
-    beforeEach(() => {
-      mockAccountGeneration.start.mockResolvedValue([mockPost]);
-    });
-
-    it('starts the receipt-backed run with the caller identity and returns the placeholders', async () => {
+    it('should create posts with PROCESSING status and return them', async () => {
       const result = await generationController.generateAccountContent(
         mockRequest,
-        postDto,
+        generateTweetsDto,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        postDto,
-        mockUser,
+      expect(mockAccountPublishingContextService.resolve).toHaveBeenCalledWith({
+        brandId,
+        credentialId: generateTweetsDto.credentialId,
+        organizationId,
+        sourceLineage: {
+          sourceReferenceIds: undefined,
+          sourceUrl: undefined,
+          trendId: undefined,
+        },
+        surface: 'post',
+      });
+      expect(mockPostsService.create).toHaveBeenCalledTimes(3);
+      expect(mockPostsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: CredentialPlatform.TWITTER,
+        }),
       );
-      expect(result.data).toEqual([mockPost]);
+      expect(result).toBeDefined();
+      expect(result.data).toBeDefined();
     });
 
-    it('starts a thread run for a valid thread size', async () => {
+    it('should throw NOT_FOUND when credential does not exist', async () => {
+      const notFoundError = new HttpException(
+        {
+          detail: 'The specified account does not exist or is not connected',
+          title: 'Credential not found',
+        },
+        HttpStatus.NOT_FOUND,
+      );
+      mockAccountPublishingContextService.resolve
+        .mockRejectedValueOnce(notFoundError)
+        .mockRejectedValueOnce(notFoundError);
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(HttpException);
+
+      try {
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+      } catch (error) {
+        expect((error as HttpException).getStatus()).toBe(HttpStatus.NOT_FOUND);
+      }
+    });
+
+    it('should handle internal error during post creation', async () => {
+      mockPostsService.create.mockRejectedValueOnce(new Error('DB error'));
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('should re-throw HttpException as-is', async () => {
+      const httpError = new HttpException('Custom error', HttpStatus.FORBIDDEN);
+      mockAccountPublishingContextService.resolve.mockRejectedValueOnce(
+        httpError,
+      );
+
+      await expect(
+        generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        ),
+      ).rejects.toThrow(httpError);
+    });
+
+    it('uses the selected account platform when creating generated drafts', async () => {
+      mockAccountPublishingContextService.resolve.mockResolvedValueOnce({
+        ...mockPublishingContext,
+        account: {
+          ...mockPublishingContext.account,
+          platform: CredentialPlatform.LINKEDIN,
+        },
+      });
+
       await generationController.generateAccountContent(
         mockRequest,
-        threadDto,
+        generateTweetsDto,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        threadDto,
-        mockUser,
+      expect(mockPostsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: CredentialPlatform.LINKEDIN,
+        }),
       );
     });
+  });
 
-    it.each([
-      [1, 'at least two'],
-      [10, 'at most 9'],
-    ])(
-      'rejects a thread of %i posts before any credit hold or placeholder',
-      async (count, detail) => {
-        await expect(
-          generationController.generateAccountContent(
-            mockRequest,
-            { ...threadDto, count },
-            mockUser,
-          ),
-        ).rejects.toMatchObject({
-          response: { detail: expect.stringContaining(detail) },
+  // ==========================================================================
+  // POST /posts/account-generations - generateAccountContent (thread format)
+  // ==========================================================================
+  describe('generateAccountContent (thread format)', () => {
+    const generateThreadDto = {
+      count: 5,
+      credentialId,
+      format: 'thread' as const,
+      tone: TweetTone.CASUAL,
+      topic: 'AI technology',
+    };
+
+    it('should create thread posts with parent relationships', async () => {
+      let callCount = 0;
+      mockPostsService.create.mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          ...mockPost,
+          id: testId('other'),
+          order: callCount - 1,
         });
-        expect(mockAccountGeneration.start).not.toHaveBeenCalled();
-      },
-    );
+      });
 
-    it('keeps an insufficient-credits refusal as the 402 the run raised', async () => {
-      const refusal = new HttpException(
-        { title: 'Insufficient credits' },
-        HttpStatus.PAYMENT_REQUIRED,
+      const result = await generationController.generateAccountContent(
+        mockRequest,
+        generateThreadDto,
+        mockUser,
       );
-      mockAccountGeneration.start.mockRejectedValueOnce(refusal);
 
-      await expect(
-        generationController.generateAccountContent(
-          mockRequest,
-          postDto,
-          mockUser,
-        ),
-      ).rejects.toBe(refusal);
+      expect(mockAccountPublishingContextService.resolve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          brandId,
+          credentialId: generateThreadDto.credentialId,
+          organizationId,
+          surface: 'thread',
+        }),
+      );
+      expect(mockPostsService.create).toHaveBeenCalledTimes(5);
+      expect(result).toBeDefined();
+      expect(result.data).toBeDefined();
     });
 
-    it('wraps an unexpected failure in the generic 500 shape', async () => {
-      mockAccountGeneration.start.mockRejectedValueOnce(new Error('DB error'));
+    it('should throw NOT_FOUND when credential not found', async () => {
+      mockAccountPublishingContextService.resolve.mockRejectedValueOnce(
+        new HttpException(
+          {
+            detail: 'The specified account does not exist or is not connected',
+            title: 'Credential not found',
+          },
+          HttpStatus.NOT_FOUND,
+        ),
+      );
 
       await expect(
         generationController.generateAccountContent(
           mockRequest,
-          postDto,
+          generateThreadDto,
           mockUser,
         ),
-      ).rejects.toMatchObject({ status: HttpStatus.INTERNAL_SERVER_ERROR });
+      ).rejects.toThrow(HttpException);
+    });
+
+    it('should use default PROFESSIONAL tone when not specified', async () => {
+      const dtoWithoutTone = {
+        count: 3,
+        credentialId,
+        format: 'thread' as const,
+        topic: 'AI',
+      };
+
+      await generationController.generateAccountContent(
+        mockRequest,
+        dtoWithoutTone,
+        mockUser,
+      );
+
+      expect(mockPostsService.create).toHaveBeenCalled();
     });
   });
 
@@ -868,7 +832,7 @@ Tweet 3: Tech innovation is changing the world.`,
   // PATCH /posts/batch - batchUpdate
   // ==========================================================================
   describe('batchUpdate', () => {
-    const turboRunScheduleDto = {
+    const batchScheduleDto = {
       credentialId,
       items: [
         {
@@ -889,12 +853,7 @@ Tweet 3: Tech innovation is changing the world.`,
 
     beforeEach(() => {
       mockPostsService.findOne.mockResolvedValue(mockPost);
-      // Resolves the second batch item's `ingredientId` by default so tests
-      // that aren't specifically about ingredient resolution keep both
-      // items scheduled (#5193: an unresolved id now excludes the item).
-      mockIngredientsService.findByIds.mockResolvedValue([mockIngredient]);
       mockPostsService.batchSchedule.mockResolvedValue({
-        invalidTargetPostIds: [],
         missingPostIds: [],
         posts: [
           { ...mockPost, status: PostStatus.SCHEDULED },
@@ -910,7 +869,7 @@ Tweet 3: Tech innovation is changing the world.`,
     it('should schedule the whole batch with one service call', async () => {
       const result = await controller.batchUpdate(
         mockRequest,
-        turboRunScheduleDto,
+        batchScheduleDto,
         mockUser,
       );
 
@@ -945,7 +904,7 @@ Tweet 3: Tech innovation is changing the world.`,
         await expect(
           controller.batchUpdate(
             mockRequest,
-            turboRunScheduleDto,
+            batchScheduleDto,
             apiKeyUser(scopes),
           ),
         ).rejects.toMatchObject({
@@ -960,11 +919,11 @@ Tweet 3: Tech innovation is changing the world.`,
     );
 
     it('should record every scheduled activity in one insert', async () => {
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
+      await controller.batchUpdate(mockRequest, batchScheduleDto, mockUser);
 
-      expect(mockActivitiesService.recordMany).toHaveBeenCalledTimes(1);
-      expect(mockActivitiesService.record).not.toHaveBeenCalled();
-      expect(mockActivitiesService.recordMany.mock.calls[0]?.[0]).toHaveLength(
+      expect(mockActivitiesService.createMany).toHaveBeenCalledTimes(1);
+      expect(mockActivitiesService.create).not.toHaveBeenCalled();
+      expect(mockActivitiesService.createMany.mock.calls[0]?.[0]).toHaveLength(
         2,
       );
     });
@@ -973,7 +932,7 @@ Tweet 3: Tech innovation is changing the world.`,
       mockCredentialsService.findOne.mockResolvedValueOnce(null);
 
       await expect(
-        controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser),
+        controller.batchUpdate(mockRequest, batchScheduleDto, mockUser),
       ).rejects.toThrow(HttpException);
     });
 
@@ -981,14 +940,13 @@ Tweet 3: Tech innovation is changing the world.`,
       // The scoped read inside batchSchedule reports ids outside the
       // organization instead of the controller probing each one.
       mockPostsService.batchSchedule.mockResolvedValueOnce({
-        invalidTargetPostIds: [],
         missingPostIds: [postId, testId('other')],
         posts: [],
       });
 
       const result = await controller.batchUpdate(
         mockRequest,
-        turboRunScheduleDto,
+        batchScheduleDto,
         mockUser,
       );
 
@@ -999,29 +957,9 @@ Tweet 3: Tech innovation is changing the world.`,
     it('should handle ingredient lookup for items with ingredientId', async () => {
       mockIngredientsService.findByIds.mockResolvedValueOnce([mockIngredient]);
 
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
+      await controller.batchUpdate(mockRequest, batchScheduleDto, mockUser);
 
       expect(mockIngredientsService.findByIds).toHaveBeenCalled();
-    });
-
-    it('excludes an item whose ingredientId does not resolve instead of scheduling it with no media (#5193)', async () => {
-      // The ingredient exists for no one in this organization (or a typo'd
-      // id): dropping just the id and scheduling anyway used to silently
-      // leave the post without the media its target expected.
-      mockIngredientsService.findByIds.mockResolvedValueOnce([]);
-
-      await controller.batchUpdate(mockRequest, turboRunScheduleDto, mockUser);
-
-      expect(mockPostsService.batchSchedule).toHaveBeenCalledWith(
-        [expect.objectContaining({ postId, text: 'Scheduled tweet 1' })],
-        organizationId,
-        expect.anything(),
-        mockUser.id,
-      );
-      expect(mockLoggerService.warn).toHaveBeenCalledWith(
-        'Skipped posts with an unresolved ingredient id',
-        expect.objectContaining({ postIds: [testId('other')] }),
-      );
     });
   });
 
@@ -1060,41 +998,6 @@ Tweet 3: Tech innovation is changing the world.`,
       expect(result).toBeDefined();
     });
 
-    it('inherits the account platform for a legacy root without a platform', async () => {
-      mockPostsService.findOne.mockResolvedValueOnce({
-        ...mockPost,
-        platform: null,
-      });
-      await controller.addThreadReply(mockRequest, mockUser, postId, {
-        ...createPostDto,
-        platform: CredentialPlatform.TWITTER,
-      });
-      expect(mockPostsService.addThreadReply).toHaveBeenCalledWith(
-        postId,
-        expect.objectContaining({ platform: 'twitter' }),
-      );
-    });
-    it('retains the root brand and exact account for legacy cross-brand threads', async () => {
-      mockCredentialsService.findOne.mockResolvedValueOnce({
-        ...mockCredential,
-        brandId: 'older-account-brand',
-      });
-      await controller.addThreadReply(
-        mockRequest,
-        mockUser,
-        postId,
-        createPostDto,
-      );
-      expect(mockCredentialsService.findOne).toHaveBeenCalledWith({
-        id: credentialId,
-        organizationId,
-        isDeleted: false,
-      });
-      expect(mockPostsService.addThreadReply).toHaveBeenCalledWith(
-        postId,
-        expect.objectContaining({ brandId, credentialId }),
-      );
-    });
     it('rejects a reply using another account', async () => {
       await expect(
         controller.addThreadReply(mockRequest, mockUser, postId, {
@@ -1364,7 +1267,7 @@ Tweet 3: Tech innovation is changing the world.`,
           userId,
         }),
       );
-      expect(mockActivitiesService.record).toHaveBeenCalled();
+      expect(mockActivitiesService.create).toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
@@ -1455,23 +1358,6 @@ Tweet 3: Tech innovation is changing the world.`,
       expect(mockPostsService.patch).toHaveBeenCalledWith(postId, {
         description: 'Enhanced description',
       });
-      expect(result).toBeDefined();
-    });
-
-    it('should return a draft without saving when isDraft is set', async () => {
-      mockPostsService.patch.mockClear();
-
-      const result = await generationController.enhancePost(
-        mockRequest,
-        postId,
-        { ...enhancePostDto, isDraft: true },
-        mockUser,
-      );
-
-      expect(
-        mockReplicateService.generateTextCompletionSync,
-      ).toHaveBeenCalled();
-      expect(mockPostsService.patch).not.toHaveBeenCalled();
       expect(result).toBeDefined();
     });
 
@@ -1667,6 +1553,46 @@ Tweet 3: Tech innovation is changing the world.`,
         expect(mockPostsService.create).toHaveBeenCalled();
       });
     });
+
+    describe('isValidPostLength', () => {
+      // Tested indirectly through parseTweetContent during async generation
+      it('should validate post length during tweet generation', async () => {
+        const generateTweetsDto = {
+          count: 2,
+          credentialId,
+          format: 'post' as const,
+          topic: 'Test',
+        };
+
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+
+        expect(mockPostsService.create).toHaveBeenCalled();
+      });
+    });
+
+    describe('extractLabelFromTweet', () => {
+      it('should extract label when creating posts', async () => {
+        const generateTweetsDto = {
+          count: 1,
+          credentialId,
+          format: 'post' as const,
+          topic: 'Test',
+        };
+
+        await generationController.generateAccountContent(
+          mockRequest,
+          generateTweetsDto,
+          mockUser,
+        );
+
+        // Label extraction happens during async processing
+        expect(mockPostsService.create).toHaveBeenCalled();
+      });
+    });
   });
 
   // ==========================================================================
@@ -1699,7 +1625,6 @@ Tweet 3: Tech innovation is changing the world.`,
         format: 'post' as const,
         topic: 'Test',
       };
-      mockAccountGeneration.start.mockResolvedValueOnce([mockPost]);
 
       await generationController.generateAccountContent(
         mockRequest,
@@ -1707,10 +1632,7 @@ Tweet 3: Tech innovation is changing the world.`,
         mockUser,
       );
 
-      expect(mockAccountGeneration.start).toHaveBeenCalledWith(
-        minimalDto,
-        mockUser,
-      );
+      expect(mockPostsService.create).toHaveBeenCalled();
     });
 
     it('should handle posts with no description', async () => {
