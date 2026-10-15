@@ -533,19 +533,11 @@ export default function StudioPlaygroundCard({
         {isListView ? (
           renderDetails(!job.ingredient)
         ) : job.ingredient ? (
-          <>
-            {unbrandedMode ? (
-              <BrandModeBadge
-                brandMode={unbrandedMode}
-                className="pointer-events-none absolute top-1.5 left-1.5 z-10"
-              />
-            ) : null}
-            <IngredientTileOverlays
-              ingredient={job.ingredient}
-              isReviewEnabled
-              onReviewUpdated={assetActions.onRefresh}
-            />
-          </>
+          <IngredientTileOverlays
+            ingredient={job.ingredient}
+            isReviewEnabled
+            onReviewUpdated={assetActions.onRefresh}
+          />
         ) : (
           renderHoverDetails(true)
         )}

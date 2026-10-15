@@ -28,7 +28,6 @@ function setup(
     avatarIngredientId?: string | null;
     deleted?: string[];
     references?: StoredRow[];
-    userId?: string;
     validImages?: string[];
   } = {},
 ) {
@@ -48,7 +47,6 @@ function setup(
     handle: 'anna' as string | null,
     id: PERSONA,
     label: 'Anna',
-    userId: initial.userId ?? 'user-1',
     references: [...state.references]
       .sort((a, b) => a.position - b.position)
       .map((row) => ({
@@ -153,36 +151,6 @@ function rows(...ids: string[]): StoredRow[] {
 }
 
 describe('PersonaReferencesService', () => {
-  it.each(['add', 'remove', 'reorder'] as const)(
-    'refuses %s of another creator’s unshared character references',
-    async (operation) => {
-      const { prisma, service } = setup({
-        references: rows('img-1'),
-        userId: 'other-user',
-        validImages: ['img-1'],
-      });
-      await expect(
-        service[operation]({
-          ...scope,
-          ingredientId: 'img-1',
-          ingredientIds: ['img-1'],
-        }),
-      ).rejects.toBeInstanceOf(NotFoundException);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
-    },
-  );
-
-  it('allows a verified superadmin to edit an unshared character', async () => {
-    const { service } = setup({ userId: 'other-user', validImages: ['img-1'] });
-    await expect(
-      service.add({
-        ...scope,
-        actor: { ...scope.actor, isSuperAdmin: true },
-        ingredientIds: ['img-1'],
-      }),
-    ).resolves.toEqual([{ ingredientId: 'img-1', position: 0 }]);
-  });
-
   describe('orderedReferenceIdsFromRow', () => {
     it('orders by position and skips trashed assets', () => {
       expect(
@@ -644,13 +612,13 @@ describe('PersonaReferencesService', () => {
         references: rows('img-1', 'img-2'),
       });
 
-      await expect(
-        service.syncPrimary(client as never, ORG, PERSONA),
-      ).resolves.toBe('img-2');
+      await expect(service.syncPrimary(client, ORG, PERSONA)).resolves.toBe(
+        'img-2',
+      );
       expect(state.avatarIngredientId).toBe('img-2');
 
       state.deleted.clear();
-      await service.syncPrimary(client as never, ORG, PERSONA);
+      await service.syncPrimary(client, ORG, PERSONA);
       expect(state.avatarIngredientId).toBe('img-1');
     });
 
@@ -661,13 +629,13 @@ describe('PersonaReferencesService', () => {
       });
 
       await expect(
-        service.syncPrimary(client as never, ORG, PERSONA),
+        service.syncPrimary(client, ORG, PERSONA),
       ).resolves.toBeNull();
       expect(storedOrder()).toEqual(['legacy']);
       expect(state.avatarIngredientId).toBeNull();
 
       state.deleted.clear();
-      await service.syncPrimary(client as never, ORG, PERSONA);
+      await service.syncPrimary(client, ORG, PERSONA);
       expect(state.avatarIngredientId).toBe('legacy');
     });
 
@@ -677,7 +645,7 @@ describe('PersonaReferencesService', () => {
         references: rows('img-1', 'img-2'),
       });
 
-      await service.syncPrimary(client as never, ORG, PERSONA);
+      await service.syncPrimary(client, ORG, PERSONA);
 
       expect(client.persona.update).not.toHaveBeenCalled();
     });

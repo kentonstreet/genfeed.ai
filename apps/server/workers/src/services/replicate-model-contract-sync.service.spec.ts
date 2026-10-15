@@ -44,9 +44,7 @@ const HAILUO_2_3_FAST_INPUT_PROPERTIES = {
   resolution: { enum: ['768p', '1080p'], title: 'Resolution', type: 'string' },
 };
 
-function providerModel(
-  openapi: Record<string, unknown> = validOpenapi(),
-): IReplicateModel {
+function providerModel(openapi = validOpenapi()): IReplicateModel {
   return {
     default_example: null,
     description: 'Image generator',
@@ -66,7 +64,7 @@ function providerModel(
 
 function validOpenapi(
   properties: Record<string, unknown> = { prompt: { type: 'string' } },
-): Record<string, unknown> & { openapi: string } {
+): Record<string, unknown> {
   return {
     components: {
       schemas: {

@@ -1,6 +1,6 @@
 {
   "name": "genfeed.ai",
-  "version": "0.2.9",
+  "version": "0.2.8",
   "description": "The open source AI OS for content creation",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -198,7 +198,6 @@
     "verify:agent-smoke-evidence": "bun run scripts/agent-eval/verify-live-evidence.ts"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
     "@biomejs/biome": "2.5.15",
     "@genfeedai/contracts": "workspace:*",
     "@genfeedai/helpers": "workspace:*",
@@ -261,6 +260,7 @@
     "@fal-ai/client": "1.10.1",
     "@genfeedai/auth-client": "workspace:*",
     "@hookform/resolvers": "5.9.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@nestjs/axios": "12.0.1",
     "@nestjs/bullmq": "12.0.0",
     "@nestjs/cache-manager": "12.0.1",

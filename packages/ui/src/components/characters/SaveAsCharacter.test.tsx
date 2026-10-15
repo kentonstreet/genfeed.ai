@@ -252,7 +252,6 @@ describe('SaveAsCharacter', () => {
         avatarIngredientId: 'image-1',
         handle: null,
         label: null,
-        referenceIngredientIds: ['image-1'],
       },
     ]);
     mount();
