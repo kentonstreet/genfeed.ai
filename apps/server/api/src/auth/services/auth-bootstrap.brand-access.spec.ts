@@ -104,19 +104,6 @@ function fixture() {
         .fn()
         .mockResolvedValue({ id: 'opaque-user', isOnboardingCompleted: true }),
     } as unknown as Dependencies[7],
-    {
-      canAffordDefaultGeneration: vi.fn().mockResolvedValue(true),
-    } as unknown as Dependencies[8],
-    {
-      getState: vi
-        .fn()
-        .mockResolvedValue({ isTrialExpired: false, trialEndsAt: null }),
-    } as unknown as Dependencies[9],
-    {
-      resolve: vi
-        .fn()
-        .mockResolvedValue({ isTrialSubject: false, threshold: null }),
-    } as unknown as Dependencies[10],
   );
   return {
     member,
