@@ -9,14 +9,12 @@ import {
 } from '@api/collections/mcp-approvals/schemas/mcp-approval-pricing.schema';
 import { McpApprovalPricingService } from '@api/collections/mcp-approvals/services/mcp-approval-pricing.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
-import { resolveTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import {
   type ApiKeyPublishingContext,
   assertApiKeyAgentPublishingScope,
   assertApiKeyPublishingScope,
   isPublishingMcpApprovalTool,
 } from '@api/helpers/utils/auth/api-key-publishing-scope.util';
-import { getIsSuperAdmin } from '@api/helpers/utils/auth/auth.util';
 import { assertMcpAccessModeAllowsTool } from '@api/helpers/utils/auth/mcp-access-mode.util';
 import { scopedWhere } from '@api/index';
 import { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
@@ -248,11 +246,10 @@ export class McpApprovalsService extends BaseService<
     user: AuthenticatedUser,
   ): Promise<McpApprovalDocument> {
     const userId = user.userId || user.id;
-    const { organizationId } = resolveTenantReadScope(user);
-    if (!userId || !organizationId || !this.brandAccess)
+    if (!userId || !user.organizationId || !this.brandAccess)
       throw new ForbiddenException();
     const approval = (await this.delegate.findFirst({
-      where: scopedWhere(organizationId, { id, userId }),
+      where: scopedWhere(user.organizationId, { id, userId }),
     })) as McpApprovalDocument | null;
     if (!approval) throw new NotFoundException('MCP approval');
 
@@ -261,13 +258,13 @@ export class McpApprovalsService extends BaseService<
     assertMcpAccessModeAllowsTool(user, approval.toolName, 'mcp');
     const args = isRecord(approval.arguments) ? approval.arguments : {};
     assertApiKeyAgentPublishingScope(user, approval.toolName, args);
-    const actor = { ...user, organizationId, userId };
+    const actor = { ...user, userId };
     const { role } = await this.brandAccess.resolve(actor);
     if (
       (tool.requiredRole === 'admin' &&
         role !== MemberRole.OWNER &&
         role !== MemberRole.ADMIN) ||
-      (tool.requiredRole === 'superadmin' && !getIsSuperAdmin(user))
+      (tool.requiredRole === 'superadmin' && user.isSuperAdmin !== true)
     )
       throw new ForbiddenException();
     const approvalBrand =

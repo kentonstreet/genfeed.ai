@@ -5,7 +5,6 @@ import { testMcpApprovalPricing } from '@api/collections/mcp-approvals/schemas/m
 import type { McpApprovalPricingService } from '@api/collections/mcp-approvals/services/mcp-approval-pricing.service';
 import { McpApprovalsService } from '@api/collections/mcp-approvals/services/mcp-approvals.service';
 import { NotFoundException } from '@api/exceptions/not-found.exception';
-import { runWithTenantReadScope } from '@api/helpers/interceptors/tenant-context/tenant-read-scope.context';
 import type { ActivityRecorderService } from '@api/services/activity-recording/activity-recorder.service';
 import type { PrismaService } from '@api/shared/modules/prisma/prisma.service';
 import { ActivityKey, ApiKeyScope } from '@genfeedai/contracts';
@@ -51,7 +50,7 @@ describe('McpApprovalsService', () => {
     mcpApproval.count.mockResolvedValue(0);
     mcpApproval.findFirst.mockResolvedValue({
       id: 'outside-transaction',
-      toolName: 'generate_turbo_content',
+      toolName: 'generate_content_batch',
       status: 'PENDING',
     });
     mcpApproval.updateMany.mockResolvedValue({ count: 1 });
@@ -102,39 +101,6 @@ describe('McpApprovalsService', () => {
         'brand-1',
       );
       expect(mcpApproval.updateMany).not.toHaveBeenCalled();
-    });
-
-    it('uses the validated selected tenant without changing the canonical actor', async () => {
-      await runWithTenantReadScope(
-        { organizationId: 'selected-org', isOrganizationOverride: true },
-        () => service.findStatusForActor('approval-1', actor),
-      );
-      expect(mcpApproval.findFirst).toHaveBeenCalledWith({
-        where: {
-          id: 'approval-1',
-          organizationId: 'selected-org',
-          userId: 'canonical-user',
-          isDeleted: false,
-        },
-      });
-      expect(brandAccess.resolve).toHaveBeenCalledWith(
-        expect.objectContaining({
-          organizationId: 'selected-org',
-          userId: 'canonical-user',
-        }),
-      );
-      expect(actor.organizationId).toBe('org-1');
-    });
-
-    it('conceals approvals missing from the validated selected tenant', async () => {
-      mcpApproval.findFirst.mockResolvedValue(null);
-      await expect(
-        runWithTenantReadScope(
-          { organizationId: 'selected-org', isOrganizationOverride: true },
-          () => service.findPricingForActor('approval-1', actor),
-        ),
-      ).rejects.toThrow(NotFoundException);
-      expect(brandAccess.resolve).not.toHaveBeenCalled();
     });
 
     it('conceals a missing or foreign approval', async () => {
@@ -339,7 +305,7 @@ describe('McpApprovalsService', () => {
       const first = await service.createPending(
         'org-1',
         'user-1',
-        'generate_turbo_content',
+        'generate_content_batch',
         { count: 3 },
         {
           threadId: 'thread-1',
@@ -349,7 +315,7 @@ describe('McpApprovalsService', () => {
       const second = await service.createPending(
         'org-1',
         'user-1',
-        'generate_turbo_content',
+        'generate_content_batch',
         { count: 3 },
         {
           threadId: 'thread-1',
@@ -454,7 +420,7 @@ describe('McpApprovalsService', () => {
         const txApproval = {
           findFirst: vi.fn().mockResolvedValue({
             id: 'approval-tx',
-            toolName: 'generate_turbo_content',
+            toolName: 'generate_content_batch',
             status: 'PENDING',
           }),
           updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -516,7 +482,7 @@ describe('McpApprovalsService', () => {
       expect(txApproval.updateMany).not.toHaveBeenCalled();
       expect(mcpApproval.findFirst).not.toHaveBeenCalled();
     });
-    it.each([null, { id: 'approval-tx', toolName: 'generate_turbo_content' }])(
+    it.each([null, { id: 'approval-tx', toolName: 'generate_content_batch' }])(
       'retains transactional missing and lost-race errors for %j',
       async (approval) => {
         const txApproval = {
@@ -745,7 +711,7 @@ describe('McpApprovalsService', () => {
       organizationId: 'org-1',
       userId: 'user-1',
       arguments: { count: 3 },
-      toolName: 'generate_turbo_content',
+      toolName: 'generate_content_batch',
       idempotencyKey: 'logical-write',
       pricingQuote: null,
       status: 'PENDING',

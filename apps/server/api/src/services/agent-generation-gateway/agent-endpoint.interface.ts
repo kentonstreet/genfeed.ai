@@ -1,6 +1,5 @@
 import type { AuthenticatedUser } from '@api/auth/interfaces/authenticated-user.interface';
 import type { RequestWithContext } from '@api/common/middleware/request-context.middleware';
-import type { OrganizationModuleEndpointPolicy } from '@api/common/organization-modules/organization-module.decorator';
 import type { ModelValidationOptions } from '@api/helpers/guards/models/models.guard';
 import type { RequestWithSelectedModel } from '@api/helpers/guards/models/request-with-selected-model.interface';
 import type { ApprovedGenerationQuoteConstraint } from '@api/helpers/utils/credits/generation-credit-cost.util';
@@ -19,7 +18,6 @@ export interface AgentEndpointRequest extends RequestWithContext {
     amount: number;
     deferred?: boolean;
     modelKey?: string;
-    approvedGenerationQuote?: ApprovedGenerationQuoteConstraint;
   };
   creditsOutputCount?: number;
   selectedModel?: RequestWithSelectedModel['selectedModel'];
@@ -70,8 +68,6 @@ export interface AgentEndpointCallContext<TDto> {
  * descriptors carry no behaviour of their own beyond `handle`.
  */
 export interface AgentEndpoint<TDto, TResult> {
-  /** Trusted adapter-owned module admission; never copied from invocation.body. */
-  organizationModule: OrganizationModuleEndpointPolicy;
   /** `@Credits(...)`. Omitted for a route that is not billable. */
   creditsConfig?: CreditsConfig;
   /** `@Body()` DTO metatype. */

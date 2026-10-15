@@ -63,7 +63,7 @@ describe('ToolRegistryService role enforcement (real guard)', () => {
         name,
         arguments: { action: 'create_from_url', url: 'https://example.com' },
       });
-      expect(result).toMatchObject({ isError: true });
+      expect(result.isError).toBe(true);
       expect(client.createApproval).not.toHaveBeenCalled();
       expect(client.executeAgentTool).not.toHaveBeenCalled();
     },
