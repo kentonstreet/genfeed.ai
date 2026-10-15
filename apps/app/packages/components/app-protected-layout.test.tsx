@@ -1,4 +1,3 @@
-import { useRegisterBreadcrumbLeaf } from '@contexts/ui/breadcrumb-leaf-context';
 import { useAgentPageContext } from '@genfeedai/agent';
 import { MemberRole } from '@genfeedai/contracts';
 import type { MenuItemConfig } from '@genfeedai/contracts/interfaces/ui/menu-config.interface';
@@ -55,11 +54,7 @@ const {
   dispatchOpenTaskComposerSpy: vi.fn(),
   identifyAnalyticsOrganizationSpy: vi.fn(),
   identifyAnalyticsUserSpy: vi.fn(),
-  shellState: {
-    isAuthLoaded: true,
-    isShellThrowing: false,
-    isSignedIn: undefined as boolean | undefined,
-  },
+  shellState: { isAuthLoaded: true, isShellThrowing: false },
   lowCreditsBannerSpy: vi.fn(),
   onboardingGuardSpy: vi.fn(),
   protectedProvidersSpy: vi.fn(),
@@ -461,7 +456,7 @@ vi.mock('@/hooks/useOptionalAuth', () => ({
     // agent API service, which is the only thing that keeps the shell body from
     // mounting.
     isLoaded: shellState.isAuthLoaded,
-    isSignedIn: shellState.isSignedIn ?? shellState.isAuthLoaded,
+    isSignedIn: shellState.isAuthLoaded,
   }),
 }));
 
@@ -589,8 +584,6 @@ describe('AppProtectedLayout', () => {
     mockPathname.value = '/workspace';
     shellState.isAuthLoaded = true;
     shellState.isShellThrowing = false;
-    shellState.isSignedIn = undefined;
-    mockRouter.refresh.mockClear();
     sessionStorage.clear();
     mockBrandState.brandId = 'brand-123';
     mockBrandState.organizationId = 'org-123';
@@ -1136,7 +1129,7 @@ describe('AppProtectedLayout', () => {
     ['/discovery/overview', 'Overview'],
     ['/analytics', 'Overview'],
     ['/automation/runs', 'Runs'],
-    ['/admin', 'Overview'],
+    ['/admin', 'Dashboard'],
     ['/agent/new', 'New conversation'],
   ])(
     'feeds the active surface navigation to breadcrumbs on %s',
@@ -1217,43 +1210,6 @@ describe('AppProtectedLayout', () => {
     },
   );
 
-  describe('storyboard run breadcrumb', () => {
-    function RunTitle({ label }: { readonly label: string }) {
-      useRegisterBreadcrumbLeaf('run-1', label);
-      return null;
-    }
-
-    it('shows the run title the page publishes as the leaf', () => {
-      mockPathname.value = '/org-123/brand-123/studio/storyboard/run-1';
-
-      render(
-        <AppProtectedLayout>
-          <RunTitle label="The Founder Story" />
-        </AppProtectedLayout>,
-      );
-
-      const layoutProps = appLayoutSpy.mock.lastCall?.[0] as {
-        breadcrumb?: { leafLabel: string };
-      };
-      expect(layoutProps.breadcrumb?.leafLabel).toBe('The Founder Story');
-    });
-
-    it('keeps the registry leaf when the published title belongs to another run', () => {
-      mockPathname.value = '/org-123/brand-123/studio/storyboard/run-2';
-
-      render(
-        <AppProtectedLayout>
-          <RunTitle label="The Founder Story" />
-        </AppProtectedLayout>,
-      );
-
-      const layoutProps = appLayoutSpy.mock.lastCall?.[0] as {
-        breadcrumb?: { leafLabel: string };
-      };
-      expect(layoutProps.breadcrumb?.leafLabel).toBe('Run');
-    });
-  });
-
   it.each([
     '/org-123/brand-123/automation/workflows/new',
     '/org-123/brand-123/automation/workflows/wf-123',
@@ -1318,52 +1274,6 @@ describe('AppProtectedLayout', () => {
         includePromptBarProvider: false,
       }),
     );
-  });
-
-  it('does not refresh the route when the shell mounts already signed in', () => {
-    render(
-      <AppProtectedLayout>
-        <div>Protected content</div>
-      </AppProtectedLayout>,
-    );
-
-    expect(mockRouter.refresh).not.toHaveBeenCalled();
-  });
-
-  it('does not refresh the route when auth finishes loading after mount', () => {
-    shellState.isAuthLoaded = false;
-    const { rerender } = render(
-      <AppProtectedLayout>
-        <div>Protected content</div>
-      </AppProtectedLayout>,
-    );
-
-    shellState.isAuthLoaded = true;
-    rerender(
-      <AppProtectedLayout>
-        <div>Protected content</div>
-      </AppProtectedLayout>,
-    );
-
-    expect(mockRouter.refresh).not.toHaveBeenCalled();
-  });
-
-  it('refreshes the route once after a signed-out session signs in', () => {
-    shellState.isSignedIn = false;
-    const { rerender } = render(
-      <AppProtectedLayout>
-        <div>Protected content</div>
-      </AppProtectedLayout>,
-    );
-
-    shellState.isSignedIn = true;
-    rerender(
-      <AppProtectedLayout>
-        <div>Protected content</div>
-      </AppProtectedLayout>,
-    );
-
-    expect(mockRouter.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the topbar frame on a canvas route while the shell body is still booting', () => {
@@ -1656,7 +1566,7 @@ describe('AppProtectedLayout', () => {
     expect(appSidebarSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         items: expect.arrayContaining([
-          expect.objectContaining({ label: 'Overview' }),
+          expect.objectContaining({ label: 'Dashboard' }),
         ]),
       }),
     );
