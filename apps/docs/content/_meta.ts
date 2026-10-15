@@ -1,6 +1,7 @@
 export default {
   index: 'Introduction',
 
+  // -- Self-host --
   'sep-self-host': {
     title: 'Self-host',
     type: 'separator',
